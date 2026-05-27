@@ -1,0 +1,14 @@
+{
+  "id": "dankAIUsage",
+  "name": "AI Usage",
+  "description": "Monitor local Codex and Claude CLI token usage",
+  "version": "0.1.0",
+  "author": "alcxyz",
+  "icon": "monitoring",
+  "type": "widget",
+  "capabilities": ["dankbar-widget"],
+  "component": "./DankAIUsageWidget.qml",
+  "settings": "./DankAIUsageSettings.qml",
+  "permissions": ["settings_read", "settings_write", "process"],
+  "requires": ["dankaiusage", "codex", "claude", "sqlite3"]
+}
