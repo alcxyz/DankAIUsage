@@ -1,7 +1,7 @@
 {
   "id": "dankAIUsage",
   "name": "AI Usage",
-  "description": "Monitor local Codex and Claude CLI token usage",
+  "description": "Monitor Codex and Claude subscription usage",
   "version": "0.1.0",
   "author": "alcxyz",
   "icon": "monitoring",
@@ -22,12 +22,6 @@
       "minimum": 1,
       "maximum": 90
     },
-    "sessionHours": {
-      "type": "integer",
-      "default": 5,
-      "minimum": 1,
-      "maximum": 24
-    },
     "showCodex": {
       "type": "boolean",
       "default": true
@@ -43,22 +37,6 @@
     "compactPill": {
       "type": "boolean",
       "default": false
-    },
-    "codexSessionLimit": {
-      "type": "string",
-      "default": "0"
-    },
-    "codexWeeklyLimit": {
-      "type": "string",
-      "default": "0"
-    },
-    "claudeSessionLimit": {
-      "type": "string",
-      "default": "0"
-    },
-    "claudeWeeklyLimit": {
-      "type": "string",
-      "default": "0"
     }
   },
   "permissions": ["settings_read", "settings_write", "process"],

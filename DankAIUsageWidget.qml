@@ -12,15 +12,10 @@ PluginComponent {
 
     property int refreshInterval: 300
     property int periodDays: 7
-    property int sessionHours: 5
     property bool showCodex: true
     property bool showClaude: true
     property bool includeCachedTokens: true
     property bool compactPill: false
-    property string codexSessionLimit: "0"
-    property string codexWeeklyLimit: "0"
-    property string claudeSessionLimit: "0"
-    property string claudeWeeklyLimit: "0"
 
     property bool isLoading: true
     property bool hasError: false
@@ -35,15 +30,10 @@ PluginComponent {
         if (!pluginService || !pluginService.loadPluginData) return
         refreshInterval = pluginService.loadPluginData(pluginId, "refreshInterval", 300) || 300
         periodDays = pluginService.loadPluginData(pluginId, "periodDays", 7) || 7
-        sessionHours = pluginService.loadPluginData(pluginId, "sessionHours", 5) || 5
         showCodex = pluginService.loadPluginData(pluginId, "showCodex", true) !== false
         showClaude = pluginService.loadPluginData(pluginId, "showClaude", true) !== false
         includeCachedTokens = pluginService.loadPluginData(pluginId, "includeCachedTokens", true) !== false
         compactPill = pluginService.loadPluginData(pluginId, "compactPill", false) === true
-        codexSessionLimit = "" + (pluginService.loadPluginData(pluginId, "codexSessionLimit", "0") || "0")
-        codexWeeklyLimit = "" + (pluginService.loadPluginData(pluginId, "codexWeeklyLimit", "0") || "0")
-        claudeSessionLimit = "" + (pluginService.loadPluginData(pluginId, "claudeSessionLimit", "0") || "0")
-        claudeWeeklyLimit = "" + (pluginService.loadPluginData(pluginId, "claudeWeeklyLimit", "0") || "0")
     }
 
     function loadCache() {
@@ -77,12 +67,7 @@ PluginComponent {
         _pendingOutput = ""
         usageProcess.command = [
             "dankaiusage", "summary",
-            "--period-days", "" + root.periodDays,
-            "--session-hours", "" + root.sessionHours,
-            "--codex-session-limit", root.limitArg(root.codexSessionLimit),
-            "--codex-weekly-limit", root.limitArg(root.codexWeeklyLimit),
-            "--claude-session-limit", root.limitArg(root.claudeSessionLimit),
-            "--claude-weekly-limit", root.limitArg(root.claudeWeeklyLimit)
+            "--period-days", "" + root.periodDays
         ]
         usageProcess.running = true
     }
@@ -150,13 +135,8 @@ PluginComponent {
         return total
     }
 
-    function limitArg(value) {
-        var parsed = parseInt(value)
-        return isNaN(parsed) || parsed < 0 ? "0" : "" + parsed
-    }
-
     function knownAllowance(allowance) {
-        return allowance && allowance.known && allowance.limit > 0
+        return allowance && allowance.known
     }
 
     function allowanceLabel(allowance) {
@@ -165,7 +145,8 @@ PluginComponent {
     }
 
     function allowanceDetail(allowance) {
-        if (!knownAllowance(allowance)) return "Limit not set"
+        if (!knownAllowance(allowance)) return "Limit unavailable"
+        if (allowance.unit === "percent") return Math.round(allowance.percentRemaining || 0) + "% left of subscription window"
         return formatTokens(allowance.remaining || 0) + " left of " + formatTokens(allowance.limit || 0)
     }
 
@@ -285,7 +266,7 @@ PluginComponent {
                 }
 
                 StyledText {
-                    text: root.sessionHours + "h / week"
+                    text: "session / week"
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                     anchors.verticalCenter: parent.verticalCenter

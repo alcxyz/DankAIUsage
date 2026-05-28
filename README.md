@@ -1,35 +1,45 @@
 # DankAIUsage
 
-DankAIUsage is a DankMaterialShell widget for local Codex and Claude CLI usage
-allowance estimates. It follows the standalone plugin shape used by
-DankCalendar and keeps the QML widget thin by collecting data through the
-`dankaiusage` helper.
+DankAIUsage is a DankMaterialShell widget for Codex and Claude subscription
+usage. It follows the standalone plugin shape used by DankCalendar and keeps
+the QML widget thin by collecting data through the `dankaiusage` helper.
 
 The main display is remaining session and weekly allowance. Token totals are
-kept as a secondary detail because neither Codex nor Claude currently exposes
-authoritative remaining quota through the local CLI/status files.
+kept as a secondary detail.
 
 ## Data sources
 
-- Codex: reads `logs_2.sqlite` from `CODEX_HOME`, `$XDG_CONFIG_HOME/codex` when
-  present, or `~/.codex`.
-- Claude: reads project JSONL transcripts from `CLAUDE_CONFIG_DIR`,
-  `$XDG_CONFIG_HOME/claude` when present, or `~/.claude`.
+- Codex limits: queries the local Codex app server with
+  `account/rateLimits/read`.
+- Claude limits: reads the latest Claude Code statusline JSON cached by
+  `dankaiusage claude-statusline`.
+- Token history: reads Codex `logs_2.sqlite` and Claude project JSONL
+  transcripts from their normal CLI config locations.
 - CLI availability: reports whether `codex`, `claude`, and `sqlite3` are on
   `PATH`.
 
-No credentials are read or written. The helper only emits aggregate local usage.
+No credentials are read or written. The helper only emits aggregate local usage
+and subscription-window percentages already exposed by the local CLIs.
 
-## Allowances
+## Claude statusline
 
-Set the provider allowance limits in plugin settings:
+Claude Code passes statusline commands a JSON snapshot on stdin. Configure it
+to let DankAIUsage cache the rate-limit data without making extra model calls:
 
-- Session limit: allowance for the rolling session window, default 5 hours.
-- Weekly limit: allowance for the current local calendar week.
-- Use `0` when a provider limit is unknown.
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "dankaiusage claude-statusline",
+    "padding": 0
+  }
+}
+```
 
-Limits are token-unit estimates derived from local CLI usage records. They are
-useful for trend/remaining visibility, but are not a server-authoritative quota.
+The cache is written to
+`$XDG_STATE_HOME/dankaiusage/claude-statusline.json`, or
+`~/.local/state/dankaiusage/claude-statusline.json` when `XDG_STATE_HOME` is
+unset.
 
 ## Build
 
@@ -46,10 +56,7 @@ go build ./cmd/dankaiusage
 ## Usage
 
 ```sh
-dankaiusage summary --period-days 7 --session-hours 5 \
-  --codex-session-limit 2000000 --codex-weekly-limit 5000000 \
-  --claude-session-limit 1000000 --claude-weekly-limit 3000000 \
-  --pretty
+dankaiusage summary --period-days 7 --pretty
 ```
 
 The widget polls that command and caches the last successful summary in DMS

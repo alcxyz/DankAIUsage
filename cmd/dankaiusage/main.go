@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -35,12 +36,14 @@ type Allowance struct {
 	Known            bool    `json:"known"`
 	Window           string  `json:"window"`
 	Unit             string  `json:"unit"`
+	Source           string  `json:"source,omitempty"`
 	Used             int64   `json:"used"`
 	Limit            int64   `json:"limit"`
 	Remaining        int64   `json:"remaining"`
 	PercentUsed      float64 `json:"percentUsed"`
 	PercentRemaining float64 `json:"percentRemaining"`
 	ResetAt          string  `json:"resetAt,omitempty"`
+	WindowMinutes    int64   `json:"windowMinutes,omitempty"`
 }
 
 type ModelUsage struct {
@@ -95,12 +98,8 @@ type tokenEvent struct {
 }
 
 type options struct {
-	PeriodDays         int
-	SessionHours       int
-	CodexSessionLimit  int64
-	CodexWeeklyLimit   int64
-	ClaudeSessionLimit int64
-	ClaudeWeeklyLimit  int64
+	PeriodDays   int
+	SessionHours int
 }
 
 func main() {
@@ -108,14 +107,17 @@ func main() {
 		fmt.Println(version)
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "claude-statusline" {
+		if err := captureClaudeStatusline(os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "claude statusline: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	fs := flag.NewFlagSet("summary", flag.ExitOnError)
 	periodDays := fs.Int("period-days", 7, "rolling period length in days")
 	sessionHours := fs.Int("session-hours", 5, "rolling session window length in hours")
-	codexSessionLimit := fs.Int64("codex-session-limit", 0, "Codex session allowance in token units; 0 means unknown")
-	codexWeeklyLimit := fs.Int64("codex-weekly-limit", 0, "Codex weekly allowance in token units; 0 means unknown")
-	claudeSessionLimit := fs.Int64("claude-session-limit", 0, "Claude session allowance in token units; 0 means unknown")
-	claudeWeeklyLimit := fs.Int64("claude-weekly-limit", 0, "Claude weekly allowance in token units; 0 means unknown")
 	pretty := fs.Bool("pretty", false, "pretty-print JSON")
 	_ = fs.Parse(dropSummaryArg(os.Args[1:]))
 
@@ -127,12 +129,8 @@ func main() {
 	}
 
 	summary := collect(options{
-		PeriodDays:         *periodDays,
-		SessionHours:       *sessionHours,
-		CodexSessionLimit:  *codexSessionLimit,
-		CodexWeeklyLimit:   *codexWeeklyLimit,
-		ClaudeSessionLimit: *claudeSessionLimit,
-		ClaudeWeeklyLimit:  *claudeWeeklyLimit,
+		PeriodDays:   *periodDays,
+		SessionHours: *sessionHours,
 	})
 	var data []byte
 	var err error
@@ -191,15 +189,22 @@ func collectCodex(now time.Time, opts options) ProviderUsage {
 	}
 	root := codexHome()
 	provider.DataPath = root
+	if sessionLeft, weeklyLeft, meta, err := collectCodexSubscriptionLimits(now); err == nil {
+		provider.SessionLeft = sessionLeft
+		provider.WeeklyLeft = weeklyLeft
+		provider.Meta = meta
+	} else {
+		setProviderMeta(&provider, "limitError", err.Error())
+	}
 
 	if _, err := exec.LookPath("sqlite3"); err != nil {
-		provider.Error = "sqlite3 not found"
+		setProviderMeta(&provider, "tokenDataError", "sqlite3 not found")
 		return provider
 	}
 
 	db := filepath.Join(root, "logs_2.sqlite")
 	if _, err := os.Stat(db); err != nil {
-		provider.Error = "Codex logs not found"
+		setProviderMeta(&provider, "tokenDataError", "Codex logs not found")
 		return provider
 	}
 
@@ -214,7 +219,7 @@ func collectCodex(now time.Time, opts options) ProviderUsage {
 		if msg == "" {
 			msg = err.Error()
 		}
-		provider.Error = msg
+		setProviderMeta(&provider, "tokenDataError", msg)
 		return provider
 	}
 
@@ -241,10 +246,10 @@ func collectCodex(now time.Time, opts options) ProviderUsage {
 		})
 	}
 	if err := scanner.Err(); err != nil {
-		provider.Error = err.Error()
+		setProviderMeta(&provider, "tokenDataError", err.Error())
 	}
 
-	applyEvents(&provider, events, now, opts, opts.CodexSessionLimit, opts.CodexWeeklyLimit)
+	applyEvents(&provider, events, now, opts)
 	return provider
 }
 
@@ -257,10 +262,17 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 	}
 	root := claudeHome()
 	provider.DataPath = root
+	if sessionLeft, weeklyLeft, meta, err := collectClaudeSubscriptionLimits(now); err == nil {
+		provider.SessionLeft = sessionLeft
+		provider.WeeklyLeft = weeklyLeft
+		provider.Meta = meta
+	} else {
+		setProviderMeta(&provider, "limitError", err.Error())
+	}
 
 	projects := filepath.Join(root, "projects")
 	if _, err := os.Stat(projects); err != nil {
-		provider.Error = "Claude projects not found"
+		setProviderMeta(&provider, "tokenDataError", "Claude projects not found")
 		return provider
 	}
 
@@ -275,16 +287,16 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 		}
 		fileEvents, parseErr := readClaudeJSONL(path)
 		if parseErr != nil && provider.Error == "" {
-			provider.Error = parseErr.Error()
+			setProviderMeta(&provider, "tokenDataError", parseErr.Error())
 		}
 		events = append(events, fileEvents...)
 		return nil
 	})
 	if err != nil {
-		provider.Error = err.Error()
+		setProviderMeta(&provider, "tokenDataError", err.Error())
 	}
 
-	applyEvents(&provider, events, now, opts, opts.ClaudeSessionLimit, opts.ClaudeWeeklyLimit)
+	applyEvents(&provider, events, now, opts)
 	return provider
 }
 
@@ -334,7 +346,7 @@ func readClaudeJSONL(path string) ([]tokenEvent, error) {
 	return events, nil
 }
 
-func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, opts options, sessionLimit int64, weeklyLimit int64) {
+func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, opts options) {
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	sessionStart := now.Add(-time.Duration(opts.SessionHours) * time.Hour)
 	weekdayOffset := int(now.Weekday())
@@ -422,8 +434,12 @@ func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, op
 	if sessionOldest != nil {
 		sessionReset = sessionOldest.Add(time.Duration(opts.SessionHours) * time.Hour)
 	}
-	provider.SessionLeft = makeAllowance("session", provider.Session.Total, sessionLimit, sessionReset)
-	provider.WeeklyLeft = makeAllowance("weekly", provider.Week.Total, weeklyLimit, weekStart.AddDate(0, 0, 7))
+	if !provider.SessionLeft.Known {
+		provider.SessionLeft = makeUnknownAllowance("session", sessionReset)
+	}
+	if !provider.WeeklyLeft.Known {
+		provider.WeeklyLeft = makeUnknownAllowance("weekly", weekStart.AddDate(0, 0, 7))
+	}
 }
 
 func addEvent(totals *PeriodTotals, event tokenEvent) {
@@ -480,6 +496,358 @@ func makeAllowance(window string, used int64, limit int64, resetAt time.Time) Al
 	allowance.PercentUsed = clampPercent(float64(used) / float64(limit) * 100)
 	allowance.PercentRemaining = clampPercent(float64(remaining) / float64(limit) * 100)
 	return allowance
+}
+
+func makeUnknownAllowance(window string, resetAt time.Time) Allowance {
+	return Allowance{
+		Window:  window,
+		Unit:    "subscription",
+		ResetAt: resetAt.Format(time.RFC3339),
+	}
+}
+
+func makeSubscriptionAllowance(window string, source string, usedPercent float64, resetAt time.Time, windowMinutes int64) Allowance {
+	remaining := clampPercent(100 - usedPercent)
+	return Allowance{
+		Known:            true,
+		Window:           window,
+		Unit:             "percent",
+		Source:           source,
+		Used:             int64(clampPercent(usedPercent) + 0.5),
+		Limit:            100,
+		Remaining:        int64(remaining + 0.5),
+		PercentUsed:      clampPercent(usedPercent),
+		PercentRemaining: remaining,
+		ResetAt:          resetAt.Format(time.RFC3339),
+		WindowMinutes:    windowMinutes,
+	}
+}
+
+type codexRateLimitResponse struct {
+	ID     int `json:"id"`
+	Result struct {
+		RateLimits          codexRateLimitSnapshot            `json:"rateLimits"`
+		RateLimitsByLimitID map[string]codexRateLimitSnapshot `json:"rateLimitsByLimitId"`
+	} `json:"result"`
+	Error any `json:"error,omitempty"`
+}
+
+type codexRateLimitSnapshot struct {
+	LimitID              string               `json:"limitId"`
+	LimitName            string               `json:"limitName"`
+	Primary              codexRateLimitWindow `json:"primary"`
+	Secondary            codexRateLimitWindow `json:"secondary"`
+	PlanType             string               `json:"planType"`
+	RateLimitReachedType any                  `json:"rateLimitReachedType"`
+}
+
+type codexRateLimitWindow struct {
+	UsedPercent        float64 `json:"usedPercent"`
+	WindowDurationMins *int64  `json:"windowDurationMins"`
+	ResetsAt           *int64  `json:"resetsAt"`
+}
+
+func collectCodexSubscriptionLimits(now time.Time) (Allowance, Allowance, map[string]any, error) {
+	if _, err := exec.LookPath("codex"); err != nil {
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "codex", "app-server", "--listen", "stdio://", "--analytics-default-enabled")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+	}
+
+	_, _ = io.WriteString(stdin, `{"id":1,"method":"initialize","params":{"clientInfo":{"name":"dankaiusage","title":"DankAIUsage","version":"`+version+`"},"capabilities":null}}`+"\n")
+	_, _ = io.WriteString(stdin, `{"id":2,"method":"account/rateLimits/read","params":null}`+"\n")
+	defer stdin.Close()
+
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var envelope struct {
+			ID int `json:"id"`
+		}
+		if err := json.Unmarshal(line, &envelope); err != nil || envelope.ID != 2 {
+			continue
+		}
+		var response codexRateLimitResponse
+		if err := json.Unmarshal(line, &response); err != nil {
+			_ = stdin.Close()
+			cancel()
+			_ = cmd.Wait()
+			return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+		}
+		if response.Error != nil {
+			_ = stdin.Close()
+			cancel()
+			_ = cmd.Wait()
+			return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, fmt.Errorf("%v", response.Error)
+		}
+		snapshot := response.Result.RateLimits
+		if byID := response.Result.RateLimitsByLimitID["codex"]; byID.LimitID != "" {
+			snapshot = byID
+		}
+		_ = stdin.Close()
+		cancel()
+		_ = cmd.Wait()
+		return codexSnapshotAllowances(snapshot, now), codexSnapshotWeeklyAllowance(snapshot, now), codexSnapshotMeta(snapshot), nil
+	}
+	if err := scanner.Err(); err != nil {
+		_ = stdin.Close()
+		cancel()
+		_ = cmd.Wait()
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+	}
+	_ = stdin.Close()
+	err = cmd.Wait()
+	msg := strings.TrimSpace(stderr.String())
+	if msg == "" && err != nil {
+		msg = err.Error()
+	}
+	if msg == "" {
+		msg = "Codex rate limits unavailable"
+	}
+	return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, errors.New(msg)
+}
+
+func codexSnapshotAllowances(snapshot codexRateLimitSnapshot, now time.Time) Allowance {
+	return makeSubscriptionAllowance("session", "codex app-server", snapshot.Primary.UsedPercent, codexResetTime(snapshot.Primary, now), codexWindowMinutes(snapshot.Primary))
+}
+
+func codexSnapshotWeeklyAllowance(snapshot codexRateLimitSnapshot, now time.Time) Allowance {
+	return makeSubscriptionAllowance("weekly", "codex app-server", snapshot.Secondary.UsedPercent, codexResetTime(snapshot.Secondary, now), codexWindowMinutes(snapshot.Secondary))
+}
+
+func codexSnapshotMeta(snapshot codexRateLimitSnapshot) map[string]any {
+	meta := map[string]any{
+		"limitId":  snapshot.LimitID,
+		"planType": snapshot.PlanType,
+	}
+	if snapshot.LimitName != "" {
+		meta["limitName"] = snapshot.LimitName
+	}
+	if snapshot.RateLimitReachedType != nil {
+		meta["rateLimitReachedType"] = snapshot.RateLimitReachedType
+	}
+	return meta
+}
+
+func codexResetTime(window codexRateLimitWindow, fallback time.Time) time.Time {
+	if window.ResetsAt == nil || *window.ResetsAt <= 0 {
+		return fallback
+	}
+	return time.Unix(*window.ResetsAt, 0).Local()
+}
+
+func codexWindowMinutes(window codexRateLimitWindow) int64 {
+	if window.WindowDurationMins == nil {
+		return 0
+	}
+	return *window.WindowDurationMins
+}
+
+func captureClaudeStatusline(r io.Reader, w io.Writer) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		_, _ = fmt.Fprintln(w, "Claude --")
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(claudeStatuslineCachePath()), 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(claudeStatuslineCachePath(), data, 0o600); err != nil {
+		return err
+	}
+
+	status, err := parseClaudeStatusline(data, time.Now())
+	if err != nil {
+		_, _ = fmt.Fprintln(w, "Claude --")
+		return nil
+	}
+	_, _ = fmt.Fprintf(w, "Claude S %s W %s\n", status.sessionLabel(), status.weeklyLabel())
+	return nil
+}
+
+type claudeStatuslineLimits struct {
+	Session Allowance
+	Weekly  Allowance
+	Model   string
+	Version string
+}
+
+func (limits claudeStatuslineLimits) sessionLabel() string {
+	if !limits.Session.Known {
+		return "--"
+	}
+	return fmt.Sprintf("%.0f%%", limits.Session.PercentRemaining)
+}
+
+func (limits claudeStatuslineLimits) weeklyLabel() string {
+	if !limits.Weekly.Known {
+		return "--"
+	}
+	return fmt.Sprintf("%.0f%%", limits.Weekly.PercentRemaining)
+}
+
+func collectClaudeSubscriptionLimits(now time.Time) (Allowance, Allowance, map[string]any, error) {
+	path := claudeStatuslineCachePath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), map[string]any{
+			"statuslineCache": path,
+		}, fmt.Errorf("Claude statusline cache not found; set statusLine.command to dankaiusage claude-statusline")
+	}
+	limits, err := parseClaudeStatusline(data, now)
+	if err != nil {
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), map[string]any{
+			"statuslineCache": path,
+		}, err
+	}
+	meta := map[string]any{
+		"source":          "claude statusline",
+		"statuslineCache": path,
+	}
+	if limits.Model != "" {
+		meta["model"] = limits.Model
+	}
+	if limits.Version != "" {
+		meta["version"] = limits.Version
+	}
+	return limits.Session, limits.Weekly, meta, nil
+}
+
+func parseClaudeStatusline(data []byte, now time.Time) (claudeStatuslineLimits, error) {
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		return claudeStatuslineLimits{}, err
+	}
+	limitsMap := firstMap(root, "rate_limits", "rateLimits", "rateLimitsInfo")
+	if limitsMap == nil {
+		return claudeStatuslineLimits{}, errors.New("Claude statusline has no rate limit data yet")
+	}
+	sessionMap := firstMap(limitsMap, "five_hour", "fiveHour", "session", "primary")
+	weeklyMap := firstMap(limitsMap, "seven_day", "sevenDay", "weekly", "secondary")
+	out := claudeStatuslineLimits{
+		Session: parseClaudeLimitWindow("session", sessionMap, now),
+		Weekly:  parseClaudeLimitWindow("weekly", weeklyMap, now),
+		Version: stringValue(root["version"]),
+	}
+	if model := firstMap(root, "model"); model != nil {
+		out.Model = firstNonEmpty(stringValue(model["display_name"]), stringValue(model["displayName"]), stringValue(model["id"]))
+	}
+	if !out.Session.Known && !out.Weekly.Known {
+		return out, errors.New("Claude statusline has no session or weekly usage percentages")
+	}
+	return out, nil
+}
+
+func parseClaudeLimitWindow(window string, values map[string]any, now time.Time) Allowance {
+	if values == nil {
+		return makeUnknownAllowance(window, now)
+	}
+	used, ok := firstFloat(values, "used_percentage", "usedPercent", "used_percent", "percentage", "percent_used", "percentUsed")
+	if !ok {
+		return makeUnknownAllowance(window, parseReset(values, now))
+	}
+	windowMinutes, _ := firstFloat(values, "window_duration_mins", "windowDurationMins", "window_minutes", "windowMinutes")
+	return makeSubscriptionAllowance(window, "claude statusline", used, parseReset(values, now), int64(windowMinutes))
+}
+
+func parseReset(values map[string]any, fallback time.Time) time.Time {
+	for _, key := range []string{"resets_at", "resetsAt", "reset_at", "resetAt"} {
+		value, ok := values[key]
+		if !ok {
+			continue
+		}
+		switch v := value.(type) {
+		case float64:
+			if v > 1_000_000_000_000 {
+				return time.UnixMilli(int64(v)).Local()
+			}
+			if v > 0 {
+				return time.Unix(int64(v), 0).Local()
+			}
+		case string:
+			if ts, err := time.Parse(time.RFC3339, v); err == nil {
+				return ts.Local()
+			}
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+				if n > 1_000_000_000_000 {
+					return time.UnixMilli(n).Local()
+				}
+				return time.Unix(n, 0).Local()
+			}
+		}
+	}
+	return fallback
+}
+
+func firstMap(values map[string]any, keys ...string) map[string]any {
+	for _, key := range keys {
+		if child, ok := values[key].(map[string]any); ok {
+			return child
+		}
+	}
+	return nil
+}
+
+func firstFloat(values map[string]any, keys ...string) (float64, bool) {
+	for _, key := range keys {
+		switch v := values[key].(type) {
+		case float64:
+			return v, true
+		case int:
+			return float64(v), true
+		case int64:
+			return float64(v), true
+		case json.Number:
+			if n, err := v.Float64(); err == nil {
+				return n, true
+			}
+		case string:
+			if n, err := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64); err == nil {
+				return n, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func claudeStatuslineCachePath() string {
+	if value := os.Getenv("XDG_STATE_HOME"); value != "" {
+		return filepath.Join(value, "dankaiusage", "claude-statusline.json")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "state", "dankaiusage", "claude-statusline.json")
+}
+
+func setProviderMeta(provider *ProviderUsage, key string, value any) {
+	if provider.Meta == nil {
+		provider.Meta = map[string]any{}
+	}
+	provider.Meta[key] = value
 }
 
 func clampPercent(value float64) float64 {

@@ -26,69 +26,33 @@ PluginSettings {
         defaultValue: 7
     }
 
-    SliderSetting {
-        settingKey: "sessionHours"
-        label: "Session window (hours)"
-        description: "Rolling window used for session allowance estimates"
-        minimum: 1
-        maximum: 24
-        defaultValue: 5
-    }
-
     ToggleSetting {
         settingKey: "showCodex"
         label: "Show Codex"
-        description: "Display usage collected from the local Codex CLI data store"
+        description: "Display subscription limits and local token history from Codex"
         defaultValue: true
     }
 
     ToggleSetting {
         settingKey: "showClaude"
         label: "Show Claude"
-        description: "Display usage collected from the local Claude CLI data store"
+        description: "Display cached Claude Code subscription limits and local token history"
         defaultValue: true
     }
 
     StyledText {
-        text: "Codex allowance"
+        text: "Subscription limits"
         font.pixelSize: Theme.fontSizeLarge
         font.weight: Font.Bold
         color: Theme.surfaceText
-    }
-
-    StringSetting {
-        settingKey: "codexSessionLimit"
-        label: "Session limit"
-        description: "Token allowance for the configured session window. Use 0 when unknown."
-        placeholder: "0"
-    }
-
-    StringSetting {
-        settingKey: "codexWeeklyLimit"
-        label: "Weekly limit"
-        description: "Token allowance for the current local calendar week. Use 0 when unknown."
-        placeholder: "0"
     }
 
     StyledText {
-        text: "Claude allowance"
-        font.pixelSize: Theme.fontSizeLarge
-        font.weight: Font.Bold
-        color: Theme.surfaceText
-    }
-
-    StringSetting {
-        settingKey: "claudeSessionLimit"
-        label: "Session limit"
-        description: "Token allowance for the configured session window. Use 0 when unknown."
-        placeholder: "0"
-    }
-
-    StringSetting {
-        settingKey: "claudeWeeklyLimit"
-        label: "Weekly limit"
-        description: "Token allowance for the current local calendar week. Use 0 when unknown."
-        placeholder: "0"
+        text: "Codex is queried from the local Codex app server. Claude is cached from Claude Code statusline data."
+        width: parent.width
+        wrapMode: Text.WordWrap
+        font.pixelSize: Theme.fontSizeSmall
+        color: Theme.surfaceVariantText
     }
 
     ToggleSetting {
@@ -101,7 +65,7 @@ PluginSettings {
     ToggleSetting {
         settingKey: "compactPill"
         label: "Compact pill"
-        description: "Show only the combined rolling total in the bar"
+        description: "Show only the lowest remaining subscription percentage in the bar"
         defaultValue: false
     }
 }

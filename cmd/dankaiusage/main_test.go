@@ -51,6 +51,66 @@ func TestMakeAllowance(t *testing.T) {
 	}
 }
 
+func TestCodexSnapshotAllowances(t *testing.T) {
+	now := mustParseTime(t, "2026-05-28T12:00:00Z")
+	sessionReset := int64(1779994842)
+	weeklyReset := int64(1780528901)
+	sessionMins := int64(300)
+	weeklyMins := int64(10080)
+	snapshot := codexRateLimitSnapshot{
+		LimitID:  "codex",
+		PlanType: "pro",
+		Primary: codexRateLimitWindow{
+			UsedPercent:        12.5,
+			WindowDurationMins: &sessionMins,
+			ResetsAt:           &sessionReset,
+		},
+		Secondary: codexRateLimitWindow{
+			UsedPercent:        44,
+			WindowDurationMins: &weeklyMins,
+			ResetsAt:           &weeklyReset,
+		},
+	}
+
+	session := codexSnapshotAllowances(snapshot, now)
+	if !session.Known || session.Unit != "percent" || session.PercentRemaining != 87.5 {
+		t.Fatalf("session allowance = %+v", session)
+	}
+	if session.WindowMinutes != 300 {
+		t.Fatalf("session window minutes = %d", session.WindowMinutes)
+	}
+	weekly := codexSnapshotWeeklyAllowance(snapshot, now)
+	if !weekly.Known || weekly.PercentRemaining != 56 {
+		t.Fatalf("weekly allowance = %+v", weekly)
+	}
+}
+
+func TestParseClaudeStatusline(t *testing.T) {
+	now := mustParseTime(t, "2026-05-28T12:00:00Z")
+	data := []byte(`{
+		"version": "2.1.152",
+		"model": {"display_name": "Sonnet"},
+		"rate_limits": {
+			"five_hour": {"used_percentage": 20, "resets_at": "2026-05-28T17:00:00Z"},
+			"seven_day": {"usedPercent": 75, "resetsAt": 1780528901}
+		}
+	}`)
+
+	limits, err := parseClaudeStatusline(data, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limits.Model != "Sonnet" || limits.Version != "2.1.152" {
+		t.Fatalf("metadata = %+v", limits)
+	}
+	if limits.Session.PercentRemaining != 80 {
+		t.Fatalf("session remaining = %f", limits.Session.PercentRemaining)
+	}
+	if limits.Weekly.PercentRemaining != 25 {
+		t.Fatalf("weekly remaining = %f", limits.Weekly.PercentRemaining)
+	}
+}
+
 func mustParseTime(t *testing.T, value string) time.Time {
 	t.Helper()
 	parsed, err := time.Parse(time.RFC3339, value)
