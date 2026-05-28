@@ -68,4 +68,11 @@ PluginSettings {
         description: "Show only the lowest remaining subscription percentage in the bar"
         defaultValue: false
     }
+
+    ToggleSetting {
+        settingKey: "focusWeekly"
+        label: "Focus weekly limits"
+        description: "Use weekly instead of session limits for compact and summary emphasis"
+        defaultValue: false
+    }
 }

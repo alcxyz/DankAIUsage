@@ -37,6 +37,10 @@
     "compactPill": {
       "type": "boolean",
       "default": false
+    },
+    "focusWeekly": {
+      "type": "boolean",
+      "default": false
     }
   },
   "permissions": ["settings_read", "settings_write", "process"],

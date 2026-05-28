@@ -16,6 +16,7 @@ PluginComponent {
     property bool showClaude: true
     property bool includeCachedTokens: true
     property bool compactPill: false
+    property bool focusWeekly: false
 
     property bool isLoading: true
     property bool hasError: false
@@ -34,6 +35,7 @@ PluginComponent {
         showClaude = pluginService.loadPluginData(pluginId, "showClaude", true) !== false
         includeCachedTokens = pluginService.loadPluginData(pluginId, "includeCachedTokens", true) !== false
         compactPill = pluginService.loadPluginData(pluginId, "compactPill", false) === true
+        focusWeekly = pluginService.loadPluginData(pluginId, "focusWeekly", false) === true
     }
 
     function loadCache() {
@@ -158,16 +160,32 @@ PluginComponent {
         return Theme.primary
     }
 
-    function weakestKnownAllowance() {
+    function selectedAllowanceWindow() {
+        return focusWeekly ? "weekly" : "session"
+    }
+
+    function setFocusWindow(window) {
+        focusWeekly = window === "weekly"
+        if (pluginService && pluginService.savePluginData)
+            pluginService.savePluginData(pluginId, "focusWeekly", focusWeekly)
+    }
+
+    function allowanceFor(provider, window) {
+        if (!provider) return null
+        return window === "weekly" ? provider.weeklyLeft : provider.sessionLeft
+    }
+
+    function windowLabel(window) {
+        return window === "weekly" ? "Weekly" : "Session"
+    }
+
+    function weakestAllowance(window) {
         var weakest = null
         var list = visibleProviders()
         for (var i = 0; i < list.length; i++) {
-            var allowances = [list[i].sessionLeft, list[i].weeklyLeft]
-            for (var j = 0; j < allowances.length; j++) {
-                var a = allowances[j]
-                if (!knownAllowance(a)) continue
-                if (!weakest || (a.percentRemaining || 0) < (weakest.percentRemaining || 0)) weakest = a
-            }
+            var a = allowanceFor(list[i], window)
+            if (!knownAllowance(a)) continue
+            if (!weakest || (a.percentRemaining || 0) < (weakest.percentRemaining || 0)) weakest = a
         }
         return weakest
     }
@@ -198,8 +216,9 @@ PluginComponent {
 
     function pillLabel() {
         if (isLoading && providers.length === 0) return "..."
-        var weakest = weakestKnownAllowance()
-        if (compactPill) return weakest ? allowanceLabel(weakest) : "--"
+        var focus = selectedAllowanceWindow()
+        var weakest = weakestAllowance(focus)
+        if (compactPill) return (focus === "weekly" ? "W " : "S ") + (weakest ? allowanceLabel(weakest) : "--")
 
         var list = visibleProviders()
         var parts = []
@@ -225,6 +244,8 @@ PluginComponent {
                 font.pixelSize: Theme.fontSizeMedium
                 color: root.hasError ? "#ff6b6b" : Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
+                elide: Text.ElideRight
+                maximumLineCount: 1
             }
         }
     }
@@ -253,37 +274,45 @@ PluginComponent {
         Column {
             spacing: Theme.spacingL
 
-            Row {
+            Item {
                 width: parent.width
-                spacing: Theme.spacingS
+                height: headerTitle.implicitHeight + headerSubtitle.implicitHeight + 2
 
-                StyledText {
-                    text: "AI Usage"
-                    font.pixelSize: Theme.fontSizeXLarge
-                    font.weight: Font.Bold
-                    color: Theme.surfaceText
+                Column {
+                    anchors.left: parent.left
+                    anchors.right: refreshButton.left
+                    anchors.rightMargin: Theme.spacingS
                     anchors.verticalCenter: parent.verticalCenter
-                }
+                    spacing: 2
 
-                StyledText {
-                    text: "session / week"
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceVariantText
-                    anchors.verticalCenter: parent.verticalCenter
-                }
+                    StyledText {
+                        id: headerTitle
+                        width: parent.width
+                        text: "AI Usage"
+                        font.pixelSize: Theme.fontSizeLarge
+                        font.weight: Font.Bold
+                        color: Theme.surfaceText
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
+                    }
 
-                StyledText {
-                    text: root.lastUpdated
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceVariantText
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: root.lastUpdated !== ""
+                    StyledText {
+                        id: headerSubtitle
+                        width: parent.width
+                        text: root.windowLabel(root.selectedAllowanceWindow()) + " focus" + (root.lastUpdated ? " - " + root.lastUpdated : "")
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
+                    }
                 }
 
                 DankActionButton {
+                    id: refreshButton
                     buttonSize: 28
                     iconName: "refresh"
                     iconColor: Theme.surfaceVariantText
+                    anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     onClicked: root.refreshUsage()
                 }
@@ -291,55 +320,56 @@ PluginComponent {
 
             StyledRect {
                 width: parent.width
-                height: 72
+                height: 92
                 radius: Theme.cornerRadius
                 color: Theme.surfaceContainerHigh
 
-                Item {
+                Row {
                     anchors.fill: parent
                     anchors.margins: Theme.spacingM
+                    spacing: Theme.spacingM
 
-                    Row {
-                        anchors.left: parent.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: Theme.spacingS
-
-                        DankIcon {
-                            name: "hourglass_top"
-                            size: Theme.fontSizeLarge
-                            color: root.allowanceColor(root.weakestKnownAllowance())
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        Column {
-                            spacing: 2
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            StyledText {
-                                text: {
-                                    var weakest = root.weakestKnownAllowance()
-                                    return weakest ? root.allowanceLabel(weakest) : "--"
-                                }
-                                font.pixelSize: Theme.fontSizeXLarge
-                                font.weight: Font.Bold
-                                color: Theme.surfaceText
-                            }
-
-                            StyledText {
-                                text: "Lowest allowance"
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceVariantText
-                            }
-                        }
+                    LimitBucket {
+                        width: (parent.width - Theme.spacingM) / 2
+                        title: "Session"
+                        allowance: root.weakestAllowance("session")
+                        selected: root.selectedAllowanceWindow() === "session"
                     }
 
-                    StyledText {
-                        text: root.formatTokens(root.filteredGrandTotal()) + " tokens"
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.surfaceVariantText
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
+                    LimitBucket {
+                        width: (parent.width - Theme.spacingM) / 2
+                        title: "Weekly"
+                        allowance: root.weakestAllowance("weekly")
+                        selected: root.selectedAllowanceWindow() === "weekly"
                     }
+                }
+            }
+
+            Item {
+                width: parent.width
+                height: tokensValue.implicitHeight
+
+                StyledText {
+                    text: "Token history"
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                    anchors.left: parent.left
+                    anchors.right: tokensValue.left
+                    anchors.rightMargin: Theme.spacingS
+                    anchors.verticalCenter: parent.verticalCenter
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
+                }
+
+                StyledText {
+                    id: tokensValue
+                    text: root.formatTokens(root.filteredGrandTotal()) + " tokens"
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
                 }
             }
 
@@ -362,7 +392,7 @@ PluginComponent {
 
                     StyledRect {
                         width: parent.width
-                        height: 136
+                        height: 144
                         radius: Theme.cornerRadius
                         color: Theme.surfaceContainerHigh
 
@@ -377,6 +407,8 @@ PluginComponent {
 
                                 Row {
                                     anchors.left: parent.left
+                                    anchors.right: providerLimits.left
+                                    anchors.rightMargin: Theme.spacingS
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: Theme.spacingS
 
@@ -389,28 +421,35 @@ PluginComponent {
 
                                     StyledText {
                                         text: modelData.name
+                                        width: parent.width - Theme.fontSizeMedium - Theme.spacingS
                                         font.pixelSize: Theme.fontSizeMedium
                                         font.weight: Font.Medium
                                         color: Theme.surfaceText
                                         anchors.verticalCenter: parent.verticalCenter
+                                        elide: Text.ElideRight
+                                        maximumLineCount: 1
                                     }
                                 }
 
                                 StyledText {
+                                    id: providerLimits
                                     text: root.allowanceLabel(modelData.sessionLeft) + " / " + root.allowanceLabel(modelData.weeklyLeft)
-                                    font.pixelSize: Theme.fontSizeLarge
+                                    font.pixelSize: Theme.fontSizeMedium
                                     font.weight: Font.Bold
                                     color: root.providerColor(modelData)
                                     anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
+                                    elide: Text.ElideRight
+                                    maximumLineCount: 1
                                 }
                             }
 
                             Row {
                                 width: parent.width
-                                spacing: Theme.spacingM
+                                spacing: Theme.spacingS
 
                                 UsageMetric {
+                                    width: (parent.width - Theme.spacingS * 2) / 3
                                     label: "Session"
                                     value: root.allowanceLabel(modelData.sessionLeft)
                                     detail: root.allowanceDetail(modelData.sessionLeft)
@@ -418,6 +457,7 @@ PluginComponent {
                                 }
 
                                 UsageMetric {
+                                    width: (parent.width - Theme.spacingS * 2) / 3
                                     label: "Week"
                                     value: root.allowanceLabel(modelData.weeklyLeft)
                                     detail: root.allowanceDetail(modelData.weeklyLeft)
@@ -425,6 +465,7 @@ PluginComponent {
                                 }
 
                                 UsageMetric {
+                                    width: (parent.width - Theme.spacingS * 2) / 3
                                     label: "Tokens"
                                     value: root.formatTokens(root.displayTotal(modelData.period))
                                     detail: (modelData.period.requests || 0) + " requests"
@@ -470,7 +511,6 @@ PluginComponent {
         property string value: ""
         property string detail: ""
         property var valueColor: Theme.surfaceText
-        width: 92
         spacing: 2
 
         StyledText {
@@ -478,12 +518,18 @@ PluginComponent {
             font.pixelSize: Theme.fontSizeMedium
             font.weight: Font.Medium
             color: parent.valueColor
+            width: parent.width
+            elide: Text.ElideRight
+            maximumLineCount: 1
         }
 
         StyledText {
             text: parent.label
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceVariantText
+            width: parent.width
+            elide: Text.ElideRight
+            maximumLineCount: 1
         }
 
         StyledText {
@@ -492,6 +538,68 @@ PluginComponent {
             color: Theme.surfaceVariantText
             elide: Text.ElideRight
             width: parent.width
+            maximumLineCount: 1
+        }
+    }
+
+    component LimitBucket: Item {
+        property string title: ""
+        property var allowance: null
+        property bool selected: false
+
+        height: parent ? parent.height : 64
+
+        Column {
+            anchors.fill: parent
+            spacing: 2
+
+            Row {
+                width: parent.width
+                spacing: Theme.spacingXS
+
+                DankIcon {
+                    name: selected ? "filter_alt" : "hourglass_top"
+                    size: Theme.fontSizeSmall
+                    color: root.allowanceColor(allowance)
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                StyledText {
+                    width: parent.width - Theme.fontSizeSmall - Theme.spacingXS
+                    text: title
+                    font.pixelSize: Theme.fontSizeSmall
+                    font.weight: selected ? Font.Bold : Font.Medium
+                    color: selected ? Theme.surfaceText : Theme.surfaceVariantText
+                    anchors.verticalCenter: parent.verticalCenter
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
+                }
+            }
+
+            StyledText {
+                width: parent.width
+                text: root.allowanceLabel(allowance)
+                font.pixelSize: Theme.fontSizeLarge
+                font.weight: Font.Bold
+                color: root.allowanceColor(allowance)
+                elide: Text.ElideRight
+                maximumLineCount: 1
+            }
+
+            StyledText {
+                width: parent.width
+                text: root.formatReset(allowance)
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.surfaceVariantText
+                elide: Text.ElideRight
+                maximumLineCount: 1
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.setFocusWindow(title === "Weekly" ? "weekly" : "session")
         }
     }
 
