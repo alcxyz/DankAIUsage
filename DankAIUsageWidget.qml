@@ -12,10 +12,15 @@ PluginComponent {
 
     property int refreshInterval: 300
     property int periodDays: 7
+    property int sessionHours: 5
     property bool showCodex: true
     property bool showClaude: true
     property bool includeCachedTokens: true
     property bool compactPill: false
+    property string codexSessionLimit: "0"
+    property string codexWeeklyLimit: "0"
+    property string claudeSessionLimit: "0"
+    property string claudeWeeklyLimit: "0"
 
     property bool isLoading: true
     property bool hasError: false
@@ -30,10 +35,15 @@ PluginComponent {
         if (!pluginService || !pluginService.loadPluginData) return
         refreshInterval = pluginService.loadPluginData(pluginId, "refreshInterval", 300) || 300
         periodDays = pluginService.loadPluginData(pluginId, "periodDays", 7) || 7
+        sessionHours = pluginService.loadPluginData(pluginId, "sessionHours", 5) || 5
         showCodex = pluginService.loadPluginData(pluginId, "showCodex", true) !== false
         showClaude = pluginService.loadPluginData(pluginId, "showClaude", true) !== false
         includeCachedTokens = pluginService.loadPluginData(pluginId, "includeCachedTokens", true) !== false
         compactPill = pluginService.loadPluginData(pluginId, "compactPill", false) === true
+        codexSessionLimit = "" + (pluginService.loadPluginData(pluginId, "codexSessionLimit", "0") || "0")
+        codexWeeklyLimit = "" + (pluginService.loadPluginData(pluginId, "codexWeeklyLimit", "0") || "0")
+        claudeSessionLimit = "" + (pluginService.loadPluginData(pluginId, "claudeSessionLimit", "0") || "0")
+        claudeWeeklyLimit = "" + (pluginService.loadPluginData(pluginId, "claudeWeeklyLimit", "0") || "0")
     }
 
     function loadCache() {
@@ -65,7 +75,15 @@ PluginComponent {
     function refreshUsage() {
         if (usageProcess.running) return
         _pendingOutput = ""
-        usageProcess.command = ["dankaiusage", "summary", "--period-days", "" + root.periodDays]
+        usageProcess.command = [
+            "dankaiusage", "summary",
+            "--period-days", "" + root.periodDays,
+            "--session-hours", "" + root.sessionHours,
+            "--codex-session-limit", root.limitArg(root.codexSessionLimit),
+            "--codex-weekly-limit", root.limitArg(root.codexWeeklyLimit),
+            "--claude-session-limit", root.limitArg(root.claudeSessionLimit),
+            "--claude-weekly-limit", root.limitArg(root.claudeWeeklyLimit)
+        ]
         usageProcess.running = true
     }
 
@@ -132,6 +150,54 @@ PluginComponent {
         return total
     }
 
+    function limitArg(value) {
+        var parsed = parseInt(value)
+        return isNaN(parsed) || parsed < 0 ? "0" : "" + parsed
+    }
+
+    function knownAllowance(allowance) {
+        return allowance && allowance.known && allowance.limit > 0
+    }
+
+    function allowanceLabel(allowance) {
+        if (!knownAllowance(allowance)) return "--"
+        return Math.round(allowance.percentRemaining || 0) + "%"
+    }
+
+    function allowanceDetail(allowance) {
+        if (!knownAllowance(allowance)) return "Limit not set"
+        return formatTokens(allowance.remaining || 0) + " left of " + formatTokens(allowance.limit || 0)
+    }
+
+    function allowanceColor(allowance) {
+        if (!knownAllowance(allowance)) return Theme.surfaceVariantText
+        var pct = allowance.percentRemaining || 0
+        if (pct <= 10) return "#ff6b6b"
+        if (pct <= 25) return "#ffaa00"
+        return Theme.primary
+    }
+
+    function weakestKnownAllowance() {
+        var weakest = null
+        var list = visibleProviders()
+        for (var i = 0; i < list.length; i++) {
+            var allowances = [list[i].sessionLeft, list[i].weeklyLeft]
+            for (var j = 0; j < allowances.length; j++) {
+                var a = allowances[j]
+                if (!knownAllowance(a)) continue
+                if (!weakest || (a.percentRemaining || 0) < (weakest.percentRemaining || 0)) weakest = a
+            }
+        }
+        return weakest
+    }
+
+    function formatReset(allowance) {
+        if (!allowance || !allowance.resetAt) return "--"
+        var d = new Date(allowance.resetAt)
+        if (isNaN(d.getTime())) return "--"
+        return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2)
+    }
+
     function formatTokens(value) {
         value = Math.max(0, value || 0)
         if (value >= 1000000000) return (value / 1000000000).toFixed(1) + "B"
@@ -150,15 +216,16 @@ PluginComponent {
     }
 
     function pillLabel() {
-        if (isLoading && filteredGrandTotal() === 0) return "..."
-        if (compactPill) return formatTokens(filteredGrandTotal())
+        if (isLoading && providers.length === 0) return "..."
+        var weakest = weakestKnownAllowance()
+        if (compactPill) return weakest ? allowanceLabel(weakest) : "--"
 
         var list = visibleProviders()
         var parts = []
         for (var i = 0; i < list.length; i++) {
-            parts.push((list[i].id === "codex" ? "Cx " : "Cl ") + formatTokens(displayTotal(list[i].period)))
+            parts.push((list[i].id === "codex" ? "Cx " : "Cl ") + allowanceLabel(list[i].sessionLeft) + "/" + allowanceLabel(list[i].weeklyLeft))
         }
-        return parts.length > 0 ? parts.join(" / ") : "0"
+        return parts.length > 0 ? parts.join("  ") : "--"
     }
 
     horizontalBarPill: Component {
@@ -218,7 +285,7 @@ PluginComponent {
                 }
 
                 StyledText {
-                    text: root.periodDays + "d"
+                    text: root.sessionHours + "h / week"
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                     anchors.verticalCenter: parent.verticalCenter
@@ -257,9 +324,9 @@ PluginComponent {
                         spacing: Theme.spacingS
 
                         DankIcon {
-                            name: "token"
+                            name: "hourglass_top"
                             size: Theme.fontSizeLarge
-                            color: Theme.primary
+                            color: root.allowanceColor(root.weakestKnownAllowance())
                             anchors.verticalCenter: parent.verticalCenter
                         }
 
@@ -268,14 +335,17 @@ PluginComponent {
                             anchors.verticalCenter: parent.verticalCenter
 
                             StyledText {
-                                text: root.formatTokens(root.filteredGrandTotal())
+                                text: {
+                                    var weakest = root.weakestKnownAllowance()
+                                    return weakest ? root.allowanceLabel(weakest) : "--"
+                                }
                                 font.pixelSize: Theme.fontSizeXLarge
                                 font.weight: Font.Bold
                                 color: Theme.surfaceText
                             }
 
                             StyledText {
-                                text: "Rolling total"
+                                text: "Lowest allowance"
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
                             }
@@ -283,7 +353,7 @@ PluginComponent {
                     }
 
                     StyledText {
-                        text: (root.grandTotal.requests || 0) + " requests"
+                        text: root.formatTokens(root.filteredGrandTotal()) + " tokens"
                         font.pixelSize: Theme.fontSizeSmall
                         color: Theme.surfaceVariantText
                         anchors.right: parent.right
@@ -311,7 +381,7 @@ PluginComponent {
 
                     StyledRect {
                         width: parent.width
-                        height: 118
+                        height: 136
                         radius: Theme.cornerRadius
                         color: Theme.surfaceContainerHigh
 
@@ -346,7 +416,7 @@ PluginComponent {
                                 }
 
                                 StyledText {
-                                    text: root.formatTokens(root.displayTotal(modelData.period))
+                                    text: root.allowanceLabel(modelData.sessionLeft) + " / " + root.allowanceLabel(modelData.weeklyLeft)
                                     font.pixelSize: Theme.fontSizeLarge
                                     font.weight: Font.Bold
                                     color: root.providerColor(modelData)
@@ -360,24 +430,30 @@ PluginComponent {
                                 spacing: Theme.spacingM
 
                                 UsageMetric {
-                                    label: "Today"
-                                    value: root.formatTokens(root.displayTotal(modelData.today))
+                                    label: "Session"
+                                    value: root.allowanceLabel(modelData.sessionLeft)
+                                    detail: root.allowanceDetail(modelData.sessionLeft)
+                                    valueColor: root.allowanceColor(modelData.sessionLeft)
                                 }
 
                                 UsageMetric {
                                     label: "Week"
-                                    value: root.formatTokens(root.displayTotal(modelData.week))
+                                    value: root.allowanceLabel(modelData.weeklyLeft)
+                                    detail: root.allowanceDetail(modelData.weeklyLeft)
+                                    valueColor: root.allowanceColor(modelData.weeklyLeft)
                                 }
 
                                 UsageMetric {
-                                    label: "Month"
-                                    value: root.formatTokens(root.displayTotal(modelData.month))
+                                    label: "Tokens"
+                                    value: root.formatTokens(root.displayTotal(modelData.period))
+                                    detail: (modelData.period.requests || 0) + " requests"
+                                    valueColor: Theme.surfaceText
                                 }
                             }
 
                             StyledText {
                                 width: parent.width
-                                text: (modelData.period.requests || 0) + " requests, " + (modelData.period.sessions || 0) + " sessions"
+                                text: "Resets: session " + root.formatReset(modelData.sessionLeft) + ", week " + root.formatReset(modelData.weeklyLeft)
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
                                 elide: Text.ElideRight
@@ -411,6 +487,8 @@ PluginComponent {
     component UsageMetric: Column {
         property string label: ""
         property string value: ""
+        property string detail: ""
+        property var valueColor: Theme.surfaceText
         width: 92
         spacing: 2
 
@@ -418,13 +496,21 @@ PluginComponent {
             text: parent.value
             font.pixelSize: Theme.fontSizeMedium
             font.weight: Font.Medium
-            color: Theme.surfaceText
+            color: parent.valueColor
         }
 
         StyledText {
             text: parent.label
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceVariantText
+        }
+
+        StyledText {
+            text: parent.detail
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceVariantText
+            elide: Text.ElideRight
+            width: parent.width
         }
     }
 

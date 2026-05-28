@@ -31,6 +31,18 @@ type PeriodTotals struct {
 	LastTimestamp string `json:"lastTimestamp,omitempty"`
 }
 
+type Allowance struct {
+	Known            bool    `json:"known"`
+	Window           string  `json:"window"`
+	Unit             string  `json:"unit"`
+	Used             int64   `json:"used"`
+	Limit            int64   `json:"limit"`
+	Remaining        int64   `json:"remaining"`
+	PercentUsed      float64 `json:"percentUsed"`
+	PercentRemaining float64 `json:"percentRemaining"`
+	ResetAt          string  `json:"resetAt,omitempty"`
+}
+
 type ModelUsage struct {
 	Model    string `json:"model"`
 	Input    int64  `json:"input"`
@@ -48,9 +60,12 @@ type ProviderUsage struct {
 	DataPath    string         `json:"dataPath,omitempty"`
 	Error       string         `json:"error,omitempty"`
 	Today       PeriodTotals   `json:"today"`
+	Session     PeriodTotals   `json:"session"`
 	Week        PeriodTotals   `json:"week"`
 	Month       PeriodTotals   `json:"month"`
 	Period      PeriodTotals   `json:"period"`
+	SessionLeft Allowance      `json:"sessionLeft"`
+	WeeklyLeft  Allowance      `json:"weeklyLeft"`
 	Models      []ModelUsage   `json:"models"`
 	LastProject string         `json:"lastProject,omitempty"`
 	Meta        map[string]any `json:"meta,omitempty"`
@@ -79,6 +94,15 @@ type tokenEvent struct {
 	Tool      int64
 }
 
+type options struct {
+	PeriodDays         int
+	SessionHours       int
+	CodexSessionLimit  int64
+	CodexWeeklyLimit   int64
+	ClaudeSessionLimit int64
+	ClaudeWeeklyLimit  int64
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
 		fmt.Println(version)
@@ -87,14 +111,29 @@ func main() {
 
 	fs := flag.NewFlagSet("summary", flag.ExitOnError)
 	periodDays := fs.Int("period-days", 7, "rolling period length in days")
+	sessionHours := fs.Int("session-hours", 5, "rolling session window length in hours")
+	codexSessionLimit := fs.Int64("codex-session-limit", 0, "Codex session allowance in token units; 0 means unknown")
+	codexWeeklyLimit := fs.Int64("codex-weekly-limit", 0, "Codex weekly allowance in token units; 0 means unknown")
+	claudeSessionLimit := fs.Int64("claude-session-limit", 0, "Claude session allowance in token units; 0 means unknown")
+	claudeWeeklyLimit := fs.Int64("claude-weekly-limit", 0, "Claude weekly allowance in token units; 0 means unknown")
 	pretty := fs.Bool("pretty", false, "pretty-print JSON")
 	_ = fs.Parse(dropSummaryArg(os.Args[1:]))
 
 	if *periodDays < 1 {
 		*periodDays = 1
 	}
+	if *sessionHours < 1 {
+		*sessionHours = 1
+	}
 
-	summary := collect(*periodDays)
+	summary := collect(options{
+		PeriodDays:         *periodDays,
+		SessionHours:       *sessionHours,
+		CodexSessionLimit:  *codexSessionLimit,
+		CodexWeeklyLimit:   *codexWeeklyLimit,
+		ClaudeSessionLimit: *claudeSessionLimit,
+		ClaudeWeeklyLimit:  *claudeWeeklyLimit,
+	})
 	var data []byte
 	var err error
 	if *pretty {
@@ -116,12 +155,12 @@ func dropSummaryArg(args []string) []string {
 	return args
 }
 
-func collect(periodDays int) Summary {
+func collect(opts options) Summary {
 	now := time.Now()
 	out := Summary{
 		Version:     version,
 		GeneratedAt: now.Format(time.RFC3339),
-		PeriodDays:  periodDays,
+		PeriodDays:  opts.PeriodDays,
 		Capabilities: map[string]bool{
 			"codexCli":  hasCommand("codex"),
 			"claudeCli": hasCommand("claude"),
@@ -129,8 +168,8 @@ func collect(periodDays int) Summary {
 		},
 	}
 
-	codex := collectCodex(now, periodDays)
-	claude := collectClaude(now, periodDays)
+	codex := collectCodex(now, opts)
+	claude := collectClaude(now, opts)
 	out.Providers = []ProviderUsage{codex, claude}
 
 	for _, provider := range out.Providers {
@@ -143,7 +182,7 @@ func collect(periodDays int) Summary {
 	return out
 }
 
-func collectCodex(now time.Time, periodDays int) ProviderUsage {
+func collectCodex(now time.Time, opts options) ProviderUsage {
 	provider := ProviderUsage{
 		ID:        "codex",
 		Name:      "Codex",
@@ -164,7 +203,7 @@ func collectCodex(now time.Time, periodDays int) ProviderUsage {
 		return provider
 	}
 
-	start := now.AddDate(0, 0, -maxInt(periodDays, 31)-1).Unix()
+	start := now.AddDate(0, 0, -maxInt(opts.PeriodDays, 31)-1).Unix()
 	query := fmt.Sprintf(`select ts, coalesce(thread_id,''), feedback_log_body from logs where target='codex_otel.trace_safe' and feedback_log_body like '%%event.name="codex.sse_event"%%' and feedback_log_body like '%%event.kind=response.completed%%' and ts >= %d order by ts asc;`, start)
 	cmd := exec.Command("sqlite3", "-separator", "\t", db, query)
 	var stderr bytes.Buffer
@@ -205,11 +244,11 @@ func collectCodex(now time.Time, periodDays int) ProviderUsage {
 		provider.Error = err.Error()
 	}
 
-	applyEvents(&provider, events, now, periodDays)
+	applyEvents(&provider, events, now, opts, opts.CodexSessionLimit, opts.CodexWeeklyLimit)
 	return provider
 }
 
-func collectClaude(now time.Time, periodDays int) ProviderUsage {
+func collectClaude(now time.Time, opts options) ProviderUsage {
 	provider := ProviderUsage{
 		ID:        "claude",
 		Name:      "Claude",
@@ -225,7 +264,7 @@ func collectClaude(now time.Time, periodDays int) ProviderUsage {
 		return provider
 	}
 
-	cutoff := now.AddDate(0, 0, -maxInt(periodDays, 31)-1)
+	cutoff := now.AddDate(0, 0, -maxInt(opts.PeriodDays, 31)-1)
 	var events []tokenEvent
 	err := filepath.WalkDir(projects, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || filepath.Ext(path) != ".jsonl" {
@@ -245,7 +284,7 @@ func collectClaude(now time.Time, periodDays int) ProviderUsage {
 		provider.Error = err.Error()
 	}
 
-	applyEvents(&provider, events, now, periodDays)
+	applyEvents(&provider, events, now, opts, opts.ClaudeSessionLimit, opts.ClaudeWeeklyLimit)
 	return provider
 }
 
@@ -295,8 +334,9 @@ func readClaudeJSONL(path string) ([]tokenEvent, error) {
 	return events, nil
 }
 
-func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, periodDays int) {
+func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, opts options, sessionLimit int64, weeklyLimit int64) {
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	sessionStart := now.Add(-time.Duration(opts.SessionHours) * time.Hour)
 	weekdayOffset := int(now.Weekday())
 	if weekdayOffset == 0 {
 		weekdayOffset = 6
@@ -305,19 +345,31 @@ func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, pe
 	}
 	weekStart := todayStart.AddDate(0, 0, -weekdayOffset)
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-	periodStart := now.AddDate(0, 0, -periodDays)
+	periodStart := now.AddDate(0, 0, -opts.PeriodDays)
 
 	models := map[string]*ModelUsage{}
 	periodSessions := map[string]bool{}
 	todaySessions := map[string]bool{}
+	sessionSessions := map[string]bool{}
 	weekSessions := map[string]bool{}
 	monthSessions := map[string]bool{}
+	var sessionOldest *time.Time
 
 	for _, event := range events {
 		if event.Timestamp.After(todayStart) || event.Timestamp.Equal(todayStart) {
 			addEvent(&provider.Today, event)
 			if event.Session != "" {
 				todaySessions[event.Session] = true
+			}
+		}
+		if event.Timestamp.After(sessionStart) || event.Timestamp.Equal(sessionStart) {
+			addEvent(&provider.Session, event)
+			if event.Session != "" {
+				sessionSessions[event.Session] = true
+			}
+			if sessionOldest == nil || event.Timestamp.Before(*sessionOldest) {
+				ts := event.Timestamp
+				sessionOldest = &ts
 			}
 		}
 		if event.Timestamp.After(weekStart) || event.Timestamp.Equal(weekStart) {
@@ -353,6 +405,7 @@ func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, pe
 	}
 
 	provider.Today.Sessions = int64(len(todaySessions))
+	provider.Session.Sessions = int64(len(sessionSessions))
 	provider.Week.Sessions = int64(len(weekSessions))
 	provider.Month.Sessions = int64(len(monthSessions))
 	provider.Period.Sessions = int64(len(periodSessions))
@@ -364,6 +417,13 @@ func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, pe
 	sort.Slice(provider.Models, func(i, j int) bool {
 		return provider.Models[i].Total > provider.Models[j].Total
 	})
+
+	sessionReset := now.Add(time.Duration(opts.SessionHours) * time.Hour)
+	if sessionOldest != nil {
+		sessionReset = sessionOldest.Add(time.Duration(opts.SessionHours) * time.Hour)
+	}
+	provider.SessionLeft = makeAllowance("session", provider.Session.Total, sessionLimit, sessionReset)
+	provider.WeeklyLeft = makeAllowance("weekly", provider.Week.Total, weeklyLimit, weekStart.AddDate(0, 0, 7))
 }
 
 func addEvent(totals *PeriodTotals, event tokenEvent) {
@@ -398,6 +458,38 @@ func eventTotal(event tokenEvent) int64 {
 		return event.Input + event.Output + event.Cached
 	}
 	return event.Input + event.Output
+}
+
+func makeAllowance(window string, used int64, limit int64, resetAt time.Time) Allowance {
+	allowance := Allowance{
+		Known:   limit > 0,
+		Window:  window,
+		Unit:    "tokens",
+		Used:    used,
+		Limit:   limit,
+		ResetAt: resetAt.Format(time.RFC3339),
+	}
+	if limit <= 0 {
+		return allowance
+	}
+	remaining := limit - used
+	if remaining < 0 {
+		remaining = 0
+	}
+	allowance.Remaining = remaining
+	allowance.PercentUsed = clampPercent(float64(used) / float64(limit) * 100)
+	allowance.PercentRemaining = clampPercent(float64(remaining) / float64(limit) * 100)
+	return allowance
+}
+
+func clampPercent(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
 }
 
 func parseLogFields(body string) map[string]string {

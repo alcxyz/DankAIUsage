@@ -19,11 +19,20 @@ PluginSettings {
 
     SliderSetting {
         settingKey: "periodDays"
-        label: "Rolling period (days)"
-        description: "How many days to include in the main total"
+        label: "Token history (days)"
+        description: "How many days to include in the secondary token total"
         minimum: 1
         maximum: 90
         defaultValue: 7
+    }
+
+    SliderSetting {
+        settingKey: "sessionHours"
+        label: "Session window (hours)"
+        description: "Rolling window used for session allowance estimates"
+        minimum: 1
+        maximum: 24
+        defaultValue: 5
     }
 
     ToggleSetting {
@@ -38,6 +47,48 @@ PluginSettings {
         label: "Show Claude"
         description: "Display usage collected from the local Claude CLI data store"
         defaultValue: true
+    }
+
+    StyledText {
+        text: "Codex allowance"
+        font.pixelSize: Theme.fontSizeLarge
+        font.weight: Font.Bold
+        color: Theme.surfaceText
+    }
+
+    StringSetting {
+        settingKey: "codexSessionLimit"
+        label: "Session limit"
+        description: "Token allowance for the configured session window. Use 0 when unknown."
+        placeholder: "0"
+    }
+
+    StringSetting {
+        settingKey: "codexWeeklyLimit"
+        label: "Weekly limit"
+        description: "Token allowance for the current local calendar week. Use 0 when unknown."
+        placeholder: "0"
+    }
+
+    StyledText {
+        text: "Claude allowance"
+        font.pixelSize: Theme.fontSizeLarge
+        font.weight: Font.Bold
+        color: Theme.surfaceText
+    }
+
+    StringSetting {
+        settingKey: "claudeSessionLimit"
+        label: "Session limit"
+        description: "Token allowance for the configured session window. Use 0 when unknown."
+        placeholder: "0"
+    }
+
+    StringSetting {
+        settingKey: "claudeWeeklyLimit"
+        label: "Weekly limit"
+        description: "Token allowance for the current local calendar week. Use 0 when unknown."
+        placeholder: "0"
     }
 
     ToggleSetting {

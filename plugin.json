@@ -9,6 +9,58 @@
   "capabilities": ["dankbar-widget"],
   "component": "./DankAIUsageWidget.qml",
   "settings": "./DankAIUsageSettings.qml",
+  "settings_schema": {
+    "refreshInterval": {
+      "type": "integer",
+      "default": 300,
+      "minimum": 30,
+      "maximum": 1800
+    },
+    "periodDays": {
+      "type": "integer",
+      "default": 7,
+      "minimum": 1,
+      "maximum": 90
+    },
+    "sessionHours": {
+      "type": "integer",
+      "default": 5,
+      "minimum": 1,
+      "maximum": 24
+    },
+    "showCodex": {
+      "type": "boolean",
+      "default": true
+    },
+    "showClaude": {
+      "type": "boolean",
+      "default": true
+    },
+    "includeCachedTokens": {
+      "type": "boolean",
+      "default": true
+    },
+    "compactPill": {
+      "type": "boolean",
+      "default": false
+    },
+    "codexSessionLimit": {
+      "type": "string",
+      "default": "0"
+    },
+    "codexWeeklyLimit": {
+      "type": "string",
+      "default": "0"
+    },
+    "claudeSessionLimit": {
+      "type": "string",
+      "default": "0"
+    },
+    "claudeWeeklyLimit": {
+      "type": "string",
+      "default": "0"
+    }
+  },
   "permissions": ["settings_read", "settings_write", "process"],
   "requires": ["dankaiusage", "codex", "claude", "sqlite3"]
 }
