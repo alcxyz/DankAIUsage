@@ -194,7 +194,12 @@ PluginComponent {
         if (!allowance || !allowance.resetAt) return "--"
         var d = new Date(allowance.resetAt)
         if (isNaN(d.getTime())) return "--"
-        return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2)
+        var clock = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2)
+        if (allowance.window === "weekly") {
+            var days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+            return days[d.getDay()] + " " + (d.getMonth() + 1) + "/" + d.getDate() + " " + clock
+        }
+        return clock
     }
 
     function formatTokens(value) {
