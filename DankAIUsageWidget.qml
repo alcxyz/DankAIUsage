@@ -130,10 +130,34 @@ PluginComponent {
         return (totals.total || 0) - (totals.cached || 0)
     }
 
+    function displayInput(totals) {
+        if (!totals) return 0
+        return Math.max(0, displayTotal(totals) - displayOutput(totals))
+    }
+
+    function displayOutput(totals) {
+        if (!totals) return 0
+        return totals.output || 0
+    }
+
     function filteredGrandTotal() {
         var total = 0
         var list = visibleProviders()
         for (var i = 0; i < list.length; i++) total += displayTotal(list[i].period)
+        return total
+    }
+
+    function filteredGrandInput() {
+        var total = 0
+        var list = visibleProviders()
+        for (var i = 0; i < list.length; i++) total += displayInput(list[i].period)
+        return total
+    }
+
+    function filteredGrandOutput() {
+        var total = 0
+        var list = visibleProviders()
+        for (var i = 0; i < list.length; i++) total += displayOutput(list[i].period)
         return total
     }
 
@@ -208,6 +232,18 @@ PluginComponent {
         if (value >= 1000000) return (value / 1000000).toFixed(1) + "M"
         if (value >= 1000) return (value / 1000).toFixed(1) + "K"
         return "" + value
+    }
+
+    function inputTokenLabel(totals) {
+        return formatTokens(displayInput(totals)) + " in"
+    }
+
+    function outputTokenLabel(totals) {
+        return formatTokens(displayOutput(totals)) + " out"
+    }
+
+    function filteredGrandTokenBreakdown() {
+        return formatTokens(filteredGrandInput()) + " in / " + formatTokens(filteredGrandOutput()) + " out"
     }
 
     function providerIcon(id) {
@@ -368,7 +404,7 @@ PluginComponent {
 
                 StyledText {
                     id: tokensValue
-                    text: root.formatTokens(root.filteredGrandTotal()) + " tokens"
+                    text: root.filteredGrandTokenBreakdown()
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                     anchors.right: parent.right
@@ -472,8 +508,8 @@ PluginComponent {
                                 UsageMetric {
                                     width: (parent.width - Theme.spacingS * 2) / 3
                                     label: "Tokens"
-                                    value: root.formatTokens(root.displayTotal(modelData.period))
-                                    detail: (modelData.period.requests || 0) + " requests"
+                                    value: root.inputTokenLabel(modelData.period)
+                                    detail: root.outputTokenLabel(modelData.period)
                                     valueColor: Theme.surfaceText
                                 }
                             }
