@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -108,6 +111,36 @@ func TestParseClaudeStatusline(t *testing.T) {
 	}
 	if limits.Weekly.PercentRemaining != 25 {
 		t.Fatalf("weekly remaining = %f", limits.Weekly.PercentRemaining)
+	}
+}
+
+func TestCollectClaudePreservesStatuslineErrorMetadata(t *testing.T) {
+	claudeDir := t.TempDir()
+	stateDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("XDG_STATE_HOME", stateDir)
+	if err := os.Mkdir(filepath.Join(claudeDir, "projects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settings := []byte(`{"statusLine":{"type":"command","command":"dankaiusage claude-statusline","padding":0}}`)
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	now := mustParseTime(t, "2026-05-28T12:00:00Z")
+	provider := collectClaude(now, options{PeriodDays: 7, SessionHours: 5})
+	if provider.Meta["statuslineConfigured"] != true {
+		t.Fatalf("statuslineConfigured metadata missing: %+v", provider.Meta)
+	}
+	if provider.Meta["statuslineCommand"] != "dankaiusage claude-statusline" {
+		t.Fatalf("statuslineCommand metadata = %v", provider.Meta["statuslineCommand"])
+	}
+	if !strings.Contains(stringValue(provider.Meta["limitError"]), "configured but has not run yet") {
+		t.Fatalf("limitError metadata = %v", provider.Meta["limitError"])
+	}
+	wantCache := filepath.Join(stateDir, "dankaiusage", "claude-statusline.json")
+	if provider.Meta["statuslineCache"] != wantCache {
+		t.Fatalf("statuslineCache metadata = %v, want %s", provider.Meta["statuslineCache"], wantCache)
 	}
 }
 

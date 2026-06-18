@@ -226,6 +226,14 @@ PluginComponent {
         return clock
     }
 
+    function formatShortDateTime(value) {
+        if (!value) return ""
+        var d = new Date(value)
+        if (isNaN(d.getTime())) return ""
+        var clock = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2)
+        return (d.getMonth() + 1) + "/" + d.getDate() + " " + clock
+    }
+
     function formatTokens(value) {
         value = Math.max(0, value || 0)
         if (value >= 1000000000) return (value / 1000000000).toFixed(1) + "B"
@@ -253,6 +261,20 @@ PluginComponent {
     function providerColor(provider) {
         if (!provider.available || provider.error) return "#ff6b6b"
         return provider.id === "codex" ? Theme.primary : "#8bc34a"
+    }
+
+    function providerNote(provider) {
+        if (!provider || !provider.meta) return ""
+        var parts = []
+        if (provider.meta.tokenDataNote) {
+            var note = provider.meta.tokenDataNote
+            var lastUsage = formatShortDateTime(provider.meta.lastUsageAt)
+            if (lastUsage !== "") note += " (last " + lastUsage + ")"
+            parts.push(note)
+        }
+        if (provider.meta.limitError) parts.push(provider.meta.limitError)
+        else if (provider.meta.tokenDataError) parts.push(provider.meta.tokenDataError)
+        return parts.join(" | ")
     }
 
     function pillLabel() {
@@ -433,7 +455,7 @@ PluginComponent {
 
                     StyledRect {
                         width: parent.width
-                        height: 144
+                        height: root.providerNote(modelData) !== "" ? 164 : 144
                         radius: Theme.cornerRadius
                         color: Theme.surfaceContainerHigh
 
@@ -520,6 +542,16 @@ PluginComponent {
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
                                 elide: Text.ElideRight
+                            }
+
+                            StyledText {
+                                width: parent.width
+                                text: root.providerNote(modelData)
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: "#ffaa00"
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
+                                visible: text !== ""
                             }
                         }
                     }

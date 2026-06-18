@@ -194,6 +194,7 @@ func collectCodex(now time.Time, opts options) ProviderUsage {
 		provider.WeeklyLeft = weeklyLeft
 		provider.Meta = meta
 	} else {
+		mergeProviderMeta(&provider, meta)
 		setProviderMeta(&provider, "limitError", err.Error())
 	}
 
@@ -267,6 +268,7 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 		provider.WeeklyLeft = weeklyLeft
 		provider.Meta = meta
 	} else {
+		mergeProviderMeta(&provider, meta)
 		setProviderMeta(&provider, "limitError", err.Error())
 	}
 
@@ -278,16 +280,26 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 
 	cutoff := now.AddDate(0, 0, -maxInt(opts.PeriodDays, 31)-1)
 	var events []tokenEvent
+	var latestUsage time.Time
+	var transcriptFiles int
+	var parsedUsageEvents int
 	err := filepath.WalkDir(projects, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || filepath.Ext(path) != ".jsonl" {
 			return nil
 		}
+		transcriptFiles++
 		if info, statErr := d.Info(); statErr == nil && info.ModTime().Before(cutoff) {
 			return nil
 		}
 		fileEvents, parseErr := readClaudeJSONL(path)
 		if parseErr != nil && provider.Error == "" {
 			setProviderMeta(&provider, "tokenDataError", parseErr.Error())
+		}
+		parsedUsageEvents += len(fileEvents)
+		for _, event := range fileEvents {
+			if event.Timestamp.After(latestUsage) {
+				latestUsage = event.Timestamp
+			}
 		}
 		events = append(events, fileEvents...)
 		return nil
@@ -297,6 +309,15 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 	}
 
 	applyEvents(&provider, events, now, opts)
+	setProviderMeta(&provider, "transcriptFiles", transcriptFiles)
+	setProviderMeta(&provider, "usageEventsScanned", parsedUsageEvents)
+	if !latestUsage.IsZero() {
+		setProviderMeta(&provider, "lastUsageAt", latestUsage.Format(time.RFC3339))
+		periodStart := now.AddDate(0, 0, -opts.PeriodDays)
+		if provider.Period.Requests == 0 && latestUsage.Before(periodStart) {
+			setProviderMeta(&provider, "tokenDataNote", "No Claude usage events in selected period")
+		}
+	}
 	return provider
 }
 
@@ -710,9 +731,15 @@ func collectClaudeSubscriptionLimits(now time.Time) (Allowance, Allowance, map[s
 	path := claudeStatuslineCachePath()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), map[string]any{
+		meta := map[string]any{
 			"statuslineCache": path,
-		}, fmt.Errorf("Claude statusline cache not found; set statusLine.command to dankaiusage claude-statusline")
+		}
+		if configured, command := claudeStatuslineSettings(); configured {
+			meta["statuslineConfigured"] = true
+			meta["statuslineCommand"] = command
+			return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), meta, fmt.Errorf("Claude statusline cache not found; statusline is configured but has not run yet")
+		}
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), meta, fmt.Errorf("Claude statusline cache not found; set statusLine.command to dankaiusage claude-statusline")
 	}
 	limits, err := parseClaudeStatusline(data, now)
 	if err != nil {
@@ -723,6 +750,10 @@ func collectClaudeSubscriptionLimits(now time.Time) (Allowance, Allowance, map[s
 	meta := map[string]any{
 		"source":          "claude statusline",
 		"statuslineCache": path,
+	}
+	if configured, command := claudeStatuslineSettings(); configured {
+		meta["statuslineConfigured"] = true
+		meta["statuslineCommand"] = command
 	}
 	if limits.Model != "" {
 		meta["model"] = limits.Model
@@ -843,11 +874,34 @@ func claudeStatuslineCachePath() string {
 	return filepath.Join(home, ".local", "state", "dankaiusage", "claude-statusline.json")
 }
 
+func claudeStatuslineSettings() (bool, string) {
+	data, err := os.ReadFile(filepath.Join(claudeHome(), "settings.json"))
+	if err != nil {
+		return false, ""
+	}
+	var settings struct {
+		StatusLine struct {
+			Command string `json:"command"`
+		} `json:"statusLine"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false, ""
+	}
+	command := strings.TrimSpace(settings.StatusLine.Command)
+	return strings.Contains(command, "dankaiusage claude-statusline"), command
+}
+
 func setProviderMeta(provider *ProviderUsage, key string, value any) {
 	if provider.Meta == nil {
 		provider.Meta = map[string]any{}
 	}
 	provider.Meta[key] = value
+}
+
+func mergeProviderMeta(provider *ProviderUsage, meta map[string]any) {
+	for key, value := range meta {
+		setProviderMeta(provider, key, value)
+	}
 }
 
 func clampPercent(value float64) float64 {
