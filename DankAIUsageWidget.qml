@@ -266,13 +266,19 @@ PluginComponent {
     function providerNote(provider) {
         if (!provider || !provider.meta) return ""
         var parts = []
+        if (provider.id === "claude" && provider.meta.tokenDataIncludesWeb === false) {
+            parts.push("Claude tokens are local Claude Code only, not web")
+        }
         if (provider.meta.tokenDataNote) {
             var note = provider.meta.tokenDataNote
             var lastUsage = formatShortDateTime(provider.meta.lastUsageAt)
             if (lastUsage !== "") note += " (last " + lastUsage + ")"
             parts.push(note)
         }
-        if (provider.meta.limitError) parts.push(provider.meta.limitError)
+        if (provider.meta.limitError) {
+            if (provider.id === "claude" && provider.meta.statuslineNextStep) parts.push(provider.meta.statuslineNextStep)
+            else parts.push(provider.meta.limitError)
+        }
         else if (provider.meta.tokenDataError) parts.push(provider.meta.tokenDataError)
         return parts.join(" | ")
     }
@@ -455,7 +461,7 @@ PluginComponent {
 
                     StyledRect {
                         width: parent.width
-                        height: root.providerNote(modelData) !== "" ? 164 : 144
+                        height: root.providerNote(modelData) !== "" ? 184 : 144
                         radius: Theme.cornerRadius
                         color: Theme.surfaceContainerHigh
 
@@ -550,7 +556,8 @@ PluginComponent {
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: "#ffaa00"
                                 elide: Text.ElideRight
-                                maximumLineCount: 1
+                                maximumLineCount: 2
+                                wrapMode: Text.WordWrap
                                 visible: text !== ""
                             }
                         }

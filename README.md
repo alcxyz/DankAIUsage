@@ -12,9 +12,13 @@ kept as a secondary detail.
 - Codex limits: queries the local Codex app server with
   `account/rateLimits/read`.
 - Claude limits: reads the latest Claude Code statusline JSON cached by
-  `dankaiusage claude-statusline`.
+  `dankaiusage claude-statusline`. This is the only supported non-interactive
+  Claude Code source for account limit percentages.
 - Token history: reads Codex `logs_2.sqlite` and Claude project JSONL
-  transcripts from their normal CLI config locations.
+  transcripts from their normal CLI config locations. Claude token totals are
+  local Claude Code history only; usage from claude.ai, mobile, or other online
+  surfaces is not written to those transcripts and is not exposed through a
+  Claude CLI usage command.
 - CLI availability: reports whether `codex`, `claude`, and `sqlite3` are on
   `PATH`.
 
@@ -40,6 +44,11 @@ The cache is written to
 `$XDG_STATE_HOME/dankaiusage/claude-statusline.json`, or
 `~/.local/state/dankaiusage/claude-statusline.json` when `XDG_STATE_HOME` is
 unset.
+
+The statusline payload is produced by Claude Code after an interactive API
+response. If the cache does not exist yet, open Claude Code in a trusted
+workspace and send one message so Claude Code can pass fresh account limit data
+to `dankaiusage claude-statusline`.
 
 ## Build
 

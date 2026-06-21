@@ -261,12 +261,17 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 		Available: hasCommand("claude"),
 		CLIPath:   commandPath("claude"),
 	}
+	setProviderMeta(&provider, "tokenDataSource", "local Claude Code transcripts")
+	setProviderMeta(&provider, "tokenDataScope", "Claude Code local history only")
+	setProviderMeta(&provider, "tokenDataIncludesWeb", false)
+	setProviderMeta(&provider, "limitDataSource", "Claude Code statusline")
+	setProviderMeta(&provider, "limitDataIncludesWeb", true)
 	root := claudeHome()
 	provider.DataPath = root
 	if sessionLeft, weeklyLeft, meta, err := collectClaudeSubscriptionLimits(now); err == nil {
 		provider.SessionLeft = sessionLeft
 		provider.WeeklyLeft = weeklyLeft
-		provider.Meta = meta
+		mergeProviderMeta(&provider, meta)
 	} else {
 		mergeProviderMeta(&provider, meta)
 		setProviderMeta(&provider, "limitError", err.Error())
@@ -315,7 +320,7 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 		setProviderMeta(&provider, "lastUsageAt", latestUsage.Format(time.RFC3339))
 		periodStart := now.AddDate(0, 0, -opts.PeriodDays)
 		if provider.Period.Requests == 0 && latestUsage.Before(periodStart) {
-			setProviderMeta(&provider, "tokenDataNote", "No Claude usage events in selected period")
+			setProviderMeta(&provider, "tokenDataNote", "No local Claude Code events in selected period")
 		}
 	}
 	return provider
@@ -737,8 +742,10 @@ func collectClaudeSubscriptionLimits(now time.Time) (Allowance, Allowance, map[s
 		if configured, command := claudeStatuslineSettings(); configured {
 			meta["statuslineConfigured"] = true
 			meta["statuslineCommand"] = command
+			meta["statuslineNextStep"] = "Open Claude Code once to refresh account limits"
 			return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), meta, fmt.Errorf("Claude statusline cache not found; statusline is configured but has not run yet")
 		}
+		meta["statuslineNextStep"] = "Configure statusLine.command to dankaiusage claude-statusline"
 		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), meta, fmt.Errorf("Claude statusline cache not found; set statusLine.command to dankaiusage claude-statusline")
 	}
 	limits, err := parseClaudeStatusline(data, now)

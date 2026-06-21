@@ -135,6 +135,15 @@ func TestCollectClaudePreservesStatuslineErrorMetadata(t *testing.T) {
 	if provider.Meta["statuslineCommand"] != "dankaiusage claude-statusline" {
 		t.Fatalf("statuslineCommand metadata = %v", provider.Meta["statuslineCommand"])
 	}
+	if provider.Meta["tokenDataScope"] != "Claude Code local history only" {
+		t.Fatalf("tokenDataScope metadata = %v", provider.Meta["tokenDataScope"])
+	}
+	if provider.Meta["tokenDataIncludesWeb"] != false {
+		t.Fatalf("tokenDataIncludesWeb metadata = %v", provider.Meta["tokenDataIncludesWeb"])
+	}
+	if provider.Meta["statuslineNextStep"] == "" {
+		t.Fatalf("statuslineNextStep metadata missing: %+v", provider.Meta)
+	}
 	if !strings.Contains(stringValue(provider.Meta["limitError"]), "configured but has not run yet") {
 		t.Fatalf("limitError metadata = %v", provider.Meta["limitError"])
 	}
