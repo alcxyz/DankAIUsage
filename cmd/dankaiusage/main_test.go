@@ -153,6 +153,25 @@ func TestCollectClaudePreservesStatuslineErrorMetadata(t *testing.T) {
 	}
 }
 
+func TestClaudePrimeArgs(t *testing.T) {
+	args := claudePrimeArgs(claudePrimeOptions{
+		Model:        "sonnet",
+		MaxBudgetUSD: "0.10",
+	}, "Reply OK")
+
+	want := []string{
+		"-p",
+		"--output-format", "json",
+		"--max-turns", "1",
+		"--model", "sonnet",
+		"--max-budget-usd", "0.10",
+		"Reply OK",
+	}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
 func mustParseTime(t *testing.T, value string) time.Time {
 	t.Helper()
 	parsed, err := time.Parse(time.RFC3339, value)

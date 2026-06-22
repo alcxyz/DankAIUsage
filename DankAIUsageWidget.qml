@@ -26,6 +26,10 @@ PluginComponent {
     property var grandTotal: ({ total: 0, input: 0, output: 0, cached: 0, requests: 0, sessions: 0 })
     property var capabilities: ({})
     property string _pendingOutput: ""
+    property string _claudePrimeOutput: ""
+    property string _claudePrimeError: ""
+    property bool isPrimingClaude: false
+    property string claudePrimeText: ""
 
     function loadSettings() {
         if (!pluginService || !pluginService.loadPluginData) return
@@ -74,6 +78,16 @@ PluginComponent {
         usageProcess.running = true
     }
 
+    function primeClaude() {
+        if (claudePrimeProcess.running) return
+        _claudePrimeOutput = ""
+        _claudePrimeError = ""
+        claudePrimeText = "Refreshing Claude account limits..."
+        isPrimingClaude = true
+        claudePrimeProcess.command = ["dankaiusage", "claude-prime"]
+        claudePrimeProcess.running = true
+    }
+
     Process {
         id: usageProcess
         running: false
@@ -100,6 +114,35 @@ PluginComponent {
                 root.errorText = "Could not parse usage data"
             }
             root.isLoading = false
+        }
+    }
+
+    Process {
+        id: claudePrimeProcess
+        running: false
+        stdout: SplitParser {
+            onRead: data => { root._claudePrimeOutput += data + "\n" }
+        }
+        stderr: SplitParser {
+            onRead: data => { root._claudePrimeError += data + "\n" }
+        }
+        onExited: (exitCode, exitStatus) => {
+            var message = ""
+            try {
+                var result = JSON.parse(root._claudePrimeOutput.trim())
+                message = result.message || ""
+            } catch (e) {
+                message = root._claudePrimeError.trim()
+            }
+            if (message === "") message = exitCode === 0 ? "Claude account limits refreshed" : "Claude account refresh failed"
+            root.claudePrimeText = message
+            root.isPrimingClaude = false
+            if (exitCode !== 0) {
+                root.hasError = true
+                root.errorText = message
+                return
+            }
+            root.refreshUsage()
         }
     }
 
@@ -266,6 +309,9 @@ PluginComponent {
     function providerNote(provider) {
         if (!provider || !provider.meta) return ""
         var parts = []
+        if (provider.id === "claude" && claudePrimeText !== "") {
+            parts.push(claudePrimeText)
+        }
         if (provider.id === "claude" && provider.meta.tokenDataIncludesWeb === false) {
             parts.push("Claude tokens are local Claude Code only, not web")
         }
@@ -476,7 +522,7 @@ PluginComponent {
 
                                 Row {
                                     anchors.left: parent.left
-                                    anchors.right: providerLimits.left
+                                    anchors.right: providerActions.left
                                     anchors.rightMargin: Theme.spacingS
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: Theme.spacingS
@@ -500,16 +546,32 @@ PluginComponent {
                                     }
                                 }
 
-                                StyledText {
-                                    id: providerLimits
-                                    text: root.allowanceLabel(modelData.sessionLeft) + " / " + root.allowanceLabel(modelData.weeklyLeft)
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Bold
-                                    color: root.providerColor(modelData)
+                                Row {
+                                    id: providerActions
                                     anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
-                                    elide: Text.ElideRight
-                                    maximumLineCount: 1
+                                    spacing: Theme.spacingXS
+
+                                    StyledText {
+                                        text: root.allowanceLabel(modelData.sessionLeft) + " / " + root.allowanceLabel(modelData.weeklyLeft)
+                                        width: Math.min(150, implicitWidth)
+                                        font.pixelSize: Theme.fontSizeMedium
+                                        font.weight: Font.Bold
+                                        color: root.providerColor(modelData)
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        elide: Text.ElideRight
+                                        maximumLineCount: 1
+                                    }
+
+                                    DankActionButton {
+                                        buttonSize: 24
+                                        iconName: root.isPrimingClaude ? "hourglass_top" : "bolt"
+                                        iconColor: root.isPrimingClaude ? Theme.surfaceVariantText : Theme.primary
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        visible: modelData.id === "claude"
+                                        enabled: !root.isPrimingClaude
+                                        onClicked: root.primeClaude()
+                                    }
                                 }
                             }
 
