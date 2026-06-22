@@ -61,7 +61,8 @@ The command refuses to run unless the statusline command is configured. When it
 runs, it calls `claude -p --output-format json --max-turns 1`, waits for the
 statusline cache to update, and then returns the refreshed session and weekly
 allowances. This spends a small amount of Claude usage by design; the widget
-only does it when you press the Claude prime action.
+only shows the Claude prime action when the "Enable Claude prime" setting is on,
+and only runs it when you press that action.
 
 ## Build
 

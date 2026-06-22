@@ -40,6 +40,13 @@ PluginSettings {
         defaultValue: true
     }
 
+    ToggleSetting {
+        settingKey: "enableClaudePrime"
+        label: "Enable Claude prime"
+        description: "Show the manual Claude request that refreshes account limits and may start the session window"
+        defaultValue: false
+    }
+
     StyledText {
         text: "Subscription limits"
         font.pixelSize: Theme.fontSizeLarge

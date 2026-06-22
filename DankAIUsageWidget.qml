@@ -17,6 +17,7 @@ PluginComponent {
     property bool includeCachedTokens: true
     property bool compactPill: false
     property bool focusWeekly: false
+    property bool enableClaudePrime: false
 
     property bool isLoading: true
     property bool hasError: false
@@ -40,6 +41,7 @@ PluginComponent {
         includeCachedTokens = pluginService.loadPluginData(pluginId, "includeCachedTokens", true) !== false
         compactPill = pluginService.loadPluginData(pluginId, "compactPill", false) === true
         focusWeekly = pluginService.loadPluginData(pluginId, "focusWeekly", false) === true
+        enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
     }
 
     function loadCache() {
@@ -79,6 +81,10 @@ PluginComponent {
     }
 
     function primeClaude() {
+        if (!enableClaudePrime) {
+            claudePrimeText = "Enable Claude prime in settings first"
+            return
+        }
         if (claudePrimeProcess.running) return
         _claudePrimeOutput = ""
         _claudePrimeError = ""
@@ -568,7 +574,7 @@ PluginComponent {
                                         iconName: root.isPrimingClaude ? "hourglass_top" : "bolt"
                                         iconColor: root.isPrimingClaude ? Theme.surfaceVariantText : Theme.primary
                                         anchors.verticalCenter: parent.verticalCenter
-                                        visible: modelData.id === "claude"
+                                        visible: modelData.id === "claude" && root.enableClaudePrime
                                         enabled: !root.isPrimingClaude
                                         onClicked: root.primeClaude()
                                     }
