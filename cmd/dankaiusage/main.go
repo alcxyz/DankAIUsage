@@ -272,13 +272,12 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 	setProviderMeta(&provider, "limitDataIncludesWeb", true)
 	root := claudeHome()
 	provider.DataPath = root
-	if sessionLeft, weeklyLeft, meta, err := collectClaudeSubscriptionLimits(now); err == nil {
-		provider.SessionLeft = sessionLeft
-		provider.WeeklyLeft = weeklyLeft
-		mergeProviderMeta(&provider, meta)
-	} else {
-		mergeProviderMeta(&provider, meta)
-		setProviderMeta(&provider, "limitError", err.Error())
+	sessionLeft, weeklyLeft, meta, limitErr := collectClaudeSubscriptionLimits(now)
+	provider.SessionLeft = sessionLeft
+	provider.WeeklyLeft = weeklyLeft
+	mergeProviderMeta(&provider, meta)
+	if limitErr != nil {
+		setProviderMeta(&provider, "limitError", limitErr.Error())
 	}
 
 	projects := filepath.Join(root, "projects")
@@ -809,13 +808,19 @@ func primeClaudeStatusline(opts claudePrimeOptions) (claudePrimeResult, error) {
 		SessionLeft: makeUnknownAllowance("session", now),
 		WeeklyLeft:  makeUnknownAllowance("weekly", now),
 	}
-	if _, err := exec.LookPath("claude"); err != nil {
-		result.Message = "Claude CLI not found"
-		return result, err
-	}
 	if configured, _ := claudeStatuslineSettings(); !configured {
 		err := errors.New("Claude statusline is not configured")
 		result.Message = "Configure statusLine.command to dankaiusage claude-statusline first"
+		return result, err
+	}
+	if fallback, _, ok := claudePrimeSessionFallback(now); ok {
+		result.SessionLeft = fallback
+		result.OK = true
+		result.Message = "Claude session timer already active"
+		return result, nil
+	}
+	if _, err := exec.LookPath("claude"); err != nil {
+		result.Message = "Claude CLI not found"
 		return result, err
 	}
 

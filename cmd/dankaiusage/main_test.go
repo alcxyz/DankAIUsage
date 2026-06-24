@@ -204,6 +204,87 @@ func TestClaudePrimeSessionFallback(t *testing.T) {
 	}
 }
 
+func TestCollectClaudeUsesPrimeFallbackOnStatuslineError(t *testing.T) {
+	claudeDir := t.TempDir()
+	stateDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("XDG_STATE_HOME", stateDir)
+	if err := os.Mkdir(filepath.Join(claudeDir, "projects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settings := []byte(`{"statusLine":{"type":"command","command":"dankaiusage claude-statusline","padding":0}}`)
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	statuslinePath := filepath.Join(stateDir, "dankaiusage", "claude-statusline.json")
+	if err := os.MkdirAll(filepath.Dir(statuslinePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statuslinePath, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cache := claudePrimeCache{
+		StartedAt: "2026-06-24T11:00:00Z",
+		UsageAt:   "2026-06-24T11:00:10Z",
+		ResetAt:   "2026-06-24T16:00:10Z",
+		Source:    claudePrimeSessionSource,
+	}
+	if err := writeClaudePrimeCache(cache); err != nil {
+		t.Fatal(err)
+	}
+
+	now := mustParseTime(t, "2026-06-24T12:00:00Z")
+	provider := collectClaude(now, options{PeriodDays: 7, SessionHours: 5})
+	if provider.SessionLeft.Source != claudePrimeSessionSource {
+		t.Fatalf("session source = %q, want %q", provider.SessionLeft.Source, claudePrimeSessionSource)
+	}
+	gotReset, err := time.Parse(time.RFC3339, provider.SessionLeft.ResetAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gotReset.Equal(mustParseTime(t, "2026-06-24T16:00:10Z")) {
+		t.Fatalf("session reset = %s", provider.SessionLeft.ResetAt)
+	}
+	if provider.Meta["sessionFallbackSource"] != claudePrimeSessionSource {
+		t.Fatalf("fallback metadata = %+v", provider.Meta)
+	}
+	if !strings.Contains(stringValue(provider.Meta["limitError"]), "no rate limit data") {
+		t.Fatalf("limitError metadata = %v", provider.Meta["limitError"])
+	}
+}
+
+func TestClaudePrimeSkipsWhenSessionFallbackActive(t *testing.T) {
+	claudeDir := t.TempDir()
+	stateDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("XDG_STATE_HOME", stateDir)
+	t.Setenv("PATH", t.TempDir())
+	settings := []byte(`{"statusLine":{"type":"command","command":"dankaiusage claude-statusline","padding":0}}`)
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cache := claudePrimeCache{
+		StartedAt: "2026-06-24T11:00:00Z",
+		UsageAt:   "2026-06-24T11:00:10Z",
+		ResetAt:   time.Now().Add(time.Hour).Format(time.RFC3339),
+		Source:    claudePrimeSessionSource,
+	}
+	if err := writeClaudePrimeCache(cache); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := primeClaudeStatusline(claudePrimeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || result.Message != "Claude session timer already active" {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.SessionLeft.Source != claudePrimeSessionSource {
+		t.Fatalf("session source = %q", result.SessionLeft.Source)
+	}
+}
+
 func TestApplyEventsPreservesPrimeFallback(t *testing.T) {
 	now := mustParseTime(t, "2026-06-24T12:00:00Z")
 	resetAt := now.Add(3 * time.Hour)
