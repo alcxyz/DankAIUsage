@@ -31,9 +31,12 @@ PluginComponent {
     property string _claudePrimeError: ""
     property bool isPrimingClaude: false
     property string claudePrimeText: ""
+    property double lastClaudeAutoPrimeAt: 0
+    property int claudePrimeCooldownHours: 4
 
     function loadSettings() {
         if (!pluginService || !pluginService.loadPluginData) return
+        var wasEnabled = enableClaudePrime
         refreshInterval = pluginService.loadPluginData(pluginId, "refreshInterval", 300) || 300
         periodDays = pluginService.loadPluginData(pluginId, "periodDays", 7) || 7
         showCodex = pluginService.loadPluginData(pluginId, "showCodex", true) !== false
@@ -42,12 +45,14 @@ PluginComponent {
         compactPill = pluginService.loadPluginData(pluginId, "compactPill", false) === true
         focusWeekly = pluginService.loadPluginData(pluginId, "focusWeekly", false) === true
         enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
+        if (!wasEnabled && enableClaudePrime) maybeAutoPrimeClaude()
     }
 
     function loadCache() {
         if (!pluginService || !pluginService.loadPluginState) return
+        lastClaudeAutoPrimeAt = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeAt", 0) || 0
         var cached = pluginService.loadPluginState(pluginId, "lastSummary", null)
-        if (cached && cached.providers) applySummary(cached)
+        if (cached && cached.providers) applySummary(cached, false)
     }
 
     Component.onCompleted: {
@@ -80,15 +85,16 @@ PluginComponent {
         usageProcess.running = true
     }
 
-    function primeClaude() {
+    function primeClaude(automatic) {
+        automatic = automatic === true
         if (!enableClaudePrime) {
-            claudePrimeText = "Enable Claude prime in settings first"
+            if (!automatic) claudePrimeText = "Enable Claude prime in settings first"
             return
         }
         if (claudePrimeProcess.running) return
         _claudePrimeOutput = ""
         _claudePrimeError = ""
-        claudePrimeText = "Refreshing Claude account limits..."
+        claudePrimeText = automatic ? "Starting Claude session timer..." : "Refreshing Claude account limits..."
         isPrimingClaude = true
         claudePrimeProcess.command = ["dankaiusage", "claude-prime"]
         claudePrimeProcess.running = true
@@ -112,7 +118,7 @@ PluginComponent {
             }
             try {
                 var summary = JSON.parse(root._pendingOutput.trim())
-                root.applySummary(summary)
+                root.applySummary(summary, true)
                 if (root.pluginService && root.pluginService.savePluginState)
                     root.pluginService.savePluginState(root.pluginId, "lastSummary", summary)
             } catch (e) {
@@ -143,6 +149,9 @@ PluginComponent {
             if (message === "") message = exitCode === 0 ? "Claude account limits refreshed" : "Claude account refresh failed"
             root.claudePrimeText = message
             root.isPrimingClaude = false
+            root.lastClaudeAutoPrimeAt = Date.now()
+            if (root.pluginService && root.pluginService.savePluginState)
+                root.pluginService.savePluginState(root.pluginId, "lastClaudeAutoPrimeAt", root.lastClaudeAutoPrimeAt)
             if (exitCode !== 0) {
                 root.hasError = true
                 root.errorText = message
@@ -152,7 +161,7 @@ PluginComponent {
         }
     }
 
-    function applySummary(summary) {
+    function applySummary(summary, allowAutoPrime) {
         capabilities = summary.capabilities || {}
         providers = summary.providers || []
         grandTotal = summary.grandTotal || ({ total: 0, input: 0, output: 0, cached: 0, requests: 0, sessions: 0 })
@@ -161,6 +170,7 @@ PluginComponent {
 
         var d = new Date(summary.generatedAt || Date.now())
         lastUpdated = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2)
+        if (allowAutoPrime !== false) maybeAutoPrimeClaude()
     }
 
     function visibleProviders() {
@@ -248,6 +258,43 @@ PluginComponent {
     function allowanceFor(provider, window) {
         if (!provider) return null
         return window === "weekly" ? provider.weeklyLeft : provider.sessionLeft
+    }
+
+    function claudeProvider() {
+        if (!showClaude) return null
+        for (var i = 0; i < providers.length; i++) {
+            if (providers[i].id === "claude") return providers[i]
+        }
+        return null
+    }
+
+    function resetIsFuture(allowance) {
+        if (!allowance || !allowance.resetAt) return false
+        var d = new Date(allowance.resetAt)
+        return !isNaN(d.getTime()) && d.getTime() > Date.now() + 60000
+    }
+
+    function claudeSessionIsActive(provider) {
+        if (!provider) return false
+        var allowance = provider.sessionLeft
+        if (!allowance) return false
+        if (allowance.known) return resetIsFuture(allowance)
+        return allowance.source === "claude-prime local usage" && resetIsFuture(allowance)
+    }
+
+    function autoPrimeCoolingDown() {
+        if (!lastClaudeAutoPrimeAt) return false
+        return Date.now() - lastClaudeAutoPrimeAt < claudePrimeCooldownHours * 60 * 60 * 1000
+    }
+
+    function maybeAutoPrimeClaude() {
+        if (!enableClaudePrime || !showClaude || isPrimingClaude || claudePrimeProcess.running) return
+        var provider = claudeProvider()
+        if (!provider || !provider.available || claudeSessionIsActive(provider) || autoPrimeCoolingDown()) return
+        lastClaudeAutoPrimeAt = Date.now()
+        if (pluginService && pluginService.savePluginState)
+            pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeAt", lastClaudeAutoPrimeAt)
+        primeClaude(true)
     }
 
     function windowLabel(window) {

@@ -43,7 +43,7 @@ PluginSettings {
     ToggleSetting {
         settingKey: "enableClaudePrime"
         label: "Enable Claude prime"
-        description: "Show the manual Claude request that refreshes account limits and may start the session window"
+        description: "Automatically run a tiny Claude request when no active session timer is known"
         defaultValue: false
     }
 
