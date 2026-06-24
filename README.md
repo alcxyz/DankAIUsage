@@ -66,10 +66,12 @@ design.
 
 When the "Enable Claude prime" setting is on, the widget automatically runs the
 prime request whenever Claude is visible and no active session timer is known.
-After a successful prime, the cached five-hour session timer prevents another
-automatic prime until that timer expires. If an automatic prime fails, the
-widget does not keep retrying; use the Claude bolt or toggle the setting off and
-on to try again.
+Any current local Claude session with a future reset time prevents another
+automatic prime until that timer expires. After a successful prime, the cached
+five-hour session timer provides that reset time even when Claude statusline
+does not publish account limits. If an automatic prime fails without producing
+local usage, the widget does not keep retrying; use the Claude bolt or toggle
+the setting off and on to try again.
 
 ## Build
 

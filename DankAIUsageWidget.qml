@@ -183,6 +183,12 @@ PluginComponent {
 
         var d = new Date(summary.generatedAt || Date.now())
         lastUpdated = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2)
+        var claude = claudeProvider()
+        if (claudeSessionIsActive(claude) && lastClaudeAutoPrimeFailed) {
+            lastClaudeAutoPrimeFailed = false
+            if (pluginService && pluginService.savePluginState)
+                pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeFailed", false)
+        }
         if (allowAutoPrime !== false) maybeAutoPrimeClaude()
     }
 
@@ -292,6 +298,7 @@ PluginComponent {
         var allowance = provider.sessionLeft
         if (!allowance) return false
         if (allowance.known) return resetIsFuture(allowance)
+        if (provider.session && (provider.session.requests || 0) > 0) return resetIsFuture(allowance)
         return allowance.source === "claude-prime local usage" && resetIsFuture(allowance)
     }
 
