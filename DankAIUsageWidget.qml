@@ -215,11 +215,13 @@ PluginComponent {
     }
 
     function allowanceLabel(allowance) {
+        if (allowance && allowance.source === "claude-prime local usage") return "Timer"
         if (!knownAllowance(allowance)) return "--"
         return Math.round(allowance.percentRemaining || 0) + "%"
     }
 
     function allowanceDetail(allowance) {
+        if (allowance && allowance.source === "claude-prime local usage") return "Started by Claude prime"
         if (!knownAllowance(allowance)) return "Limit unavailable"
         if (allowance.unit === "percent") return Math.round(allowance.percentRemaining || 0) + "% left of subscription window"
         return formatTokens(allowance.remaining || 0) + " left of " + formatTokens(allowance.limit || 0)
@@ -320,6 +322,9 @@ PluginComponent {
         }
         if (provider.id === "claude" && provider.meta.tokenDataIncludesWeb === false) {
             parts.push("Claude tokens are local Claude Code only, not web")
+        }
+        if (provider.id === "claude" && provider.meta.sessionFallbackSource) {
+            parts.push("Session timer from Claude prime; account limits unavailable")
         }
         if (provider.meta.tokenDataNote) {
             var note = provider.meta.tokenDataNote

@@ -48,5 +48,5 @@
     }
   },
   "permissions": ["settings_read", "settings_write", "process"],
-  "requires": ["dankaiusage", "codex", "claude", "sqlite3"]
+  "requires": ["dankaiusage", "codex", "claude", "sqlite3", "script"]
 }

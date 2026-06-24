@@ -58,11 +58,12 @@ dankaiusage claude-prime
 ```
 
 The command refuses to run unless the statusline command is configured. When it
-runs, it calls `claude -p --output-format json --max-turns 1`, waits for the
-statusline cache to update, and then returns the refreshed session and weekly
-allowances. This spends a small amount of Claude usage by design; the widget
-only shows the Claude prime action when the "Enable Claude prime" setting is on,
-and only runs it when you press that action.
+runs, it starts Claude Code under a pseudo-terminal, sends one small prompt with
+tools disabled, waits for the statusline cache to publish fresh rate-limit data,
+and then returns the refreshed session and weekly allowances. This spends a
+small amount of Claude usage by design; the widget only shows the Claude prime
+action when the "Enable Claude prime" setting is on, and only runs it when you
+press that action.
 
 ## Build
 

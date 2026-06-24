@@ -155,20 +155,73 @@ func TestCollectClaudePreservesStatuslineErrorMetadata(t *testing.T) {
 
 func TestClaudePrimeArgs(t *testing.T) {
 	args := claudePrimeArgs(claudePrimeOptions{
-		Model:        "sonnet",
-		MaxBudgetUSD: "0.10",
+		Model: "sonnet",
 	}, "Reply OK")
 
 	want := []string{
-		"-p",
-		"--output-format", "json",
-		"--max-turns", "1",
+		firstNonEmpty(commandPath("claude"), "claude"),
+		"--name", "dankaiusage-prime",
+		"--tools", "",
+		"--permission-mode", "dontAsk",
 		"--model", "sonnet",
-		"--max-budget-usd", "0.10",
 		"Reply OK",
 	}
 	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestClaudePrimeSessionFallback(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateDir)
+	now := mustParseTime(t, "2026-06-24T12:00:00Z")
+	cache := claudePrimeCache{
+		StartedAt: "2026-06-24T11:00:00Z",
+		UsageAt:   "2026-06-24T11:00:10Z",
+		ResetAt:   "2026-06-24T16:00:10Z",
+		Source:    "claude-prime local usage",
+	}
+	if err := writeClaudePrimeCache(cache); err != nil {
+		t.Fatal(err)
+	}
+
+	allowance, meta, ok := claudePrimeSessionFallback(now)
+	if !ok {
+		t.Fatal("expected active prime fallback")
+	}
+	if allowance.Source != "claude-prime local usage" || allowance.ResetAt == "" {
+		t.Fatalf("allowance = %+v", allowance)
+	}
+	if meta["primeUsageAt"] != cache.UsageAt {
+		t.Fatalf("meta = %+v", meta)
+	}
+}
+
+func TestApplyEventsPreservesPrimeFallback(t *testing.T) {
+	now := mustParseTime(t, "2026-06-24T12:00:00Z")
+	resetAt := now.Add(3 * time.Hour)
+	provider := ProviderUsage{
+		SessionLeft: makeUnknownAllowance("session", resetAt),
+	}
+	provider.SessionLeft.Source = "claude-prime local usage"
+
+	applyEvents(&provider, nil, now, options{PeriodDays: 7, SessionHours: 5})
+	if provider.SessionLeft.ResetAt != resetAt.Format(time.RFC3339) {
+		t.Fatalf("session reset = %s, want %s", provider.SessionLeft.ResetAt, resetAt.Format(time.RFC3339))
+	}
+	if provider.SessionLeft.Source != "claude-prime local usage" {
+		t.Fatalf("session source = %s", provider.SessionLeft.Source)
+	}
+}
+
+func TestShellQuote(t *testing.T) {
+	got := shellQuote("it's ok")
+	want := "'it'\\''s ok'"
+	if got != want {
+		t.Fatalf("shellQuote = %q, want %q", got, want)
+	}
+	if got := shellQuote(""); got != "''" {
+		t.Fatalf("empty shellQuote = %q", got)
 	}
 }
 
