@@ -58,11 +58,12 @@ dankaiusage claude-prime
 ```
 
 The command refuses to run unless the statusline command is configured. When it
-runs, it sends one small `claude -p` prompt with a low budget cap, then returns
-Claude statusline allowances when available. If Claude does not publish
-statusline rate-limit data, the helper records a local five-hour session timer
-from the successful prime request. This spends a small amount of Claude usage by
-design.
+runs, it sends one small `claude -p` prompt with safe mode, no session
+persistence, tools disabled, a tiny replacement system prompt, and a low budget
+cap. It then returns Claude statusline allowances when available. If Claude does
+not publish statusline rate-limit data, the helper records a local five-hour
+session timer from the successful prime request. This spends a small amount of
+Claude usage by design.
 
 When the "Enable Claude prime" setting is on, the widget automatically runs the
 prime request whenever Claude is visible and no active session timer is known.

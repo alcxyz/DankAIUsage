@@ -765,7 +765,7 @@ func (limits claudeStatuslineLimits) weeklyLabel() string {
 
 func runClaudePrimeCommand(args []string) {
 	fs := flag.NewFlagSet("claude-prime", flag.ExitOnError)
-	prompt := fs.String("prompt", "Reply with exactly OK.", "small prompt used to refresh Claude Code account limits")
+	prompt := fs.String("prompt", "OK", "small prompt used to refresh Claude Code account limits")
 	model := fs.String("model", "", "optional Claude model alias or full model name")
 	timeoutSeconds := fs.Int("timeout-seconds", 120, "maximum seconds to wait for Claude Code")
 	pretty := fs.Bool("pretty", false, "pretty-print JSON")
@@ -906,9 +906,14 @@ func claudePrimeArgs(opts claudePrimeOptions, prompt string) []string {
 	args := []string{
 		firstNonEmpty(commandPath("claude"), "claude"),
 		"-p",
+		"--safe-mode",
+		"--no-session-persistence",
+		"--tools", "",
+		"--permission-mode", "dontAsk",
+		"--system-prompt", "Reply with exactly OK.",
 		"--output-format", "json",
 		"--max-turns", "1",
-		"--max-budget-usd", "0.01",
+		"--max-budget-usd", "0.001",
 	}
 	if model := strings.TrimSpace(opts.Model); model != "" {
 		args = append(args, "--model", model)

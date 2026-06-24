@@ -161,9 +161,14 @@ func TestClaudePrimeArgs(t *testing.T) {
 	want := []string{
 		firstNonEmpty(commandPath("claude"), "claude"),
 		"-p",
+		"--safe-mode",
+		"--no-session-persistence",
+		"--tools", "",
+		"--permission-mode", "dontAsk",
+		"--system-prompt", "Reply with exactly OK.",
 		"--output-format", "json",
 		"--max-turns", "1",
-		"--max-budget-usd", "0.01",
+		"--max-budget-usd", "0.001",
 		"--model", "sonnet",
 		"Reply OK",
 	}
