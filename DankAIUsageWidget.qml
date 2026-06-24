@@ -32,7 +32,7 @@ PluginComponent {
     property bool isPrimingClaude: false
     property string claudePrimeText: ""
     property double lastClaudeAutoPrimeAt: 0
-    property int claudePrimeCooldownHours: 4
+    property int claudePrimeCooldownMinutes: 5
 
     function loadSettings() {
         if (!pluginService || !pluginService.loadPluginData) return
@@ -284,7 +284,7 @@ PluginComponent {
 
     function autoPrimeCoolingDown() {
         if (!lastClaudeAutoPrimeAt) return false
-        return Date.now() - lastClaudeAutoPrimeAt < claudePrimeCooldownHours * 60 * 60 * 1000
+        return Date.now() - lastClaudeAutoPrimeAt < claudePrimeCooldownMinutes * 60 * 1000
     }
 
     function maybeAutoPrimeClaude() {

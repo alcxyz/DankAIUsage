@@ -58,16 +58,17 @@ dankaiusage claude-prime
 ```
 
 The command refuses to run unless the statusline command is configured. When it
-runs, it starts Claude Code under a pseudo-terminal, sends one small prompt with
-tools disabled, waits for the statusline cache to publish fresh rate-limit data,
-and then returns the refreshed session and weekly allowances. This spends a
-small amount of Claude usage by design.
+runs, it sends one small `claude -p` prompt with a low budget cap, then returns
+Claude statusline allowances when available. If Claude does not publish
+statusline rate-limit data, the helper records a local five-hour session timer
+from the successful prime request. This spends a small amount of Claude usage by
+design.
 
 When the "Enable Claude prime" setting is on, the widget automatically runs the
 prime request whenever Claude is visible and no active session timer is known.
-It records an attempt timestamp and will not automatically retry for four hours
-after a failed or completed attempt. The Claude bolt remains available as a
-manual retry while the setting is enabled.
+It records an attempt timestamp and will not automatically retry for five
+minutes after a failed attempt. The Claude bolt remains available as a manual
+retry while the setting is enabled.
 
 ## Build
 

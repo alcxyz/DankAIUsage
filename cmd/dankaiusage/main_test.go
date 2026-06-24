@@ -160,9 +160,10 @@ func TestClaudePrimeArgs(t *testing.T) {
 
 	want := []string{
 		firstNonEmpty(commandPath("claude"), "claude"),
-		"--name", "dankaiusage-prime",
-		"--tools", "",
-		"--permission-mode", "dontAsk",
+		"-p",
+		"--output-format", "json",
+		"--max-turns", "1",
+		"--max-budget-usd", "0.01",
 		"--model", "sonnet",
 		"Reply OK",
 	}
@@ -211,17 +212,6 @@ func TestApplyEventsPreservesPrimeFallback(t *testing.T) {
 	}
 	if provider.SessionLeft.Source != "claude-prime local usage" {
 		t.Fatalf("session source = %s", provider.SessionLeft.Source)
-	}
-}
-
-func TestShellQuote(t *testing.T) {
-	got := shellQuote("it's ok")
-	want := "'it'\\''s ok'"
-	if got != want {
-		t.Fatalf("shellQuote = %q, want %q", got, want)
-	}
-	if got := shellQuote(""); got != "''" {
-		t.Fatalf("empty shellQuote = %q", got)
 	}
 }
 

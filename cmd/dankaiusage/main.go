@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -741,6 +740,8 @@ type claudePrimeOptions struct {
 	Timeout time.Duration
 }
 
+const claudePrimeSessionSource = "claude-prime local usage"
+
 type claudePrimeCache struct {
 	StartedAt string `json:"startedAt"`
 	ResetAt   string `json:"resetAt"`
@@ -811,10 +812,6 @@ func primeClaudeStatusline(opts claudePrimeOptions) (claudePrimeResult, error) {
 		result.Message = "Claude CLI not found"
 		return result, err
 	}
-	if _, err := exec.LookPath("script"); err != nil {
-		result.Message = "script command not found; cannot create a Claude Code pseudo-terminal"
-		return result, err
-	}
 	if configured, _ := claudeStatuslineSettings(); !configured {
 		err := errors.New("Claude statusline is not configured")
 		result.Message = "Configure statusLine.command to dankaiusage claude-statusline first"
@@ -826,42 +823,33 @@ func primeClaudeStatusline(opts claudePrimeOptions) (claudePrimeResult, error) {
 		oldMod = info.ModTime()
 	}
 	started := time.Now()
-	stderr, runErr := runClaudePrimeRequest(opts, path, oldMod, started)
+	stdout, stderr, runErr := runClaudePrimeRequest(opts)
 	if runErr != nil {
 		msg := strings.TrimSpace(stderr)
 		if msg == "" {
 			msg = runErr.Error()
 		}
 		result.Message = "Claude prime request failed: " + msg
+		return result, errors.New(result.Message)
 	}
+	mergeClaudePrimeOutput(&result, stdout)
 
 	updated := waitForFreshClaudeStatusline(path, oldMod, started, 3*time.Second)
 	result.CacheUpdated = updated
 	data, readErr := os.ReadFile(path)
 	if readErr != nil {
-		if allowance, ok := cachePrimeSessionFromLocalUsage(started); ok {
-			result.SessionLeft = allowance
-			result.Message = "Claude session started; account limits unavailable"
-			result.OK = true
-			return result, nil
-		}
-		result.Message = "Claude request completed, but statusline cache was not written"
-		return result, errors.New(result.Message)
+		result.SessionLeft = cachePrimeSession(started, time.Now())
+		result.Message = "Claude session started; account limits unavailable"
+		result.OK = true
+		return result, nil
 	}
 	limits, parseErr := parseClaudeStatusline(data, time.Now())
 	if parseErr != nil {
 		result.StatuslineError = parseErr.Error()
-		if allowance, ok := cachePrimeSessionFromLocalUsage(started); ok {
-			result.SessionLeft = allowance
-			result.Message = "Claude session started; account limits unavailable"
-			result.OK = true
-			return result, nil
-		}
-		if runErr != nil {
-			return result, errors.New(result.Message)
-		}
-		result.Message = "Claude request completed, but statusline cache has no rate-limit data"
-		return result, errors.New(result.Message)
+		result.SessionLeft = cachePrimeSession(started, time.Now())
+		result.Message = "Claude session started; account limits unavailable"
+		result.OK = true
+		return result, nil
 	}
 	result.SessionLeft = limits.Session
 	result.WeeklyLeft = limits.Weekly
@@ -874,24 +862,22 @@ func primeClaudeStatusline(opts claudePrimeOptions) (claudePrimeResult, error) {
 	return result, nil
 }
 
-func cachePrimeSessionFromLocalUsage(started time.Time) (Allowance, bool) {
-	usageAt, ok := latestClaudeUsageAfter(started.Add(-10 * time.Second))
-	if !ok {
-		return Allowance{}, false
-	}
+func cachePrimeSession(started time.Time, usageAt time.Time) Allowance {
 	sessionHours := 5
 	resetAt := usageAt.Add(time.Duration(sessionHours) * time.Hour)
 	cache := claudePrimeCache{
 		StartedAt: started.Format(time.RFC3339),
 		UsageAt:   usageAt.Format(time.RFC3339),
 		ResetAt:   resetAt.Format(time.RFC3339),
-		Source:    "claude-prime local usage",
+		Source:    claudePrimeSessionSource,
 	}
 	_ = writeClaudePrimeCache(cache)
-	return makeUnknownAllowance("session", resetAt), true
+	allowance := makeUnknownAllowance("session", resetAt)
+	allowance.Source = claudePrimeSessionSource
+	return allowance
 }
 
-func runClaudePrimeRequest(opts claudePrimeOptions, cachePath string, oldMod time.Time, started time.Time) (string, error) {
+func runClaudePrimeRequest(opts claudePrimeOptions) ([]byte, string, error) {
 	prompt := strings.TrimSpace(opts.Prompt)
 	if prompt == "" {
 		prompt = "Reply with exactly OK."
@@ -902,47 +888,27 @@ func runClaudePrimeRequest(opts claudePrimeOptions, cachePath string, oldMod tim
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	command := shellCommand(claudePrimeArgs(opts, prompt))
-	cmd := exec.CommandContext(ctx, "script", "-qfec", command, "/dev/null")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Stdout = io.Discard
+	args := claudePrimeArgs(opts, prompt)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	if dir := os.TempDir(); dir != "" {
+		cmd.Dir = dir
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		return stderr.String(), err
+	stdout, err := cmd.Output()
+	if ctx.Err() != nil {
+		return stdout, stderr.String(), ctx.Err()
 	}
-
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case err := <-done:
-			return stderr.String(), err
-		case <-ticker.C:
-			if statuslineHasFreshLimits(cachePath, oldMod, started) {
-				killProcessGroup(cmd.Process)
-				<-done
-				return stderr.String(), nil
-			}
-		case <-ctx.Done():
-			killProcessGroup(cmd.Process)
-			<-done
-			return stderr.String(), ctx.Err()
-		}
-	}
+	return stdout, stderr.String(), err
 }
 
 func claudePrimeArgs(opts claudePrimeOptions, prompt string) []string {
 	args := []string{
 		firstNonEmpty(commandPath("claude"), "claude"),
-		"--name", "dankaiusage-prime",
-		"--tools", "",
-		"--permission-mode", "dontAsk",
+		"-p",
+		"--output-format", "json",
+		"--max-turns", "1",
+		"--max-budget-usd", "0.01",
 	}
 	if model := strings.TrimSpace(opts.Model); model != "" {
 		args = append(args, "--model", model)
@@ -951,27 +917,17 @@ func claudePrimeArgs(opts claudePrimeOptions, prompt string) []string {
 	return args
 }
 
-func shellCommand(args []string) string {
-	quoted := make([]string, 0, len(args))
-	for _, arg := range args {
-		quoted = append(quoted, shellQuote(arg))
-	}
-	return strings.Join(quoted, " ")
-}
-
-func shellQuote(value string) string {
-	if value == "" {
-		return "''"
-	}
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
-}
-
-func killProcessGroup(process *os.Process) {
-	if process == nil {
+func mergeClaudePrimeOutput(result *claudePrimeResult, data []byte) {
+	var payload map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(data), &payload); err != nil {
 		return
 	}
-	if err := syscall.Kill(-process.Pid, syscall.SIGTERM); err != nil {
-		_ = process.Kill()
+	result.ClaudeSession = firstNonEmpty(
+		stringValue(payload["session_id"]),
+		stringValue(payload["sessionId"]),
+	)
+	if cost, ok := firstFloat(payload, "total_cost_usd", "totalCostUsd", "cost_usd", "costUsd"); ok {
+		result.TotalCostUSD = cost
 	}
 }
 
@@ -1006,30 +962,6 @@ func statuslineHasFreshLimits(path string, oldMod time.Time, started time.Time) 
 	}
 	_, err = parseClaudeStatusline(data, time.Now())
 	return err == nil
-}
-
-func latestClaudeUsageAfter(cutoff time.Time) (time.Time, bool) {
-	projects := filepath.Join(claudeHome(), "projects")
-	var latest time.Time
-	_ = filepath.WalkDir(projects, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || filepath.Ext(path) != ".jsonl" {
-			return nil
-		}
-		if info, statErr := d.Info(); statErr == nil && info.ModTime().Before(cutoff) {
-			return nil
-		}
-		events, readErr := readClaudeJSONL(path)
-		if readErr != nil {
-			return nil
-		}
-		for _, event := range events {
-			if event.Timestamp.After(cutoff) && event.Timestamp.After(latest) {
-				latest = event.Timestamp
-			}
-		}
-		return nil
-	})
-	return latest, !latest.IsZero()
 }
 
 func writeClaudePrimeCache(cache claudePrimeCache) error {
