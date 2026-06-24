@@ -31,8 +31,9 @@ PluginComponent {
     property string _claudePrimeError: ""
     property bool isPrimingClaude: false
     property string claudePrimeText: ""
+    property bool claudePrimeAutomatic: false
+    property bool lastClaudeAutoPrimeFailed: false
     property double lastClaudeAutoPrimeAt: 0
-    property int claudePrimeCooldownMinutes: 5
 
     function loadSettings() {
         if (!pluginService || !pluginService.loadPluginData) return
@@ -45,12 +46,18 @@ PluginComponent {
         compactPill = pluginService.loadPluginData(pluginId, "compactPill", false) === true
         focusWeekly = pluginService.loadPluginData(pluginId, "focusWeekly", false) === true
         enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
-        if (!wasEnabled && enableClaudePrime) maybeAutoPrimeClaude()
+        if (!wasEnabled && enableClaudePrime) {
+            lastClaudeAutoPrimeFailed = false
+            if (pluginService && pluginService.savePluginState)
+                pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeFailed", false)
+            maybeAutoPrimeClaude()
+        }
     }
 
     function loadCache() {
         if (!pluginService || !pluginService.loadPluginState) return
         lastClaudeAutoPrimeAt = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeAt", 0) || 0
+        lastClaudeAutoPrimeFailed = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeFailed", false) === true
         var cached = pluginService.loadPluginState(pluginId, "lastSummary", null)
         if (cached && cached.providers) applySummary(cached, false)
     }
@@ -96,6 +103,8 @@ PluginComponent {
         _claudePrimeError = ""
         claudePrimeText = automatic ? "Starting Claude session timer..." : "Refreshing Claude account limits..."
         isPrimingClaude = true
+        claudePrimeAutomatic = automatic
+        if (!automatic) lastClaudeAutoPrimeFailed = false
         claudePrimeProcess.command = ["dankaiusage", "claude-prime"]
         claudePrimeProcess.running = true
     }
@@ -150,8 +159,12 @@ PluginComponent {
             root.claudePrimeText = message
             root.isPrimingClaude = false
             root.lastClaudeAutoPrimeAt = Date.now()
-            if (root.pluginService && root.pluginService.savePluginState)
+            root.lastClaudeAutoPrimeFailed = exitCode !== 0 && root.claudePrimeAutomatic
+            if (root.pluginService && root.pluginService.savePluginState) {
                 root.pluginService.savePluginState(root.pluginId, "lastClaudeAutoPrimeAt", root.lastClaudeAutoPrimeAt)
+                root.pluginService.savePluginState(root.pluginId, "lastClaudeAutoPrimeFailed", root.lastClaudeAutoPrimeFailed)
+            }
+            root.claudePrimeAutomatic = false
             if (exitCode !== 0) {
                 root.hasError = true
                 root.errorText = message
@@ -282,15 +295,10 @@ PluginComponent {
         return allowance.source === "claude-prime local usage" && resetIsFuture(allowance)
     }
 
-    function autoPrimeCoolingDown() {
-        if (!lastClaudeAutoPrimeAt) return false
-        return Date.now() - lastClaudeAutoPrimeAt < claudePrimeCooldownMinutes * 60 * 1000
-    }
-
     function maybeAutoPrimeClaude() {
         if (!enableClaudePrime || !showClaude || isPrimingClaude || claudePrimeProcess.running) return
         var provider = claudeProvider()
-        if (!provider || !provider.available || claudeSessionIsActive(provider) || autoPrimeCoolingDown()) return
+        if (!provider || !provider.available || claudeSessionIsActive(provider) || lastClaudeAutoPrimeFailed) return
         lastClaudeAutoPrimeAt = Date.now()
         if (pluginService && pluginService.savePluginState)
             pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeAt", lastClaudeAutoPrimeAt)

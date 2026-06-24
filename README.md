@@ -66,9 +66,10 @@ design.
 
 When the "Enable Claude prime" setting is on, the widget automatically runs the
 prime request whenever Claude is visible and no active session timer is known.
-It records an attempt timestamp and will not automatically retry for five
-minutes after a failed attempt. The Claude bolt remains available as a manual
-retry while the setting is enabled.
+After a successful prime, the cached five-hour session timer prevents another
+automatic prime until that timer expires. If an automatic prime fails, the
+widget does not keep retrying; use the Claude bolt or toggle the setting off and
+on to try again.
 
 ## Build
 
