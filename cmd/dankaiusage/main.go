@@ -741,6 +741,7 @@ type claudePrimeOptions struct {
 }
 
 const claudePrimeSessionSource = "claude-prime local usage"
+const defaultClaudePrimeModel = "sonnet"
 
 type claudePrimeCache struct {
 	StartedAt string `json:"startedAt"`
@@ -766,7 +767,7 @@ func (limits claudeStatuslineLimits) weeklyLabel() string {
 func runClaudePrimeCommand(args []string) {
 	fs := flag.NewFlagSet("claude-prime", flag.ExitOnError)
 	prompt := fs.String("prompt", "OK", "small prompt used to refresh Claude Code account limits")
-	model := fs.String("model", "", "optional Claude model alias or full model name")
+	model := fs.String("model", defaultClaudePrimeModel, "Claude model alias or full model name used for the prime request")
 	timeoutSeconds := fs.Int("timeout-seconds", 120, "maximum seconds to wait for Claude Code")
 	pretty := fs.Bool("pretty", false, "pretty-print JSON")
 	_ = fs.Parse(args)
@@ -912,12 +913,12 @@ func claudePrimeArgs(opts claudePrimeOptions, prompt string) []string {
 		"--permission-mode", "dontAsk",
 		"--system-prompt", "Reply with exactly OK.",
 		"--output-format", "json",
+		"--prompt-suggestions", "false",
 		"--max-turns", "1",
 		"--max-budget-usd", "0.001",
 	}
-	if model := strings.TrimSpace(opts.Model); model != "" {
-		args = append(args, "--model", model)
-	}
+	model := firstNonEmpty(strings.TrimSpace(opts.Model), defaultClaudePrimeModel)
+	args = append(args, "--model", model)
 	args = append(args, prompt)
 	return args
 }

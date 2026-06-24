@@ -5,7 +5,10 @@ usage. It follows the standalone plugin shape used by DankCalendar and keeps
 the QML widget thin by collecting data through the `dankaiusage` helper.
 
 The main display is remaining session and weekly allowance. Token totals are
-kept as a secondary detail.
+kept as a secondary detail. Cached tokens are excluded from displayed totals by
+default because Claude Code can attach large cached prompt/context blocks to
+very small requests; enable "Include cached tokens" when you want to inspect
+that overhead.
 
 ## Data sources
 
@@ -59,11 +62,12 @@ dankaiusage claude-prime
 
 The command refuses to run unless the statusline command is configured. When it
 runs, it sends one small `claude -p` prompt with safe mode, no session
-persistence, tools disabled, a tiny replacement system prompt, and a low budget
-cap. It then returns Claude statusline allowances when available. If Claude does
-not publish statusline rate-limit data, the helper records a local five-hour
-session timer from the successful prime request. This spends a small amount of
-Claude usage by design.
+persistence, tools disabled, a tiny replacement system prompt, `sonnet` as the
+default model, prompt suggestions disabled, and a low budget cap. It then
+returns Claude statusline allowances when available. If Claude does not publish
+statusline rate-limit data, the helper records a local five-hour session timer
+from the successful prime request. This spends a small amount of Claude usage
+by design.
 
 When the "Enable Claude prime" setting is on, the widget automatically runs the
 prime request whenever Claude is visible and no active session timer is known.

@@ -14,7 +14,7 @@ PluginComponent {
     property int periodDays: 7
     property bool showCodex: true
     property bool showClaude: true
-    property bool includeCachedTokens: true
+    property bool includeCachedTokens: false
     property bool compactPill: false
     property bool focusWeekly: false
     property bool enableClaudePrime: false
@@ -42,7 +42,7 @@ PluginComponent {
         periodDays = pluginService.loadPluginData(pluginId, "periodDays", 7) || 7
         showCodex = pluginService.loadPluginData(pluginId, "showCodex", true) !== false
         showClaude = pluginService.loadPluginData(pluginId, "showClaude", true) !== false
-        includeCachedTokens = pluginService.loadPluginData(pluginId, "includeCachedTokens", true) !== false
+        includeCachedTokens = pluginService.loadPluginData(pluginId, "includeCachedTokens", false) === true
         compactPill = pluginService.loadPluginData(pluginId, "compactPill", false) === true
         focusWeekly = pluginService.loadPluginData(pluginId, "focusWeekly", false) === true
         enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true

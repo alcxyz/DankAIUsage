@@ -167,6 +167,7 @@ func TestClaudePrimeArgs(t *testing.T) {
 		"--permission-mode", "dontAsk",
 		"--system-prompt", "Reply with exactly OK.",
 		"--output-format", "json",
+		"--prompt-suggestions", "false",
 		"--max-turns", "1",
 		"--max-budget-usd", "0.001",
 		"--model", "sonnet",

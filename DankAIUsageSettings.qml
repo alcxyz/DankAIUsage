@@ -66,7 +66,7 @@ PluginSettings {
         settingKey: "includeCachedTokens"
         label: "Include cached tokens"
         description: "Include cache read and cache creation tokens in displayed totals"
-        defaultValue: true
+        defaultValue: false
     }
 
     ToggleSetting {
