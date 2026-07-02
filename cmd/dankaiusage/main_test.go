@@ -114,6 +114,92 @@ func TestParseClaudeStatusline(t *testing.T) {
 	}
 }
 
+func TestParseClaudeOAuthUsage(t *testing.T) {
+	now := mustParseTime(t, "2026-07-02T12:00:00Z")
+	data := []byte(`{
+		"five_hour": {"utilization": 6.0, "resets_at": "2026-07-02T15:59:59.943648+00:00"},
+		"seven_day": {"utilization": 35.0, "resets_at": "2026-07-06T03:59:59.943679+00:00"},
+		"seven_day_opus": {"utilization": 0.0, "resets_at": null},
+		"seven_day_oauth_apps": null
+	}`)
+
+	session, weekly, err := parseClaudeOAuthUsage(data, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !session.Known || session.PercentRemaining != 94 {
+		t.Fatalf("session = %+v", session)
+	}
+	if session.Source != claudeOAuthUsageSource || session.WindowMinutes != 300 {
+		t.Fatalf("session metadata = %+v", session)
+	}
+	if !weekly.Known || weekly.PercentRemaining != 65 || weekly.WindowMinutes != 10080 {
+		t.Fatalf("weekly = %+v", weekly)
+	}
+	reset, err := time.Parse(time.RFC3339, session.ResetAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reset.Equal(mustParseTime(t, "2026-07-02T15:59:59Z")) {
+		t.Fatalf("session reset = %s", session.ResetAt)
+	}
+}
+
+func TestParseClaudeOAuthUsageWithoutWindows(t *testing.T) {
+	now := mustParseTime(t, "2026-07-02T12:00:00Z")
+	if _, _, err := parseClaudeOAuthUsage([]byte(`{"seven_day_oauth_apps": null}`), now); err == nil {
+		t.Fatal("expected error for payload without usage windows")
+	}
+}
+
+func TestCollectClaudeSubscriptionLimitsUsesOAuthCache(t *testing.T) {
+	claudeDir := t.TempDir()
+	stateDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("XDG_STATE_HOME", stateDir)
+
+	now := mustParseTime(t, "2026-07-02T12:00:00Z")
+	cache := claudeOAuthUsageCache{
+		FetchedAt: now.Add(-time.Minute).Format(time.RFC3339),
+		Body:      []byte(`{"five_hour":{"utilization":10,"resets_at":"2026-07-02T15:00:00Z"},"seven_day":{"utilization":20,"resets_at":"2026-07-06T00:00:00Z"}}`),
+	}
+	saveClaudeOAuthUsageCache(claudeOAuthUsageCachePath(), cache)
+
+	session, weekly, meta, err := collectClaudeSubscriptionLimits(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Source != claudeOAuthUsageSource || session.PercentRemaining != 90 {
+		t.Fatalf("session = %+v", session)
+	}
+	if weekly.PercentRemaining != 80 {
+		t.Fatalf("weekly = %+v", weekly)
+	}
+	if meta["source"] != claudeOAuthUsageSource {
+		t.Fatalf("meta = %+v", meta)
+	}
+}
+
+func TestCollectClaudeOAuthLimitsBacksOffWithoutCredentials(t *testing.T) {
+	claudeDir := t.TempDir()
+	stateDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("XDG_STATE_HOME", stateDir)
+
+	now := mustParseTime(t, "2026-07-02T12:00:00Z")
+	if _, _, _, err := collectClaudeOAuthLimits(now); err == nil {
+		t.Fatal("expected error without credentials")
+	}
+	saved := loadClaudeOAuthUsageCache(claudeOAuthUsageCachePath())
+	if saved.NextAttemptAt == "" || saved.LastError == "" {
+		t.Fatalf("expected backoff marker, got %+v", saved)
+	}
+	if _, _, _, err := collectClaudeOAuthLimits(now.Add(30 * time.Second)); err == nil ||
+		!strings.Contains(err.Error(), "backing off") {
+		t.Fatalf("expected backoff error, got %v", err)
+	}
+}
+
 func TestCollectClaudePreservesStatuslineErrorMetadata(t *testing.T) {
 	claudeDir := t.TempDir()
 	stateDir := t.TempDir()

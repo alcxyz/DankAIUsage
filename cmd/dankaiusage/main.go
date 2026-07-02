@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1017,7 +1018,243 @@ func claudePrimeSessionFallback(now time.Time) (Allowance, map[string]any, bool)
 	return allowance, meta, true
 }
 
+const claudeOAuthUsageURL = "https://api.anthropic.com/api/oauth/usage"
+const claudeOAuthUsageSource = "claude usage api"
+const claudeOAuthUsageFreshTTL = 2 * time.Minute
+const claudeOAuthUsageStaleTTL = 30 * time.Minute
+const claudeFallbackCodeVersion = "2.1.185"
+
+type claudeOAuthUsageCache struct {
+	FetchedAt     string          `json:"fetchedAt,omitempty"`
+	Body          json.RawMessage `json:"body,omitempty"`
+	NextAttemptAt string          `json:"nextAttemptAt,omitempty"`
+	LastError     string          `json:"lastError,omitempty"`
+	ClaudeVersion string          `json:"claudeVersion,omitempty"`
+}
+
+func claudeOAuthUsageCachePath() string {
+	if value := os.Getenv("XDG_STATE_HOME"); value != "" {
+		return filepath.Join(value, "dankaiusage", "claude-oauth-usage.json")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "state", "dankaiusage", "claude-oauth-usage.json")
+}
+
+func loadClaudeOAuthUsageCache(path string) claudeOAuthUsageCache {
+	var cache claudeOAuthUsageCache
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return cache
+	}
+	_ = json.Unmarshal(data, &cache)
+	return cache
+}
+
+func saveClaudeOAuthUsageCache(path string, cache claudeOAuthUsageCache) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return
+	}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0o600)
+}
+
+func readClaudeOAuthToken(now time.Time) (string, string, error) {
+	data, err := os.ReadFile(filepath.Join(claudeHome(), ".credentials.json"))
+	if err != nil {
+		return "", "", errors.New("Claude credentials not found; sign in with Claude Code once")
+	}
+	var creds struct {
+		ClaudeAiOauth struct {
+			AccessToken      string `json:"accessToken"`
+			ExpiresAt        int64  `json:"expiresAt"`
+			SubscriptionType string `json:"subscriptionType"`
+		} `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return "", "", errors.New("Claude credentials could not be parsed")
+	}
+	if creds.ClaudeAiOauth.AccessToken == "" {
+		return "", "", errors.New("Claude credentials have no OAuth token")
+	}
+	if creds.ClaudeAiOauth.ExpiresAt > 0 && time.UnixMilli(creds.ClaudeAiOauth.ExpiresAt).Before(now) {
+		return "", "", errors.New("Claude OAuth token expired; run any Claude Code session to refresh it")
+	}
+	return creds.ClaudeAiOauth.AccessToken, creds.ClaudeAiOauth.SubscriptionType, nil
+}
+
+func claudeCodeVersionString(cached string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "claude", "--version").Output()
+	if err == nil {
+		fields := strings.Fields(strings.TrimSpace(string(out)))
+		if len(fields) > 0 && fields[0] != "" {
+			return fields[0]
+		}
+	}
+	if cached != "" {
+		return cached
+	}
+	return claudeFallbackCodeVersion
+}
+
+// The claude-code User-Agent matters: anonymous clients land in an
+// aggressively rate-limited bucket and get persistent 429s.
+func fetchClaudeOAuthUsage(token string, version string) ([]byte, time.Duration, error) {
+	req, err := http.NewRequest(http.MethodGet, claudeOAuthUsageURL, nil)
+	if err != nil {
+		return nil, 5 * time.Minute, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "claude-code/"+version)
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 2 * time.Minute, fmt.Errorf("Claude usage API unreachable: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, 2 * time.Minute, err
+	}
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests:
+		backoff := 15 * time.Minute
+		if ra, raErr := strconv.Atoi(resp.Header.Get("Retry-After")); raErr == nil && ra > 0 {
+			backoff = max(backoff, time.Duration(ra)*time.Second)
+		}
+		return nil, backoff, errors.New("Claude usage API rate limited (HTTP 429)")
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return nil, 5 * time.Minute, fmt.Errorf("Claude usage API auth failed (HTTP %d); run any Claude Code session to refresh sign-in", resp.StatusCode)
+	case resp.StatusCode != http.StatusOK:
+		return nil, 5 * time.Minute, fmt.Errorf("Claude usage API returned HTTP %d", resp.StatusCode)
+	}
+	return body, 0, nil
+}
+
+func parseClaudeOAuthUsage(data []byte, now time.Time) (Allowance, Allowance, error) {
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), err
+	}
+	session := parseClaudeLimitWindow("session", claudeOAuthUsageSource, firstMap(root, "five_hour", "fiveHour"), now)
+	weekly := parseClaudeLimitWindow("weekly", claudeOAuthUsageSource, firstMap(root, "seven_day", "sevenDay"), now)
+	if session.Known && session.WindowMinutes == 0 {
+		session.WindowMinutes = 300
+	}
+	if weekly.Known && weekly.WindowMinutes == 0 {
+		weekly.WindowMinutes = 10080
+	}
+	if !session.Known && !weekly.Known {
+		return session, weekly, errors.New("Claude usage API returned no session or weekly windows")
+	}
+	return session, weekly, nil
+}
+
+func claudeOAuthUsageMeta(path string, cache claudeOAuthUsageCache) map[string]any {
+	return map[string]any{
+		"source":          claudeOAuthUsageSource,
+		"limitDataSource": "Anthropic usage API",
+		"usageCache":      path,
+		"usageFetchedAt":  cache.FetchedAt,
+	}
+}
+
+func claudeOAuthAllowancesFromCache(path string, cache claudeOAuthUsageCache, now time.Time, stale bool) (Allowance, Allowance, map[string]any, error) {
+	session, weekly, err := parseClaudeOAuthUsage(cache.Body, now)
+	if err != nil {
+		return session, weekly, nil, err
+	}
+	meta := claudeOAuthUsageMeta(path, cache)
+	if stale {
+		meta["usageDataStale"] = true
+	}
+	return session, weekly, meta, nil
+}
+
+func collectClaudeOAuthLimits(now time.Time) (Allowance, Allowance, map[string]any, error) {
+	path := claudeOAuthUsageCachePath()
+	cache := loadClaudeOAuthUsageCache(path)
+	fetchedAt, _ := time.Parse(time.RFC3339, cache.FetchedAt)
+	cacheUsable := len(cache.Body) > 0 && !fetchedAt.IsZero()
+	if cacheUsable && now.Sub(fetchedAt) < claudeOAuthUsageFreshTTL {
+		return claudeOAuthAllowancesFromCache(path, cache, now, false)
+	}
+	staleOK := cacheUsable && now.Sub(fetchedAt) < claudeOAuthUsageStaleTTL
+	if next, err := time.Parse(time.RFC3339, cache.NextAttemptAt); err == nil && now.Before(next) {
+		if staleOK {
+			return claudeOAuthAllowancesFromCache(path, cache, now, true)
+		}
+		reason := cache.LastError
+		if reason == "" {
+			reason = "waiting before retrying"
+		}
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, fmt.Errorf("Claude usage API backing off: %s", reason)
+	}
+
+	token, subscription, err := readClaudeOAuthToken(now)
+	if err != nil {
+		cache.LastError = err.Error()
+		cache.NextAttemptAt = now.Add(2 * time.Minute).Format(time.RFC3339)
+		saveClaudeOAuthUsageCache(path, cache)
+		if staleOK {
+			return claudeOAuthAllowancesFromCache(path, cache, now, true)
+		}
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+	}
+	cache.ClaudeVersion = claudeCodeVersionString(cache.ClaudeVersion)
+	body, backoff, err := fetchClaudeOAuthUsage(token, cache.ClaudeVersion)
+	if err != nil {
+		cache.LastError = err.Error()
+		cache.NextAttemptAt = now.Add(backoff).Format(time.RFC3339)
+		saveClaudeOAuthUsageCache(path, cache)
+		if staleOK {
+			return claudeOAuthAllowancesFromCache(path, cache, now, true)
+		}
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+	}
+	session, weekly, err := parseClaudeOAuthUsage(body, now)
+	if err != nil {
+		cache.LastError = err.Error()
+		cache.NextAttemptAt = now.Add(5 * time.Minute).Format(time.RFC3339)
+		saveClaudeOAuthUsageCache(path, cache)
+		if staleOK {
+			return claudeOAuthAllowancesFromCache(path, cache, now, true)
+		}
+		return session, weekly, nil, err
+	}
+	cache.Body = body
+	cache.FetchedAt = now.Format(time.RFC3339)
+	cache.LastError = ""
+	cache.NextAttemptAt = ""
+	saveClaudeOAuthUsageCache(path, cache)
+	meta := claudeOAuthUsageMeta(path, cache)
+	if subscription != "" {
+		meta["subscriptionType"] = subscription
+	}
+	return session, weekly, meta, nil
+}
+
 func collectClaudeSubscriptionLimits(now time.Time) (Allowance, Allowance, map[string]any, error) {
+	session, weekly, meta, err := collectClaudeOAuthLimits(now)
+	if err == nil {
+		return session, weekly, meta, nil
+	}
+	oauthErr := err
+	session, weekly, meta, err = collectClaudeStatuslineSubscriptionLimits(now)
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta["oauthUsageError"] = oauthErr.Error()
+	return session, weekly, meta, err
+}
+
+func collectClaudeStatuslineSubscriptionLimits(now time.Time) (Allowance, Allowance, map[string]any, error) {
 	path := claudeStatuslineCachePath()
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1088,8 +1325,8 @@ func parseClaudeStatusline(data []byte, now time.Time) (claudeStatuslineLimits, 
 	sessionMap := firstMap(limitsMap, "five_hour", "fiveHour", "session", "primary")
 	weeklyMap := firstMap(limitsMap, "seven_day", "sevenDay", "weekly", "secondary")
 	out := claudeStatuslineLimits{
-		Session: parseClaudeLimitWindow("session", sessionMap, now),
-		Weekly:  parseClaudeLimitWindow("weekly", weeklyMap, now),
+		Session: parseClaudeLimitWindow("session", "claude statusline", sessionMap, now),
+		Weekly:  parseClaudeLimitWindow("weekly", "claude statusline", weeklyMap, now),
 		Version: stringValue(root["version"]),
 	}
 	if model := firstMap(root, "model"); model != nil {
@@ -1101,16 +1338,16 @@ func parseClaudeStatusline(data []byte, now time.Time) (claudeStatuslineLimits, 
 	return out, nil
 }
 
-func parseClaudeLimitWindow(window string, values map[string]any, now time.Time) Allowance {
+func parseClaudeLimitWindow(window string, source string, values map[string]any, now time.Time) Allowance {
 	if values == nil {
 		return makeUnknownAllowance(window, now)
 	}
-	used, ok := firstFloat(values, "used_percentage", "usedPercent", "used_percent", "percentage", "percent_used", "percentUsed")
+	used, ok := firstFloat(values, "used_percentage", "utilization", "usedPercent", "used_percent", "percentage", "percent_used", "percentUsed")
 	if !ok {
 		return makeUnknownAllowance(window, parseReset(values, now))
 	}
 	windowMinutes, _ := firstFloat(values, "window_duration_mins", "windowDurationMins", "window_minutes", "windowMinutes")
-	return makeSubscriptionAllowance(window, "claude statusline", used, parseReset(values, now), int64(windowMinutes))
+	return makeSubscriptionAllowance(window, source, used, parseReset(values, now), int64(windowMinutes))
 }
 
 func parseReset(values map[string]any, fallback time.Time) time.Time {

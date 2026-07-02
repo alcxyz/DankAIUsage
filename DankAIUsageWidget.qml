@@ -395,7 +395,8 @@ PluginComponent {
             parts.push(note)
         }
         if (provider.meta.limitError) {
-            if (provider.id === "claude" && provider.meta.statuslineNextStep) parts.push(provider.meta.statuslineNextStep)
+            if (provider.id === "claude" && provider.meta.oauthUsageError) parts.push(provider.meta.oauthUsageError)
+            else if (provider.id === "claude" && provider.meta.statuslineNextStep) parts.push(provider.meta.statuslineNextStep)
             else parts.push(provider.meta.limitError)
         }
         else if (provider.meta.tokenDataError) parts.push(provider.meta.tokenDataError)
