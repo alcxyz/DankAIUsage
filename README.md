@@ -14,9 +14,11 @@ that overhead.
 
 - Codex limits: queries the local Codex app server with
   `account/rateLimits/read`.
-- Claude limits: reads the latest Claude Code statusline JSON cached by
-  `dankaiusage claude-statusline`. This is the only supported non-interactive
-  Claude Code source for account limit percentages.
+- Claude limits: queries Anthropic's OAuth usage endpoint using the local
+  Claude Code sign-in (see
+  [ADR-0001](docs/adr/ADR-0001-claude-limits-from-oauth-usage-api.md)).
+  The statusline JSON cached by `dankaiusage claude-statusline` is the
+  fallback source.
 - Token history: reads Codex `logs_2.sqlite` and Claude project JSONL
   transcripts from their normal CLI config locations. Claude token totals are
   local Claude Code history only; usage from claude.ai, mobile, or other online
@@ -25,12 +27,16 @@ that overhead.
 - CLI availability: reports whether `codex`, `claude`, and `sqlite3` are on
   `PATH`.
 
-No credentials are read or written. The helper only emits aggregate local usage
-and subscription-window percentages already exposed by the local CLIs.
+For Claude limits the helper reads the Claude Code OAuth token from
+`~/.claude/.credentials.json` itself, uses it only for the usage request, and
+never prints or logs it. Everything it emits is aggregate local usage and
+subscription-window percentages.
 
-## Claude statusline
+## Claude statusline (fallback)
 
-Claude Code passes statusline commands a JSON snapshot on stdin. Configure it
+Claude Code passes statusline commands a JSON snapshot on stdin. This is the
+fallback limit source for setups where the usage endpoint is unavailable
+(for example macOS installs keeping credentials in the Keychain). Configure it
 to let DankAIUsage cache the rate-limit data without making extra model calls:
 
 ```json
@@ -53,8 +59,11 @@ response. If the cache does not exist yet, open Claude Code in a trusted
 workspace and send one message so Claude Code can pass fresh account limit data
 to `dankaiusage claude-statusline`.
 
-You can deliberately start or refresh the Claude Code subscription window with
-one tiny request:
+Claude prime is a legacy workaround from the statusline-only era (see
+[ADR-0006](docs/adr/ADR-0006-opt-in-claude-prime.md)); with the usage endpoint
+integration there is normally no reason to enable it. You can still
+deliberately start or refresh the Claude Code subscription window with one
+tiny request:
 
 ```sh
 dankaiusage claude-prime

@@ -19,6 +19,11 @@ usage. The `claude-prime` workaround (spawning a tiny print-mode request) also
 cannot recover real percentages, because print mode does not drive the
 statusline; it degrades to a local session timer.
 
+This supersedes
+[ADR-0005](ADR-0005-claude-limits-via-statusline-capture.md) (statusline
+capture as the primary source) and
+[ADR-0006](ADR-0006-opt-in-claude-prime.md) (claude-prime).
+
 ## Decision
 
 Query Anthropic's OAuth usage endpoint directly as the primary limit source:
