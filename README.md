@@ -59,25 +59,28 @@ response. If the cache does not exist yet, open Claude Code in a trusted
 workspace and send one message so Claude Code can pass fresh account limit data
 to `dankaiusage claude-statusline`.
 
-Claude prime is a legacy workaround from the statusline-only era (see
-[ADR-0006](docs/adr/ADR-0006-opt-in-claude-prime.md)); with the usage endpoint
-integration there is normally no reason to enable it. You can still
-deliberately start or refresh the Claude Code subscription window with one
-tiny request:
+Claude prime deliberately starts a Claude subscription window with one tiny
+request. Originally a statusline-era limit workaround (see
+[ADR-0006](docs/adr/ADR-0006-opt-in-claude-prime.md)), it is now useful as a
+window scheduler: if you reliably use up every 5-hour window, auto-priming
+starts the next window's countdown as soon as the previous one closes instead
+of waiting for your next real request (see
+[ADR-0007](docs/adr/ADR-0007-auto-prime-as-window-scheduler.md)).
 
 ```sh
 dankaiusage claude-prime
 ```
 
-The command refuses to run unless the statusline command is configured. If a
-local prime timer is already active, it returns without making another Claude
-request. Otherwise, it sends one small `claude -p` prompt with safe mode, no
+The command refuses to run unless the statusline command is configured. It
+skips without spending anything when account usage data already shows an
+active session window, when a prime ran within the last 15 minutes, or — if
+account data is unavailable — while the local prime timer is active.
+Otherwise, it sends one small `claude -p` prompt with safe mode, no
 session persistence, tools disabled, a tiny replacement system prompt, `sonnet`
 as the default model, prompt suggestions disabled, and a low budget cap. It
-then returns Claude statusline allowances when available. If Claude does not
-publish statusline rate-limit data, the helper records a local five-hour
-session timer from the successful prime request. This spends a small amount of
-Claude usage by design.
+then refreshes the account usage cache and returns the new window's
+allowances, and records a local five-hour session timer as the fallback
+guard. This spends a small amount of Claude usage by design.
 
 When the "Enable Claude prime" setting is on, the widget automatically runs the
 prime request whenever Claude is visible and no active session timer is known.

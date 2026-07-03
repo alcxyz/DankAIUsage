@@ -339,6 +339,80 @@ func TestCollectClaudeUsesPrimeFallbackOnStatuslineError(t *testing.T) {
 	}
 }
 
+func TestClaudePrimeSkipsWhenOAuthSessionActive(t *testing.T) {
+	claudeDir := t.TempDir()
+	stateDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("XDG_STATE_HOME", stateDir)
+	t.Setenv("PATH", t.TempDir())
+	settings := []byte(`{"statusLine":{"type":"command","command":"dankaiusage claude-statusline","padding":0}}`)
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resetAt := time.Now().Add(2 * time.Hour).Format(time.RFC3339)
+	body := []byte(`{"five_hour":{"utilization":40,"resets_at":"` + resetAt + `"},"seven_day":{"utilization":10,"resets_at":"` + resetAt + `"}}`)
+	saveClaudeOAuthUsageCache(claudeOAuthUsageCachePath(), claudeOAuthUsageCache{
+		FetchedAt: time.Now().Add(-time.Hour).Format(time.RFC3339),
+		Body:      body,
+	})
+
+	result, err := primeClaudeStatusline(claudePrimeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || result.Message != "Claude session already active" {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.SessionLeft.Source != claudeOAuthUsageSource || result.SessionLeft.PercentRemaining != 60 {
+		t.Fatalf("session = %+v", result.SessionLeft)
+	}
+}
+
+func TestClaudePrimeHonorsRecentPrimeFloor(t *testing.T) {
+	claudeDir := t.TempDir()
+	stateDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("XDG_STATE_HOME", stateDir)
+	t.Setenv("PATH", t.TempDir())
+	settings := []byte(`{"statusLine":{"type":"command","command":"dankaiusage claude-statusline","padding":0}}`)
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	cache := claudePrimeCache{
+		StartedAt: now.Add(-5 * time.Minute).Format(time.RFC3339),
+		UsageAt:   now.Add(-5 * time.Minute).Format(time.RFC3339),
+		ResetAt:   now.Add(5 * time.Hour).Format(time.RFC3339),
+		Source:    claudePrimeSessionSource,
+	}
+	if err := writeClaudePrimeCache(cache); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := primeClaudeStatusline(claudePrimeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || result.Message != "Claude prime ran recently; waiting for account usage data" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestAllowanceActive(t *testing.T) {
+	now := mustParseTime(t, "2026-07-03T12:00:00Z")
+	active := makeSubscriptionAllowance("session", claudeOAuthUsageSource, 50, now.Add(time.Hour), 300)
+	if !allowanceActive(active, now) {
+		t.Fatal("future reset should be active")
+	}
+	expired := makeSubscriptionAllowance("session", claudeOAuthUsageSource, 50, now.Add(-time.Minute), 300)
+	if allowanceActive(expired, now) {
+		t.Fatal("past reset should be inactive")
+	}
+	if allowanceActive(makeUnknownAllowance("session", now.Add(time.Hour)), now) {
+		t.Fatal("unknown allowance should be inactive")
+	}
+}
+
 func TestClaudePrimeSkipsWhenSessionFallbackActive(t *testing.T) {
 	claudeDir := t.TempDir()
 	stateDir := t.TempDir()

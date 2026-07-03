@@ -743,6 +743,10 @@ type claudePrimeOptions struct {
 const claudePrimeSessionSource = "claude-prime local usage"
 const defaultClaudePrimeModel = "sonnet"
 
+// Floor between real prime requests. Protects against a burn loop if the
+// usage API briefly keeps reporting the window as inactive after a prime.
+const claudePrimeMinInterval = 15 * time.Minute
+
 type claudePrimeCache struct {
 	StartedAt string `json:"startedAt"`
 	ResetAt   string `json:"resetAt"`
@@ -801,6 +805,46 @@ func runClaudePrimeCommand(args []string) {
 	}
 }
 
+// allowanceActive reports whether an allowance describes a subscription
+// window that is still running. A cached reset time stays trustworthy
+// regardless of cache age: a window cannot end before its own reset.
+func allowanceActive(allowance Allowance, now time.Time) bool {
+	if !allowance.Known || allowance.ResetAt == "" {
+		return false
+	}
+	resetAt, err := time.Parse(time.RFC3339, allowance.ResetAt)
+	return err == nil && resetAt.After(now.Add(time.Minute))
+}
+
+func claudeOAuthActiveSession(now time.Time) (Allowance, Allowance, bool) {
+	cache := loadClaudeOAuthUsageCache(claudeOAuthUsageCachePath())
+	if len(cache.Body) == 0 {
+		return Allowance{}, Allowance{}, false
+	}
+	session, weekly, err := parseClaudeOAuthUsage(cache.Body, now)
+	if err != nil {
+		return Allowance{}, Allowance{}, false
+	}
+	return session, weekly, allowanceActive(session, now)
+}
+
+func recentlyPrimed(now time.Time) bool {
+	data, err := os.ReadFile(claudePrimeCachePath())
+	if err != nil {
+		return false
+	}
+	var cache claudePrimeCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return false
+	}
+	primedAt, err := time.Parse(time.RFC3339, firstNonEmpty(cache.UsageAt, cache.StartedAt))
+	if err != nil {
+		return false
+	}
+	age := now.Sub(primedAt)
+	return age >= 0 && age < claudePrimeMinInterval
+}
+
 func primeClaudeStatusline(opts claudePrimeOptions) (claudePrimeResult, error) {
 	path := claudeStatuslineCachePath()
 	now := time.Now()
@@ -814,11 +858,38 @@ func primeClaudeStatusline(opts claudePrimeOptions) (claudePrimeResult, error) {
 		result.Message = "Configure statusLine.command to dankaiusage claude-statusline first"
 		return result, err
 	}
-	if fallback, _, ok := claudePrimeSessionFallback(now); ok {
-		result.SessionLeft = fallback
+	if session, weekly, active := claudeOAuthActiveSession(now); active {
+		result.SessionLeft = session
+		result.WeeklyLeft = weekly
 		result.OK = true
-		result.Message = "Claude session timer already active"
+		result.Message = "Claude session already active"
 		return result, nil
+	}
+	if recentlyPrimed(now) {
+		if fallback, _, ok := claudePrimeSessionFallback(now); ok {
+			result.SessionLeft = fallback
+		}
+		result.OK = true
+		result.Message = "Claude prime ran recently; waiting for account usage data"
+		return result, nil
+	}
+	oauthSession, oauthWeekly, _, oauthErr := collectClaudeOAuthLimits(now)
+	if oauthErr == nil && allowanceActive(oauthSession, now) {
+		result.SessionLeft = oauthSession
+		result.WeeklyLeft = oauthWeekly
+		result.OK = true
+		result.Message = "Claude session already active"
+		return result, nil
+	}
+	if oauthErr != nil {
+		// Without account data the local five-hour timer is the only
+		// guard left; honor it in full as before.
+		if fallback, _, ok := claudePrimeSessionFallback(now); ok {
+			result.SessionLeft = fallback
+			result.OK = true
+			result.Message = "Claude session timer already active"
+			return result, nil
+		}
 	}
 	if _, err := exec.LookPath("claude"); err != nil {
 		result.Message = "Claude CLI not found"
@@ -840,6 +911,18 @@ func primeClaudeStatusline(opts claudePrimeOptions) (claudePrimeResult, error) {
 		return result, errors.New(result.Message)
 	}
 	mergeClaudePrimeOutput(&result, stdout)
+
+	// Refresh the usage cache immediately so the widget (and the next
+	// prime attempt) sees the new window without waiting out the TTL.
+	// The local timer is still written as the fallback guard.
+	if session, weekly, _, err := collectClaudeOAuthLimitsTTL(time.Now(), 0); err == nil && allowanceActive(session, time.Now()) {
+		cachePrimeSession(started, time.Now())
+		result.SessionLeft = session
+		result.WeeklyLeft = weekly
+		result.OK = true
+		result.Message = "Claude session started; account limits refreshed"
+		return result, nil
+	}
 
 	updated := waitForFreshClaudeStatusline(path, oldMod, started, 3*time.Second)
 	result.CacheUpdated = updated
@@ -1178,11 +1261,15 @@ func claudeOAuthAllowancesFromCache(path string, cache claudeOAuthUsageCache, no
 }
 
 func collectClaudeOAuthLimits(now time.Time) (Allowance, Allowance, map[string]any, error) {
+	return collectClaudeOAuthLimitsTTL(now, claudeOAuthUsageFreshTTL)
+}
+
+func collectClaudeOAuthLimitsTTL(now time.Time, freshTTL time.Duration) (Allowance, Allowance, map[string]any, error) {
 	path := claudeOAuthUsageCachePath()
 	cache := loadClaudeOAuthUsageCache(path)
 	fetchedAt, _ := time.Parse(time.RFC3339, cache.FetchedAt)
 	cacheUsable := len(cache.Body) > 0 && !fetchedAt.IsZero()
-	if cacheUsable && now.Sub(fetchedAt) < claudeOAuthUsageFreshTTL {
+	if cacheUsable && now.Sub(fetchedAt) < freshTTL {
 		return claudeOAuthAllowancesFromCache(path, cache, now, false)
 	}
 	staleOK := cacheUsable && now.Sub(fetchedAt) < claudeOAuthUsageStaleTTL

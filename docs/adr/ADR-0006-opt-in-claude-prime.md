@@ -1,6 +1,6 @@
 # ADR-0006: Opt-in Claude prime with local timer fallback
 
-**Status:** Superseded by [ADR-0001](ADR-0001-claude-limits-from-oauth-usage-api.md)
+**Status:** Superseded by [ADR-0001](ADR-0001-claude-limits-from-oauth-usage-api.md) (limit recovery) and [ADR-0007](ADR-0007-auto-prime-as-window-scheduler.md) (current role)
 **Date:** 2026-06-22
 **Applies to:** `cmd/dankaiusage/main.go` (claude-prime), `DankAIUsageWidget.qml` (auto-prime)
 
@@ -37,6 +37,7 @@ not retried until re-armed manually.
 - At best a session-reset timer, never real percentages, at the cost of a
   paid request and considerable guard complexity (five follow-up fixes in two
   days).
-- Superseded by ADR-0001: the usage API returns real percentages without
-  spending tokens. The prime command and setting remain in the code as a
-  manual legacy action, but there is no reason to enable them anymore.
+- Superseded by ADR-0001 for its original purpose: the usage API returns real
+  percentages without spending tokens. The feature itself lives on with a
+  different job — deliberately starting session windows early — recorded in
+  ADR-0007, which also replaced the guard chain described here.
