@@ -9,3 +9,5 @@
 | [ADR-0005](ADR-0005-claude-limits-via-statusline-capture.md) | Claude limits via statusline capture (superseded) | cmd/dankaiusage |
 | [ADR-0006](ADR-0006-opt-in-claude-prime.md) | Opt-in Claude prime with local timer fallback (superseded) | cmd/dankaiusage |
 | [ADR-0007](ADR-0007-auto-prime-as-window-scheduler.md) | Auto-prime as session-window scheduler | widget + cmd/dankaiusage |
+| [ADR-0008](ADR-0008-codex-duration-based-windows-and-banked-resets.md) | Classify Codex windows by duration and expose banked resets | widget + cmd/dankaiusage |
+| [ADR-0009](ADR-0009-provider-defined-quota-buckets.md) | Render provider-defined quota buckets, including Claude credits | widget + cmd/dankaiusage |

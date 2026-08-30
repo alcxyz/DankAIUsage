@@ -63,12 +63,12 @@ func TestCodexSnapshotAllowances(t *testing.T) {
 	snapshot := codexRateLimitSnapshot{
 		LimitID:  "codex",
 		PlanType: "pro",
-		Primary: codexRateLimitWindow{
+		Primary: &codexRateLimitWindow{
 			UsedPercent:        12.5,
 			WindowDurationMins: &sessionMins,
 			ResetsAt:           &sessionReset,
 		},
-		Secondary: codexRateLimitWindow{
+		Secondary: &codexRateLimitWindow{
 			UsedPercent:        44,
 			WindowDurationMins: &weeklyMins,
 			ResetsAt:           &weeklyReset,
@@ -85,6 +85,132 @@ func TestCodexSnapshotAllowances(t *testing.T) {
 	weekly := codexSnapshotWeeklyAllowance(snapshot, now)
 	if !weekly.Known || weekly.PercentRemaining != 56 {
 		t.Fatalf("weekly allowance = %+v", weekly)
+	}
+}
+
+func TestCodexSnapshotWeeklyOnly(t *testing.T) {
+	now := mustParseTime(t, "2026-08-30T12:00:00Z")
+	weeklyReset := int64(1788648672)
+	weeklyMins := int64(10080)
+	snapshot := codexRateLimitSnapshot{
+		LimitID: "codex",
+		Primary: &codexRateLimitWindow{
+			UsedPercent:        1,
+			WindowDurationMins: &weeklyMins,
+			ResetsAt:           &weeklyReset,
+		},
+	}
+
+	session, weekly := codexSnapshotWindowAllowances(snapshot, now)
+	if session.Known || session.ResetAt != "" {
+		t.Fatalf("weekly-only response fabricated a session allowance: %+v", session)
+	}
+	if !weekly.Known || weekly.PercentRemaining != 99 || weekly.WindowMinutes != 10080 {
+		t.Fatalf("weekly allowance = %+v", weekly)
+	}
+
+	provider := ProviderUsage{ID: "codex", SessionLeft: session, WeeklyLeft: weekly}
+	applyEvents(&provider, nil, now, options{PeriodDays: 7, SessionHours: 5})
+	if provider.SessionLeft.Known || provider.SessionLeft.ResetAt != "" {
+		t.Fatalf("local token history fabricated a session window: %+v", provider.SessionLeft)
+	}
+}
+
+func TestCodexSnapshotExtraLimits(t *testing.T) {
+	now := mustParseTime(t, "2026-05-28T12:00:00Z")
+	sessionReset := int64(1779994842)
+	weeklyReset := int64(1780528901)
+	sessionMins := int64(300)
+	weeklyMins := int64(10080)
+	extras := codexSnapshotExtraLimits(map[string]codexRateLimitSnapshot{
+		"codex": {
+			LimitID: "codex",
+		},
+		"gpt-5.3-codex-spark": {
+			LimitID:   "gpt-5.3-codex-spark",
+			LimitName: "GPT-5.3-Codex-Spark",
+			Primary: &codexRateLimitWindow{
+				UsedPercent:        25,
+				WindowDurationMins: &sessionMins,
+				ResetsAt:           &sessionReset,
+			},
+			Secondary: &codexRateLimitWindow{
+				UsedPercent:        80,
+				WindowDurationMins: &weeklyMins,
+				ResetsAt:           &weeklyReset,
+			},
+		},
+	}, "codex", now)
+
+	if len(extras) != 1 {
+		t.Fatalf("extra limits = %+v", extras)
+	}
+	spark := extras[0]
+	if spark.ID != "gpt-5.3-codex-spark" || spark.Label != "GPT-5.3-Codex-Spark" {
+		t.Fatalf("spark metadata = %+v", spark)
+	}
+	if spark.Session == nil || spark.Session.PercentRemaining != 75 || spark.Session.WindowMinutes != 300 {
+		t.Fatalf("spark session = %+v", spark.Session)
+	}
+	if spark.Weekly == nil || spark.Weekly.PercentRemaining != 20 || spark.Weekly.WindowMinutes != 10080 {
+		t.Fatalf("spark weekly = %+v", spark.Weekly)
+	}
+}
+
+func TestCodexAvailableResets(t *testing.T) {
+	now := mustParseTime(t, "2026-08-30T12:00:00Z")
+	credits := codexRateLimitResetCredits{
+		AvailableCount: 2,
+		Credits: []codexRateLimitResetCredit{
+			{
+				ID:          "reset-1",
+				ResetType:   "codexRateLimits",
+				Status:      "available",
+				ExpiresAt:   mustParseTime(t, "2026-09-21T12:00:00Z").Unix(),
+				Title:       "Full reset",
+				Description: "Refreshes eligible Codex limits.",
+			},
+			{
+				ID:        "reset-expired",
+				Status:    "available",
+				ExpiresAt: mustParseTime(t, "2026-08-01T12:00:00Z").Unix(),
+			},
+		},
+	}
+
+	resets := codexAvailableResets(credits, now)
+	if len(resets) != 1 {
+		t.Fatalf("available resets = %+v", resets)
+	}
+	expiresAt, err := time.Parse(time.RFC3339, resets[0].ExpiresAt)
+	if err != nil || resets[0].Title != "Full reset" || !expiresAt.Equal(mustParseTime(t, "2026-09-21T12:00:00Z")) {
+		t.Fatalf("reset = %+v", resets[0])
+	}
+}
+
+func TestMakeQuotaBucketsFlattensProviderLimits(t *testing.T) {
+	now := mustParseTime(t, "2026-08-30T12:00:00Z")
+	session := makeSubscriptionAllowance("session", "test", 10, now.Add(5*time.Hour), 300)
+	weekly := makeSubscriptionAllowance("weekly", "test", 20, now.Add(7*24*time.Hour), 10080)
+	scopedWeekly := makeSubscriptionAllowance("weekly", "test", 30, now.Add(7*24*time.Hour), 10080)
+	additional := QuotaBucket{
+		ID:        "credits",
+		Label:     "Extra usage credits",
+		Kind:      "credits",
+		Allowance: makeAllowance("monthly", 25, 100, time.Time{}),
+	}
+
+	buckets := makeQuotaBuckets(session, weekly, []ExtraLimit{{
+		ID:     "preview",
+		Label:  "Preview",
+		Weekly: &scopedWeekly,
+	}}, []QuotaBucket{additional})
+
+	if len(buckets) != 4 {
+		t.Fatalf("quota buckets = %+v", buckets)
+	}
+	if buckets[0].Label != "5-hour" || buckets[1].Label != "Weekly" || buckets[2].Label != "Preview · weekly" || buckets[3].Kind != "credits" {
+		t.Fatalf("quota bucket order = %+v", buckets)
 	}
 }
 
@@ -123,7 +249,7 @@ func TestParseClaudeOAuthUsage(t *testing.T) {
 		"seven_day_oauth_apps": null
 	}`)
 
-	session, weekly, err := parseClaudeOAuthUsage(data, now)
+	session, weekly, _, _, err := parseClaudeOAuthUsage(data, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,9 +271,98 @@ func TestParseClaudeOAuthUsage(t *testing.T) {
 	}
 }
 
+func TestParseClaudeOAuthUsageScopedWeeklyLimit(t *testing.T) {
+	now := mustParseTime(t, "2026-07-02T12:00:00Z")
+	data := []byte(`{
+		"five_hour": {"utilization": 6.0, "resets_at": "2026-07-02T15:59:59Z"},
+		"seven_day": {"utilization": 35.0, "resets_at": "2026-07-06T03:59:59Z"},
+		"limits": [
+			{"kind": "session", "utilization": 6.0, "resets_at": "2026-07-02T15:59:59Z"},
+			{"kind": "weekly_all", "utilization": 35.0, "resets_at": "2026-07-06T03:59:59Z"},
+			{
+				"kind": "weekly_fable_only",
+				"utilization": 42.0,
+				"resets_at": "2026-07-07T00:00:00Z",
+				"scope": {"model": {"id": "claude-fable", "display_name": "Fable"}}
+			}
+		]
+	}`)
+
+	_, _, extras, _, err := parseClaudeOAuthUsage(data, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fable := findExtraLimit(t, extras, "claude-fable")
+	if fable.Label != "Fable" {
+		t.Fatalf("fable label = %q", fable.Label)
+	}
+	if fable.Session != nil {
+		t.Fatalf("fable session should be absent: %+v", fable.Session)
+	}
+	if fable.Weekly == nil || fable.Weekly.PercentRemaining != 58 || fable.Weekly.WindowMinutes != 10080 {
+		t.Fatalf("fable weekly = %+v", fable.Weekly)
+	}
+}
+
+func TestParseClaudeOAuthUsageSpendBucket(t *testing.T) {
+	now := mustParseTime(t, "2026-08-30T12:00:00Z")
+	data := []byte(`{
+		"five_hour": {"utilization": 0, "resets_at": "2026-08-30T15:10:00Z"},
+		"seven_day": {"utilization": 0, "resets_at": "2026-09-04T11:00:00Z"},
+		"extra_usage": {
+			"is_enabled": true,
+			"monthly_limit": 10000,
+			"used_credits": 9999,
+			"currency": "USD",
+			"decimal_places": 2
+		},
+		"spend": {
+			"used": {"amount_minor": 4092, "currency": "USD", "exponent": 2},
+			"limit": {"amount_minor": 10000, "currency": "USD", "exponent": 2},
+			"percent": 41,
+			"enabled": true
+		}
+	}`)
+
+	_, _, extras, additional, err := parseClaudeOAuthUsage(data, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buckets := makeQuotaBuckets(Allowance{}, Allowance{}, extras, additional)
+	if len(buckets) != 1 {
+		t.Fatalf("quota buckets = %+v", buckets)
+	}
+	spend := buckets[0]
+	if spend.ID != "claude-extra-usage" || spend.Kind != "credits" {
+		t.Fatalf("spend metadata = %+v", spend)
+	}
+	if spend.Allowance.PercentUsed != 40.92 || spend.Allowance.PercentRemaining != 59.08 {
+		t.Fatalf("spend allowance = %+v", spend.Allowance)
+	}
+	if spend.ValueLabel != "$40.92 / $100.00" || spend.Detail != "$59.08 remaining" {
+		t.Fatalf("spend labels = %+v", spend)
+	}
+}
+
+func TestParseClaudeOAuthUsageExtraUsageFallback(t *testing.T) {
+	root := map[string]any{
+		"extra_usage": map[string]any{
+			"is_enabled":     true,
+			"monthly_limit":  float64(5000),
+			"used_credits":   float64(1250),
+			"currency":       "USD",
+			"decimal_places": float64(2),
+		},
+	}
+	buckets := parseClaudeSpendBuckets(root)
+	if len(buckets) != 1 || buckets[0].ValueLabel != "$12.50 / $50.00" {
+		t.Fatalf("fallback buckets = %+v", buckets)
+	}
+}
+
 func TestParseClaudeOAuthUsageWithoutWindows(t *testing.T) {
 	now := mustParseTime(t, "2026-07-02T12:00:00Z")
-	if _, _, err := parseClaudeOAuthUsage([]byte(`{"seven_day_oauth_apps": null}`), now); err == nil {
+	if _, _, _, _, err := parseClaudeOAuthUsage([]byte(`{"seven_day_oauth_apps": null}`), now); err == nil {
 		t.Fatal("expected error for payload without usage windows")
 	}
 }
@@ -165,7 +380,7 @@ func TestCollectClaudeSubscriptionLimitsUsesOAuthCache(t *testing.T) {
 	}
 	saveClaudeOAuthUsageCache(claudeOAuthUsageCachePath(), cache)
 
-	session, weekly, meta, err := collectClaudeSubscriptionLimits(now)
+	session, weekly, _, _, meta, err := collectClaudeSubscriptionLimits(now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,14 +402,14 @@ func TestCollectClaudeOAuthLimitsBacksOffWithoutCredentials(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", stateDir)
 
 	now := mustParseTime(t, "2026-07-02T12:00:00Z")
-	if _, _, _, err := collectClaudeOAuthLimits(now); err == nil {
+	if _, _, _, _, _, err := collectClaudeOAuthLimits(now); err == nil {
 		t.Fatal("expected error without credentials")
 	}
 	saved := loadClaudeOAuthUsageCache(claudeOAuthUsageCachePath())
 	if saved.NextAttemptAt == "" || saved.LastError == "" {
 		t.Fatalf("expected backoff marker, got %+v", saved)
 	}
-	if _, _, _, err := collectClaudeOAuthLimits(now.Add(30 * time.Second)); err == nil ||
+	if _, _, _, _, _, err := collectClaudeOAuthLimits(now.Add(30 * time.Second)); err == nil ||
 		!strings.Contains(err.Error(), "backing off") {
 		t.Fatalf("expected backoff error, got %v", err)
 	}
@@ -460,6 +675,17 @@ func TestApplyEventsPreservesPrimeFallback(t *testing.T) {
 	if provider.SessionLeft.Source != "claude-prime local usage" {
 		t.Fatalf("session source = %s", provider.SessionLeft.Source)
 	}
+}
+
+func findExtraLimit(t *testing.T, extras []ExtraLimit, id string) ExtraLimit {
+	t.Helper()
+	for _, extra := range extras {
+		if extra.ID == id {
+			return extra
+		}
+	}
+	t.Fatalf("extra limit %q not found in %+v", id, extras)
+	return ExtraLimit{}
 }
 
 func mustParseTime(t *testing.T, value string) time.Time {

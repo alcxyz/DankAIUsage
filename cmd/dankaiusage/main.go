@@ -47,6 +47,30 @@ type Allowance struct {
 	WindowMinutes    int64   `json:"windowMinutes,omitempty"`
 }
 
+type ExtraLimit struct {
+	ID      string     `json:"id"`
+	Label   string     `json:"label"`
+	Session *Allowance `json:"sessionLeft,omitempty"`
+	Weekly  *Allowance `json:"weeklyLeft,omitempty"`
+}
+
+type QuotaBucket struct {
+	ID         string    `json:"id"`
+	Label      string    `json:"label"`
+	Kind       string    `json:"kind"`
+	Allowance  Allowance `json:"allowance"`
+	ValueLabel string    `json:"valueLabel,omitempty"`
+	Detail     string    `json:"detail,omitempty"`
+}
+
+type UsageReset struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	ResetType   string `json:"resetType,omitempty"`
+	ExpiresAt   string `json:"expiresAt,omitempty"`
+}
+
 type ModelUsage struct {
 	Model    string `json:"model"`
 	Input    int64  `json:"input"`
@@ -57,22 +81,25 @@ type ModelUsage struct {
 }
 
 type ProviderUsage struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	Available   bool           `json:"available"`
-	CLIPath     string         `json:"cliPath,omitempty"`
-	DataPath    string         `json:"dataPath,omitempty"`
-	Error       string         `json:"error,omitempty"`
-	Today       PeriodTotals   `json:"today"`
-	Session     PeriodTotals   `json:"session"`
-	Week        PeriodTotals   `json:"week"`
-	Month       PeriodTotals   `json:"month"`
-	Period      PeriodTotals   `json:"period"`
-	SessionLeft Allowance      `json:"sessionLeft"`
-	WeeklyLeft  Allowance      `json:"weeklyLeft"`
-	Models      []ModelUsage   `json:"models"`
-	LastProject string         `json:"lastProject,omitempty"`
-	Meta        map[string]any `json:"meta,omitempty"`
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	Available    bool           `json:"available"`
+	CLIPath      string         `json:"cliPath,omitempty"`
+	DataPath     string         `json:"dataPath,omitempty"`
+	Error        string         `json:"error,omitempty"`
+	Today        PeriodTotals   `json:"today"`
+	Session      PeriodTotals   `json:"session"`
+	Week         PeriodTotals   `json:"week"`
+	Month        PeriodTotals   `json:"month"`
+	Period       PeriodTotals   `json:"period"`
+	SessionLeft  Allowance      `json:"sessionLeft"`
+	WeeklyLeft   Allowance      `json:"weeklyLeft"`
+	ExtraLimits  []ExtraLimit   `json:"extraLimits,omitempty"`
+	QuotaBuckets []QuotaBucket  `json:"quotaBuckets,omitempty"`
+	Resets       []UsageReset   `json:"resets,omitempty"`
+	Models       []ModelUsage   `json:"models"`
+	LastProject  string         `json:"lastProject,omitempty"`
+	Meta         map[string]any `json:"meta,omitempty"`
 }
 
 type Summary struct {
@@ -194,9 +221,12 @@ func collectCodex(now time.Time, opts options) ProviderUsage {
 	}
 	root := codexHome()
 	provider.DataPath = root
-	if sessionLeft, weeklyLeft, meta, err := collectCodexSubscriptionLimits(now); err == nil {
+	if sessionLeft, weeklyLeft, extraLimits, resets, meta, err := collectCodexSubscriptionLimits(now); err == nil {
 		provider.SessionLeft = sessionLeft
 		provider.WeeklyLeft = weeklyLeft
+		provider.ExtraLimits = extraLimits
+		provider.QuotaBuckets = makeQuotaBuckets(sessionLeft, weeklyLeft, extraLimits, nil)
+		provider.Resets = resets
 		provider.Meta = meta
 	} else {
 		mergeProviderMeta(&provider, meta)
@@ -273,9 +303,11 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 	setProviderMeta(&provider, "limitDataIncludesWeb", true)
 	root := claudeHome()
 	provider.DataPath = root
-	sessionLeft, weeklyLeft, meta, limitErr := collectClaudeSubscriptionLimits(now)
+	sessionLeft, weeklyLeft, extraLimits, additionalBuckets, meta, limitErr := collectClaudeSubscriptionLimits(now)
 	provider.SessionLeft = sessionLeft
 	provider.WeeklyLeft = weeklyLeft
+	provider.ExtraLimits = extraLimits
+	provider.QuotaBuckets = makeQuotaBuckets(sessionLeft, weeklyLeft, extraLimits, additionalBuckets)
 	mergeProviderMeta(&provider, meta)
 	if limitErr != nil {
 		setProviderMeta(&provider, "limitError", limitErr.Error())
@@ -508,12 +540,14 @@ func eventTotal(event tokenEvent) int64 {
 
 func makeAllowance(window string, used int64, limit int64, resetAt time.Time) Allowance {
 	allowance := Allowance{
-		Known:   limit > 0,
-		Window:  window,
-		Unit:    "tokens",
-		Used:    used,
-		Limit:   limit,
-		ResetAt: resetAt.Format(time.RFC3339),
+		Known:  limit > 0,
+		Window: window,
+		Unit:   "tokens",
+		Used:   used,
+		Limit:  limit,
+	}
+	if !resetAt.IsZero() {
+		allowance.ResetAt = resetAt.Format(time.RFC3339)
 	}
 	if limit <= 0 {
 		return allowance
@@ -529,11 +563,14 @@ func makeAllowance(window string, used int64, limit int64, resetAt time.Time) Al
 }
 
 func makeUnknownAllowance(window string, resetAt time.Time) Allowance {
-	return Allowance{
-		Window:  window,
-		Unit:    "subscription",
-		ResetAt: resetAt.Format(time.RFC3339),
+	allowance := Allowance{
+		Window: window,
+		Unit:   "subscription",
 	}
+	if !resetAt.IsZero() {
+		allowance.ResetAt = resetAt.Format(time.RFC3339)
+	}
+	return allowance
 }
 
 func makeSubscriptionAllowance(window string, source string, usedPercent float64, resetAt time.Time, windowMinutes int64) Allowance {
@@ -553,22 +590,52 @@ func makeSubscriptionAllowance(window string, source string, usedPercent float64
 	}
 }
 
+func makeQuotaBuckets(session Allowance, weekly Allowance, extras []ExtraLimit, additional []QuotaBucket) []QuotaBucket {
+	buckets := make([]QuotaBucket, 0, 2+len(extras)*2+len(additional))
+	if session.Known {
+		buckets = append(buckets, QuotaBucket{ID: "general-5-hour", Label: "5-hour", Kind: "short", Allowance: session})
+	}
+	if weekly.Known {
+		buckets = append(buckets, QuotaBucket{ID: "general-weekly", Label: "Weekly", Kind: "weekly", Allowance: weekly})
+	}
+	for _, extra := range extras {
+		if extra.Session != nil && extra.Session.Known {
+			buckets = append(buckets, QuotaBucket{
+				ID:        extra.ID + "-5-hour",
+				Label:     extra.Label + " · 5-hour",
+				Kind:      "scoped",
+				Allowance: *extra.Session,
+			})
+		}
+		if extra.Weekly != nil && extra.Weekly.Known {
+			buckets = append(buckets, QuotaBucket{
+				ID:        extra.ID + "-weekly",
+				Label:     extra.Label + " · weekly",
+				Kind:      "scoped",
+				Allowance: *extra.Weekly,
+			})
+		}
+	}
+	return append(buckets, additional...)
+}
+
 type codexRateLimitResponse struct {
 	ID     int `json:"id"`
 	Result struct {
-		RateLimits          codexRateLimitSnapshot            `json:"rateLimits"`
-		RateLimitsByLimitID map[string]codexRateLimitSnapshot `json:"rateLimitsByLimitId"`
+		RateLimits            codexRateLimitSnapshot            `json:"rateLimits"`
+		RateLimitsByLimitID   map[string]codexRateLimitSnapshot `json:"rateLimitsByLimitId"`
+		RateLimitResetCredits codexRateLimitResetCredits        `json:"rateLimitResetCredits"`
 	} `json:"result"`
 	Error any `json:"error,omitempty"`
 }
 
 type codexRateLimitSnapshot struct {
-	LimitID              string               `json:"limitId"`
-	LimitName            string               `json:"limitName"`
-	Primary              codexRateLimitWindow `json:"primary"`
-	Secondary            codexRateLimitWindow `json:"secondary"`
-	PlanType             string               `json:"planType"`
-	RateLimitReachedType any                  `json:"rateLimitReachedType"`
+	LimitID              string                `json:"limitId"`
+	LimitName            string                `json:"limitName"`
+	Primary              *codexRateLimitWindow `json:"primary"`
+	Secondary            *codexRateLimitWindow `json:"secondary"`
+	PlanType             string                `json:"planType"`
+	RateLimitReachedType any                   `json:"rateLimitReachedType"`
 }
 
 type codexRateLimitWindow struct {
@@ -577,9 +644,23 @@ type codexRateLimitWindow struct {
 	ResetsAt           *int64  `json:"resetsAt"`
 }
 
-func collectCodexSubscriptionLimits(now time.Time) (Allowance, Allowance, map[string]any, error) {
+type codexRateLimitResetCredits struct {
+	AvailableCount int                         `json:"availableCount"`
+	Credits        []codexRateLimitResetCredit `json:"credits"`
+}
+
+type codexRateLimitResetCredit struct {
+	ID          string `json:"id"`
+	ResetType   string `json:"resetType"`
+	Status      string `json:"status"`
+	ExpiresAt   int64  `json:"expiresAt"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
+
+func collectCodexSubscriptionLimits(now time.Time) (Allowance, Allowance, []ExtraLimit, []UsageReset, map[string]any, error) {
 	if _, err := exec.LookPath("codex"); err != nil {
-		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -588,16 +669,16 @@ func collectCodexSubscriptionLimits(now time.Time) (Allowance, Allowance, map[st
 	cmd := exec.CommandContext(ctx, "codex", "app-server", "--listen", "stdio://", "--analytics-default-enabled")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, err
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, err
 	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
-		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, err
 	}
 
 	_, _ = io.WriteString(stdin, `{"id":1,"method":"initialize","params":{"clientInfo":{"name":"dankaiusage","title":"DankAIUsage","version":"`+version+`"},"capabilities":null}}`+"\n")
@@ -619,13 +700,13 @@ func collectCodexSubscriptionLimits(now time.Time) (Allowance, Allowance, map[st
 			_ = stdin.Close()
 			cancel()
 			_ = cmd.Wait()
-			return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+			return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, err
 		}
 		if response.Error != nil {
 			_ = stdin.Close()
 			cancel()
 			_ = cmd.Wait()
-			return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, fmt.Errorf("%v", response.Error)
+			return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, fmt.Errorf("%v", response.Error)
 		}
 		snapshot := response.Result.RateLimits
 		if byID := response.Result.RateLimitsByLimitID["codex"]; byID.LimitID != "" {
@@ -634,13 +715,17 @@ func collectCodexSubscriptionLimits(now time.Time) (Allowance, Allowance, map[st
 		_ = stdin.Close()
 		cancel()
 		_ = cmd.Wait()
-		return codexSnapshotAllowances(snapshot, now), codexSnapshotWeeklyAllowance(snapshot, now), codexSnapshotMeta(snapshot), nil
+		session, weekly := codexSnapshotWindowAllowances(snapshot, now)
+		resets := codexAvailableResets(response.Result.RateLimitResetCredits, now)
+		meta := codexSnapshotMeta(snapshot)
+		meta["availableResetCount"] = response.Result.RateLimitResetCredits.AvailableCount
+		return session, weekly, codexSnapshotExtraLimits(response.Result.RateLimitsByLimitID, snapshot.LimitID, now), resets, meta, nil
 	}
 	if err := scanner.Err(); err != nil {
 		_ = stdin.Close()
 		cancel()
 		_ = cmd.Wait()
-		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, err
 	}
 	_ = stdin.Close()
 	err = cmd.Wait()
@@ -651,15 +736,108 @@ func collectCodexSubscriptionLimits(now time.Time) (Allowance, Allowance, map[st
 	if msg == "" {
 		msg = "Codex rate limits unavailable"
 	}
-	return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, errors.New(msg)
+	return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, errors.New(msg)
 }
 
 func codexSnapshotAllowances(snapshot codexRateLimitSnapshot, now time.Time) Allowance {
-	return makeSubscriptionAllowance("session", "codex app-server", snapshot.Primary.UsedPercent, codexResetTime(snapshot.Primary, now), codexWindowMinutes(snapshot.Primary))
+	session, _ := codexSnapshotWindowAllowances(snapshot, now)
+	return session
 }
 
 func codexSnapshotWeeklyAllowance(snapshot codexRateLimitSnapshot, now time.Time) Allowance {
-	return makeSubscriptionAllowance("weekly", "codex app-server", snapshot.Secondary.UsedPercent, codexResetTime(snapshot.Secondary, now), codexWindowMinutes(snapshot.Secondary))
+	_, weekly := codexSnapshotWindowAllowances(snapshot, now)
+	return weekly
+}
+
+// Codex no longer guarantees that primary means a short window and secondary
+// means a weekly window. Classify each returned window by its duration so a
+// weekly-only response is not rendered as a fake session quota.
+func codexSnapshotWindowAllowances(snapshot codexRateLimitSnapshot, now time.Time) (Allowance, Allowance) {
+	session := makeUnknownAllowance("session", time.Time{})
+	weekly := makeUnknownAllowance("weekly", time.Time{})
+	session.Source = "codex app-server"
+	weekly.Source = "codex app-server"
+	assign := func(window *codexRateLimitWindow, fallback string) {
+		if window == nil {
+			return
+		}
+		kind := codexWindowKind(window, fallback)
+		allowance := makeSubscriptionAllowance(kind, "codex app-server", window.UsedPercent, codexResetTime(window, now), codexWindowMinutes(window))
+		if kind == "weekly" {
+			weekly = allowance
+		} else {
+			session = allowance
+		}
+	}
+	assign(snapshot.Primary, "session")
+	assign(snapshot.Secondary, "weekly")
+	return session, weekly
+}
+
+func codexWindowKind(window *codexRateLimitWindow, fallback string) string {
+	minutes := codexWindowMinutes(window)
+	if minutes >= 6*24*60 {
+		return "weekly"
+	}
+	if minutes > 0 && minutes <= 24*60 {
+		return "session"
+	}
+	return fallback
+}
+
+func codexSnapshotExtraLimits(snapshots map[string]codexRateLimitSnapshot, primaryLimitID string, now time.Time) []ExtraLimit {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(snapshots))
+	for key := range snapshots {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]ExtraLimit, 0, len(keys))
+	for _, key := range keys {
+		snapshot := snapshots[key]
+		id := firstNonEmpty(snapshot.LimitID, key)
+		if id == "" || id == "codex" || id == primaryLimitID {
+			continue
+		}
+		session, weekly := codexSnapshotWindowAllowances(snapshot, now)
+		if !session.Known && !weekly.Known {
+			continue
+		}
+		extra := ExtraLimit{
+			ID:    id,
+			Label: firstNonEmpty(snapshot.LimitName, id),
+		}
+		if session.Known {
+			extra.Session = &session
+		}
+		if weekly.Known {
+			extra.Weekly = &weekly
+		}
+		out = append(out, extra)
+	}
+	return out
+}
+
+func codexAvailableResets(credits codexRateLimitResetCredits, now time.Time) []UsageReset {
+	resets := make([]UsageReset, 0, len(credits.Credits))
+	for _, credit := range credits.Credits {
+		if credit.Status != "available" || (credit.ExpiresAt > 0 && !time.Unix(credit.ExpiresAt, 0).After(now)) {
+			continue
+		}
+		reset := UsageReset{
+			ID:          credit.ID,
+			Title:       firstNonEmpty(credit.Title, "Usage reset"),
+			Description: credit.Description,
+			ResetType:   credit.ResetType,
+		}
+		if credit.ExpiresAt > 0 {
+			reset.ExpiresAt = time.Unix(credit.ExpiresAt, 0).Format(time.RFC3339)
+		}
+		resets = append(resets, reset)
+	}
+	return resets
 }
 
 func codexSnapshotMeta(snapshot codexRateLimitSnapshot) map[string]any {
@@ -676,15 +854,15 @@ func codexSnapshotMeta(snapshot codexRateLimitSnapshot) map[string]any {
 	return meta
 }
 
-func codexResetTime(window codexRateLimitWindow, fallback time.Time) time.Time {
-	if window.ResetsAt == nil || *window.ResetsAt <= 0 {
+func codexResetTime(window *codexRateLimitWindow, fallback time.Time) time.Time {
+	if window == nil || window.ResetsAt == nil || *window.ResetsAt <= 0 {
 		return fallback
 	}
 	return time.Unix(*window.ResetsAt, 0).Local()
 }
 
-func codexWindowMinutes(window codexRateLimitWindow) int64 {
-	if window.WindowDurationMins == nil {
+func codexWindowMinutes(window *codexRateLimitWindow) int64 {
+	if window == nil || window.WindowDurationMins == nil {
 		return 0
 	}
 	return *window.WindowDurationMins
@@ -821,7 +999,7 @@ func claudeOAuthActiveSession(now time.Time) (Allowance, Allowance, bool) {
 	if len(cache.Body) == 0 {
 		return Allowance{}, Allowance{}, false
 	}
-	session, weekly, err := parseClaudeOAuthUsage(cache.Body, now)
+	session, weekly, _, _, err := parseClaudeOAuthUsage(cache.Body, now)
 	if err != nil {
 		return Allowance{}, Allowance{}, false
 	}
@@ -873,7 +1051,7 @@ func primeClaudeStatusline(opts claudePrimeOptions) (claudePrimeResult, error) {
 		result.Message = "Claude prime ran recently; waiting for account usage data"
 		return result, nil
 	}
-	oauthSession, oauthWeekly, _, oauthErr := collectClaudeOAuthLimits(now)
+	oauthSession, oauthWeekly, _, _, _, oauthErr := collectClaudeOAuthLimits(now)
 	if oauthErr == nil && allowanceActive(oauthSession, now) {
 		result.SessionLeft = oauthSession
 		result.WeeklyLeft = oauthWeekly
@@ -915,7 +1093,7 @@ func primeClaudeStatusline(opts claudePrimeOptions) (claudePrimeResult, error) {
 	// Refresh the usage cache immediately so the widget (and the next
 	// prime attempt) sees the new window without waiting out the TTL.
 	// The local timer is still written as the fallback guard.
-	if session, weekly, _, err := collectClaudeOAuthLimitsTTL(time.Now(), 0); err == nil && allowanceActive(session, time.Now()) {
+	if session, weekly, _, _, _, err := collectClaudeOAuthLimitsTTL(time.Now(), 0); err == nil && allowanceActive(session, time.Now()) {
 		cachePrimeSession(started, time.Now())
 		result.SessionLeft = session
 		result.WeeklyLeft = weekly
@@ -1220,10 +1398,10 @@ func fetchClaudeOAuthUsage(token string, version string) ([]byte, time.Duration,
 	return body, 0, nil
 }
 
-func parseClaudeOAuthUsage(data []byte, now time.Time) (Allowance, Allowance, error) {
+func parseClaudeOAuthUsage(data []byte, now time.Time) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, error) {
 	var root map[string]any
 	if err := json.Unmarshal(data, &root); err != nil {
-		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), err
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, err
 	}
 	session := parseClaudeLimitWindow("session", claudeOAuthUsageSource, firstMap(root, "five_hour", "fiveHour"), now)
 	weekly := parseClaudeLimitWindow("weekly", claudeOAuthUsageSource, firstMap(root, "seven_day", "sevenDay"), now)
@@ -1233,10 +1411,250 @@ func parseClaudeOAuthUsage(data []byte, now time.Time) (Allowance, Allowance, er
 	if weekly.Known && weekly.WindowMinutes == 0 {
 		weekly.WindowMinutes = 10080
 	}
+	extras := parseClaudeScopedLimits(root, now)
+	extras = parseClaudeTopLevelScopedLimits(root, now, extras)
+	additional := parseClaudeSpendBuckets(root)
 	if !session.Known && !weekly.Known {
-		return session, weekly, errors.New("Claude usage API returned no session or weekly windows")
+		return session, weekly, extras, additional, errors.New("Claude usage API returned no session or weekly windows")
 	}
-	return session, weekly, nil
+	return session, weekly, extras, additional, nil
+}
+
+// parseClaudeScopedLimits extracts model- or surface-scoped windows from the
+// structured limits array (e.g. the Fable-only weekly cap). The plain
+// session and weekly_all entries duplicate five_hour/seven_day and are
+// skipped.
+func parseClaudeScopedLimits(root map[string]any, now time.Time) []ExtraLimit {
+	items, ok := root["limits"].([]any)
+	if !ok {
+		return nil
+	}
+	var out []ExtraLimit
+	for _, item := range items {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		kind := stringValue(entry["kind"])
+		kindLower := strings.ToLower(kind)
+		if kindLower == "" || kindLower == "session" || kindLower == "weekly" || kindLower == "weekly_all" || kindLower == "five_hour" || kindLower == "seven_day" {
+			continue
+		}
+		used, ok := firstFloat(entry, "percent", "utilization", "used_percentage", "usedPercent", "used_percent", "percentage", "percent_used", "percentUsed")
+		if !ok {
+			continue
+		}
+		window, windowMinutes := claudeScopedLimitWindow(kind, stringValue(entry["group"]))
+		label := firstNonEmpty(stringValue(entry["label"]), stringValue(entry["display_name"]), stringValue(entry["displayName"]), stringValue(entry["name"]), humanizeScopedLimitLabel(kind))
+		id := firstNonEmpty(stringValue(entry["id"]), kind)
+		if scope := firstMap(entry, "scope"); scope != nil {
+			if model := firstMap(scope, "model"); model != nil {
+				label = firstNonEmpty(stringValue(model["display_name"]), stringValue(model["id"]), label)
+				id = firstNonEmpty(stringValue(model["id"]), id)
+			}
+		}
+		allowance := makeSubscriptionAllowance(window, claudeOAuthUsageSource, used, parseReset(entry, now), windowMinutes)
+		out = upsertExtraLimit(out, id, label, allowance)
+	}
+	return out
+}
+
+func parseClaudeTopLevelScopedLimits(root map[string]any, now time.Time, out []ExtraLimit) []ExtraLimit {
+	keys := make([]string, 0, len(root))
+	for key := range root {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		values, ok := root[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		window, suffix, ok := claudeTopLevelScopedLimitKey(key)
+		if !ok {
+			continue
+		}
+		allowance := parseClaudeLimitWindow(window, claudeOAuthUsageSource, values, now)
+		if !allowance.Known {
+			continue
+		}
+		if allowance.WindowMinutes == 0 {
+			if window == "session" {
+				allowance.WindowMinutes = 300
+			} else {
+				allowance.WindowMinutes = 10080
+			}
+		}
+		out = upsertExtraLimit(out, key, humanizeScopedLimitLabel(suffix), allowance)
+	}
+	return out
+}
+
+func claudeTopLevelScopedLimitKey(key string) (string, string, bool) {
+	switch {
+	case strings.HasPrefix(key, "seven_day_"):
+		return "weekly", strings.TrimPrefix(key, "seven_day_"), true
+	case strings.HasPrefix(key, "sevenDay"):
+		suffix := strings.TrimPrefix(key, "sevenDay")
+		if suffix == "" {
+			return "", "", false
+		}
+		return "weekly", suffix, true
+	case strings.HasPrefix(key, "five_hour_"):
+		return "session", strings.TrimPrefix(key, "five_hour_"), true
+	case strings.HasPrefix(key, "fiveHour"):
+		suffix := strings.TrimPrefix(key, "fiveHour")
+		if suffix == "" {
+			return "", "", false
+		}
+		return "session", suffix, true
+	default:
+		return "", "", false
+	}
+}
+
+func claudeScopedLimitWindow(kind string, group string) (string, int64) {
+	text := strings.ToLower(kind + " " + group)
+	if strings.Contains(text, "session") || strings.Contains(text, "five_hour") || strings.Contains(text, "fivehour") {
+		return "session", 300
+	}
+	return "weekly", 10080
+}
+
+func upsertExtraLimit(limits []ExtraLimit, id string, label string, allowance Allowance) []ExtraLimit {
+	id = firstNonEmpty(id, label)
+	label = firstNonEmpty(label, id)
+	for i := range limits {
+		if limits[i].ID != id && (label == "" || limits[i].Label != label) {
+			continue
+		}
+		if allowance.Window == "session" {
+			limits[i].Session = &allowance
+		} else {
+			limits[i].Weekly = &allowance
+		}
+		return limits
+	}
+	extra := ExtraLimit{ID: id, Label: label}
+	if allowance.Window == "session" {
+		extra.Session = &allowance
+	} else {
+		extra.Weekly = &allowance
+	}
+	return append(limits, extra)
+}
+
+func humanizeScopedLimitLabel(value string) string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == '_' || r == '-' || r == ' '
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		lower := strings.ToLower(part)
+		switch lower {
+		case "", "weekly", "session", "seven", "day", "five", "hour", "model", "only", "all":
+			continue
+		case "gpt", "api":
+			out = append(out, strings.ToUpper(lower))
+		case "oauth":
+			out = append(out, "OAuth")
+		default:
+			out = append(out, strings.ToUpper(lower[:1])+lower[1:])
+		}
+	}
+	if len(out) == 0 {
+		return value
+	}
+	return strings.Join(out, " ")
+}
+
+func parseClaudeSpendBuckets(root map[string]any) []QuotaBucket {
+	if bucket, ok := parseClaudeSpendBucket(firstMap(root, "spend")); ok {
+		return []QuotaBucket{bucket}
+	}
+	if bucket, ok := parseClaudeExtraUsageBucket(firstMap(root, "extra_usage", "extraUsage")); ok {
+		return []QuotaBucket{bucket}
+	}
+	return nil
+}
+
+func parseClaudeSpendBucket(spend map[string]any) (QuotaBucket, bool) {
+	if spend == nil || !mapBool(spend, "enabled") {
+		return QuotaBucket{}, false
+	}
+	usedMap := firstMap(spend, "used")
+	limitMap := firstMap(spend, "limit")
+	used, usedOK := firstFloat(usedMap, "amount_minor", "amountMinor")
+	limit, limitOK := firstFloat(limitMap, "amount_minor", "amountMinor")
+	if !usedOK || !limitOK || limit <= 0 {
+		return QuotaBucket{}, false
+	}
+	currency := firstNonEmpty(stringValue(usedMap["currency"]), stringValue(limitMap["currency"]), "USD")
+	exponent := float64(2)
+	if value, ok := firstFloat(usedMap, "exponent"); ok {
+		exponent = value
+	} else if value, ok := firstFloat(limitMap, "exponent"); ok {
+		exponent = value
+	}
+	return makeClaudeSpendBucket(int64(used), int64(limit), currency, int(exponent)), true
+}
+
+func parseClaudeExtraUsageBucket(extra map[string]any) (QuotaBucket, bool) {
+	if extra == nil || !mapBool(extra, "is_enabled", "isEnabled") {
+		return QuotaBucket{}, false
+	}
+	used, usedOK := firstFloat(extra, "used_credits", "usedCredits")
+	limit, limitOK := firstFloat(extra, "monthly_limit", "monthlyLimit")
+	if !usedOK || !limitOK || limit <= 0 {
+		return QuotaBucket{}, false
+	}
+	currency := firstNonEmpty(stringValue(extra["currency"]), "USD")
+	exponent := float64(2)
+	if value, ok := firstFloat(extra, "decimal_places", "decimalPlaces"); ok {
+		exponent = value
+	}
+	return makeClaudeSpendBucket(int64(used), int64(limit), currency, int(exponent)), true
+}
+
+func makeClaudeSpendBucket(used int64, limit int64, currency string, exponent int) QuotaBucket {
+	allowance := makeAllowance("monthly", used, limit, time.Time{})
+	allowance.Unit = "currency"
+	allowance.Source = claudeOAuthUsageSource
+	return QuotaBucket{
+		ID:         "claude-extra-usage",
+		Label:      "Extra usage credits",
+		Kind:       "credits",
+		Allowance:  allowance,
+		ValueLabel: formatMinorMoney(used, currency, exponent) + " / " + formatMinorMoney(limit, currency, exponent),
+		Detail:     formatMinorMoney(allowance.Remaining, currency, exponent) + " remaining",
+	}
+}
+
+func formatMinorMoney(amount int64, currency string, exponent int) string {
+	if exponent < 0 || exponent > 6 {
+		exponent = 2
+	}
+	factor := int64(1)
+	for range exponent {
+		factor *= 10
+	}
+	prefix := currency + " "
+	if currency == "USD" {
+		prefix = "$"
+	}
+	if exponent == 0 {
+		return fmt.Sprintf("%s%d", prefix, amount)
+	}
+	return fmt.Sprintf("%s%d.%0*d", prefix, amount/factor, exponent, amount%factor)
+}
+
+func mapBool(values map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		if value, ok := values[key].(bool); ok {
+			return value
+		}
+	}
+	return false
 }
 
 func claudeOAuthUsageMeta(path string, cache claudeOAuthUsageCache) map[string]any {
@@ -1248,23 +1666,23 @@ func claudeOAuthUsageMeta(path string, cache claudeOAuthUsageCache) map[string]a
 	}
 }
 
-func claudeOAuthAllowancesFromCache(path string, cache claudeOAuthUsageCache, now time.Time, stale bool) (Allowance, Allowance, map[string]any, error) {
-	session, weekly, err := parseClaudeOAuthUsage(cache.Body, now)
+func claudeOAuthAllowancesFromCache(path string, cache claudeOAuthUsageCache, now time.Time, stale bool) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, error) {
+	session, weekly, extras, additional, err := parseClaudeOAuthUsage(cache.Body, now)
 	if err != nil {
-		return session, weekly, nil, err
+		return session, weekly, extras, additional, nil, err
 	}
 	meta := claudeOAuthUsageMeta(path, cache)
 	if stale {
 		meta["usageDataStale"] = true
 	}
-	return session, weekly, meta, nil
+	return session, weekly, extras, additional, meta, nil
 }
 
-func collectClaudeOAuthLimits(now time.Time) (Allowance, Allowance, map[string]any, error) {
+func collectClaudeOAuthLimits(now time.Time) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, error) {
 	return collectClaudeOAuthLimitsTTL(now, claudeOAuthUsageFreshTTL)
 }
 
-func collectClaudeOAuthLimitsTTL(now time.Time, freshTTL time.Duration) (Allowance, Allowance, map[string]any, error) {
+func collectClaudeOAuthLimitsTTL(now time.Time, freshTTL time.Duration) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, error) {
 	path := claudeOAuthUsageCachePath()
 	cache := loadClaudeOAuthUsageCache(path)
 	fetchedAt, _ := time.Parse(time.RFC3339, cache.FetchedAt)
@@ -1281,7 +1699,7 @@ func collectClaudeOAuthLimitsTTL(now time.Time, freshTTL time.Duration) (Allowan
 		if reason == "" {
 			reason = "waiting before retrying"
 		}
-		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, fmt.Errorf("Claude usage API backing off: %s", reason)
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, fmt.Errorf("Claude usage API backing off: %s", reason)
 	}
 
 	token, subscription, err := readClaudeOAuthToken(now)
@@ -1292,7 +1710,7 @@ func collectClaudeOAuthLimitsTTL(now time.Time, freshTTL time.Duration) (Allowan
 		if staleOK {
 			return claudeOAuthAllowancesFromCache(path, cache, now, true)
 		}
-		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, err
 	}
 	cache.ClaudeVersion = claudeCodeVersionString(cache.ClaudeVersion)
 	body, backoff, err := fetchClaudeOAuthUsage(token, cache.ClaudeVersion)
@@ -1303,9 +1721,9 @@ func collectClaudeOAuthLimitsTTL(now time.Time, freshTTL time.Duration) (Allowan
 		if staleOK {
 			return claudeOAuthAllowancesFromCache(path, cache, now, true)
 		}
-		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, err
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, err
 	}
-	session, weekly, err := parseClaudeOAuthUsage(body, now)
+	session, weekly, extras, additional, err := parseClaudeOAuthUsage(body, now)
 	if err != nil {
 		cache.LastError = err.Error()
 		cache.NextAttemptAt = now.Add(5 * time.Minute).Format(time.RFC3339)
@@ -1313,7 +1731,7 @@ func collectClaudeOAuthLimitsTTL(now time.Time, freshTTL time.Duration) (Allowan
 		if staleOK {
 			return claudeOAuthAllowancesFromCache(path, cache, now, true)
 		}
-		return session, weekly, nil, err
+		return session, weekly, extras, additional, nil, err
 	}
 	cache.Body = body
 	cache.FetchedAt = now.Format(time.RFC3339)
@@ -1324,13 +1742,13 @@ func collectClaudeOAuthLimitsTTL(now time.Time, freshTTL time.Duration) (Allowan
 	if subscription != "" {
 		meta["subscriptionType"] = subscription
 	}
-	return session, weekly, meta, nil
+	return session, weekly, extras, additional, meta, nil
 }
 
-func collectClaudeSubscriptionLimits(now time.Time) (Allowance, Allowance, map[string]any, error) {
-	session, weekly, meta, err := collectClaudeOAuthLimits(now)
+func collectClaudeSubscriptionLimits(now time.Time) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, error) {
+	session, weekly, extras, additional, meta, err := collectClaudeOAuthLimits(now)
 	if err == nil {
-		return session, weekly, meta, nil
+		return session, weekly, extras, additional, meta, nil
 	}
 	oauthErr := err
 	session, weekly, meta, err = collectClaudeStatuslineSubscriptionLimits(now)
@@ -1338,7 +1756,7 @@ func collectClaudeSubscriptionLimits(now time.Time) (Allowance, Allowance, map[s
 		meta = map[string]any{}
 	}
 	meta["oauthUsageError"] = oauthErr.Error()
-	return session, weekly, meta, err
+	return session, weekly, nil, nil, meta, err
 }
 
 func collectClaudeStatuslineSubscriptionLimits(now time.Time) (Allowance, Allowance, map[string]any, error) {

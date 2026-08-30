@@ -1,25 +1,23 @@
 # ADR-0002: Display authoritative subscription-window percentages, not token-derived estimates
 
-**Status:** Accepted
+**Status:** Accepted; Codex window identification superseded by [ADR-0008](ADR-0008-codex-duration-based-windows-and-banked-resets.md)
 **Date:** 2026-05-28
 **Applies to:** `cmd/dankaiusage/main.go`, `DankAIUsageWidget.qml`
 
 ## Context
 
-The first version of the widget led with token totals. Subscription plans for
-both Codex and Claude are gated by rolling usage windows (a ~5-hour session
-window and a weekly window), and neither vendor publishes a token budget for
-those windows, so raw token counts answer "how much did I use" but not "how
-much do I have left" — the question a bar widget exists to answer.
+The first version of the widget led with token totals. Subscription plans are
+gated by provider-reported usage windows, and neither vendor publishes a token
+budget for those windows, so raw token counts answer "how much did I use" but
+not "how much do I have left" — the question a bar widget exists to answer.
 
 ## Decision
 
-Lead with the remaining percentage of each provider's session and weekly
-window, taken from an authoritative provider source (Codex app-server, Claude
-statusline at the time; the Anthropic usage API since
+Lead with the remaining percentage of each provider-reported window, taken
+from an authoritative provider source (Codex app-server, Claude statusline at
+the time; the Anthropic usage API since
 [ADR-0001](ADR-0001-claude-limits-from-oauth-usage-api.md)). Token totals are
-demoted to a secondary history detail. The pill shows `session/weekly`
-percentages per provider.
+demoted to a secondary history detail.
 
 ## Alternatives Considered
 

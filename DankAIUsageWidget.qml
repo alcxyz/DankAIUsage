@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Shapes
 import Quickshell
 import Quickshell.Io
 import qs.Common
@@ -14,9 +15,13 @@ PluginComponent {
     property int periodDays: 7
     property bool showCodex: true
     property bool showClaude: true
+    property bool barShowPluginIcon: false
+    property bool barShowProviderLogos: true
+    property bool barShowClaudeSession: true
+    property bool barShowClaudeWeekly: true
+    property bool barShowClaudeCredits: false
     property bool includeCachedTokens: false
     property bool compactPill: false
-    property bool focusWeekly: false
     property bool enableClaudePrime: false
 
     property bool isLoading: true
@@ -42,9 +47,13 @@ PluginComponent {
         periodDays = pluginService.loadPluginData(pluginId, "periodDays", 7) || 7
         showCodex = pluginService.loadPluginData(pluginId, "showCodex", true) !== false
         showClaude = pluginService.loadPluginData(pluginId, "showClaude", true) !== false
+        barShowPluginIcon = pluginService.loadPluginData(pluginId, "barShowPluginIcon", false) === true
+        barShowProviderLogos = pluginService.loadPluginData(pluginId, "barShowProviderLogos", true) !== false
+        barShowClaudeSession = pluginService.loadPluginData(pluginId, "barShowClaudeSession", true) !== false
+        barShowClaudeWeekly = pluginService.loadPluginData(pluginId, "barShowClaudeWeekly", true) !== false
+        barShowClaudeCredits = pluginService.loadPluginData(pluginId, "barShowClaudeCredits", false) === true
         includeCachedTokens = pluginService.loadPluginData(pluginId, "includeCachedTokens", false) === true
         compactPill = pluginService.loadPluginData(pluginId, "compactPill", false) === true
-        focusWeekly = pluginService.loadPluginData(pluginId, "focusWeekly", false) === true
         enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
         if (!wasEnabled && enableClaudePrime) {
             lastClaudeAutoPrimeFailed = false
@@ -264,19 +273,177 @@ PluginComponent {
         return Theme.primary
     }
 
-    function selectedAllowanceWindow() {
-        return focusWeekly ? "weekly" : "session"
+    function providerQuotaBuckets(provider) {
+        if (!provider || !provider.quotaBuckets) return []
+        return provider.quotaBuckets
     }
 
-    function setFocusWindow(window) {
-        focusWeekly = window === "weekly"
-        if (pluginService && pluginService.savePluginData)
-            pluginService.savePluginData(pluginId, "focusWeekly", focusWeekly)
+    function providerQuotaHeight(provider) {
+        var count = providerQuotaBuckets(provider).length
+        return count > 0 ? count * 48 + (count - 1) * Theme.spacingXS : 28
     }
 
-    function allowanceFor(provider, window) {
-        if (!provider) return null
-        return window === "weekly" ? provider.weeklyLeft : provider.sessionLeft
+    function quotaValue(bucket) {
+        if (!bucket) return "--"
+        if (bucket.valueLabel) return bucket.valueLabel
+        return allowanceLabel(bucket.allowance) + " left"
+    }
+
+    function quotaDetail(bucket) {
+        if (!bucket) return "Limit unavailable"
+        if (bucket.detail) return bucket.detail
+        var reset = formatReset(bucket.allowance)
+        return reset === "--" ? allowanceDetail(bucket.allowance) : "Resets " + reset
+    }
+
+    function quotaProgress(bucket) {
+        if (!bucket || !knownAllowance(bucket.allowance)) return 0
+        return Math.max(0, Math.min(100, bucket.allowance.percentUsed || 0))
+    }
+
+    function quotaShortLabel(bucket) {
+        if (!bucket) return "Quota"
+        if (bucket.kind === "credits") return "Credits"
+        return bucket.label || "Quota"
+    }
+
+    function weakestProviderQuota(provider) {
+        var weakest = null
+        var buckets = providerQuotaBuckets(provider)
+        for (var i = 0; i < buckets.length; i++) {
+            if (!knownAllowance(buckets[i].allowance)) continue
+            if (!weakest || (buckets[i].allowance.percentRemaining || 0) < (weakest.allowance.percentRemaining || 0)) weakest = buckets[i]
+        }
+        return weakest
+    }
+
+    function weakestQuotaEntry() {
+        var weakest = null
+        var list = visibleProviders()
+        for (var i = 0; i < list.length; i++) {
+            var bucket = weakestProviderQuota(list[i])
+            if (!bucket) continue
+            if (!weakest || (bucket.allowance.percentRemaining || 0) < (weakest.bucket.allowance.percentRemaining || 0))
+                weakest = ({ provider: list[i], bucket: bucket })
+        }
+        return weakest
+    }
+
+    function quotaBucketCount() {
+        var count = 0
+        var list = visibleProviders()
+        for (var i = 0; i < list.length; i++) count += providerQuotaBuckets(list[i]).length
+        return count
+    }
+
+    function overallQuotaTitle() {
+        var entry = weakestQuotaEntry()
+        if (!entry) return "Quota overview"
+        return "Most constrained · " + entry.provider.name + " · " + quotaShortLabel(entry.bucket)
+    }
+
+    function overallQuotaAllowance() {
+        var entry = weakestQuotaEntry()
+        return entry ? entry.bucket.allowance : null
+    }
+
+    function overallQuotaDetail() {
+        var entry = weakestQuotaEntry()
+        return entry ? quotaDetail(entry.bucket) : "No quota data"
+    }
+
+    function providerResets(provider) {
+        if (!provider || !provider.resets) return []
+        return provider.resets
+    }
+
+    function providerResetHeight(provider) {
+        return providerResets(provider).length > 0 ? 34 + Theme.spacingS : 0
+    }
+
+    function providerResetSummary(provider) {
+        var resets = providerResets(provider)
+        if (resets.length === 0) return ""
+        if (resets.length === 1) return (resets[0].title || "Usage reset") + " available"
+        return resets.length + " usage resets available"
+    }
+
+    function providerResetDetail(provider) {
+        var resets = providerResets(provider)
+        if (resets.length === 0) return ""
+        var expiry = formatShortDateTime(resets[0].expiresAt)
+        return "Use in Codex Settings > Usage" + (expiry !== "" ? " · expires " + expiry : "")
+    }
+
+    function providerAllowanceSummary(provider) {
+        var bucket = weakestProviderQuota(provider)
+        return bucket ? quotaShortLabel(bucket) + " " + allowanceLabel(bucket.allowance) : "--"
+    }
+
+    function claudeBucketShownInBar(bucket) {
+        if (!bucket) return false
+        if (bucket.kind === "credits") return barShowClaudeCredits
+        if (bucket.allowance && bucket.allowance.window === "session") return barShowClaudeSession
+        if (bucket.allowance && bucket.allowance.window === "weekly") return barShowClaudeWeekly
+        return false
+    }
+
+    function providerTopBarBuckets(provider) {
+        if (!provider) return []
+        if (provider.id !== "claude") {
+            var weakest = weakestProviderQuota(provider)
+            return weakest ? [weakest] : []
+        }
+
+        var out = []
+        var buckets = providerQuotaBuckets(provider)
+        for (var i = 0; i < buckets.length; i++) {
+            if (claudeBucketShownInBar(buckets[i])) out.push(buckets[i])
+        }
+        return out
+    }
+
+    function providerTopBarText(provider) {
+        var buckets = providerTopBarBuckets(provider)
+        var parts = []
+        for (var i = 0; i < buckets.length; i++) {
+            parts.push(quotaShortLabel(buckets[i]) + " " + allowanceLabel(buckets[i].allowance))
+        }
+        return parts.join(" · ")
+    }
+
+    function topBarSegments() {
+        var list = visibleProviders()
+        var segments = []
+
+        if (compactPill) {
+            for (var i = 0; i < list.length; i++) {
+                var compactWeakest = null
+                var compactBuckets = providerTopBarBuckets(list[i])
+                for (var j = 0; j < compactBuckets.length; j++) {
+                    if (!knownAllowance(compactBuckets[j].allowance)) continue
+                    if (!compactWeakest || (compactBuckets[j].allowance.percentRemaining || 0) < (compactWeakest.allowance.percentRemaining || 0))
+                        compactWeakest = compactBuckets[j]
+                }
+                if (!compactWeakest && compactBuckets.length > 0) compactWeakest = compactBuckets[0]
+                if (compactWeakest) {
+                    segments.push({
+                        provider: list[i],
+                        text: (barShowProviderLogos ? "" : list[i].name + " ") + quotaShortLabel(compactWeakest) + " " + allowanceLabel(compactWeakest.allowance)
+                    })
+                }
+            }
+            return segments
+        }
+
+        for (var k = 0; k < list.length; k++) {
+            var text = providerTopBarText(list[k])
+            if (text !== "") segments.push({
+                provider: list[k],
+                text: (barShowProviderLogos ? "" : list[k].name + " ") + text
+            })
+        }
+        return segments
     }
 
     function claudeProvider() {
@@ -310,21 +477,6 @@ PluginComponent {
         if (pluginService && pluginService.savePluginState)
             pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeAt", lastClaudeAutoPrimeAt)
         primeClaude(true)
-    }
-
-    function windowLabel(window) {
-        return window === "weekly" ? "Weekly" : "Session"
-    }
-
-    function weakestAllowance(window) {
-        var weakest = null
-        var list = visibleProviders()
-        for (var i = 0; i < list.length; i++) {
-            var a = allowanceFor(list[i], window)
-            if (!knownAllowance(a)) continue
-            if (!weakest || (a.percentRemaining || 0) < (weakest.percentRemaining || 0)) weakest = a
-        }
-        return weakest
     }
 
     function formatReset(allowance) {
@@ -367,8 +519,9 @@ PluginComponent {
         return formatTokens(filteredGrandInput()) + " in / " + formatTokens(filteredGrandOutput()) + " out"
     }
 
-    function providerIcon(id) {
-        return id === "codex" ? "terminal" : "psychology"
+    function providerLogoColor(provider) {
+        if (!provider || !provider.available || provider.error) return "#ff6b6b"
+        return Theme.primary
     }
 
     function providerColor(provider) {
@@ -403,20 +556,6 @@ PluginComponent {
         return parts.join(" | ")
     }
 
-    function pillLabel() {
-        if (isLoading && providers.length === 0) return "..."
-        var focus = selectedAllowanceWindow()
-        var weakest = weakestAllowance(focus)
-        if (compactPill) return (focus === "weekly" ? "W " : "S ") + (weakest ? allowanceLabel(weakest) : "--")
-
-        var list = visibleProviders()
-        var parts = []
-        for (var i = 0; i < list.length; i++) {
-            parts.push((list[i].id === "codex" ? "Cx " : "Cl ") + allowanceLabel(list[i].sessionLeft) + "/" + allowanceLabel(list[i].weeklyLeft))
-        }
-        return parts.length > 0 ? parts.join("  ") : "--"
-    }
-
     horizontalBarPill: Component {
         Row {
             spacing: Theme.spacingS
@@ -425,16 +564,40 @@ PluginComponent {
                 name: "monitoring"
                 size: Theme.fontSizeLarge
                 color: root.hasError ? "#ff6b6b" : Theme.primary
+                visible: root.barShowPluginIcon
                 anchors.verticalCenter: parent.verticalCenter
             }
 
+            Repeater {
+                model: root.topBarSegments()
+
+                Row {
+                    spacing: Theme.spacingXS
+
+                    ProviderLogo {
+                        provider: modelData.provider
+                        size: Theme.fontSizeMedium
+                        visible: root.barShowProviderLogos
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    StyledText {
+                        text: modelData.text
+                        font.pixelSize: Theme.fontSizeMedium
+                        color: root.hasError ? "#ff6b6b" : Theme.surfaceText
+                        anchors.verticalCenter: parent.verticalCenter
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
+                    }
+                }
+            }
+
             StyledText {
-                text: root.pillLabel()
+                text: root.isLoading && root.providers.length === 0 ? "..." : "--"
+                visible: root.topBarSegments().length === 0
                 font.pixelSize: Theme.fontSizeMedium
                 color: root.hasError ? "#ff6b6b" : Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
-                elide: Text.ElideRight
-                maximumLineCount: 1
             }
         }
     }
@@ -488,7 +651,7 @@ PluginComponent {
                     StyledText {
                         id: headerSubtitle
                         width: parent.width
-                        text: root.windowLabel(root.selectedAllowanceWindow()) + " focus" + (root.lastUpdated ? " - " + root.lastUpdated : "")
+                        text: root.quotaBucketCount() + " quota buckets" + (root.lastUpdated ? " - " + root.lastUpdated : "")
                         font.pixelSize: Theme.fontSizeSmall
                         color: Theme.surfaceVariantText
                         elide: Text.ElideRight
@@ -513,23 +676,15 @@ PluginComponent {
                 radius: Theme.cornerRadius
                 color: Theme.surfaceContainerHigh
 
-                Row {
+                Item {
                     anchors.fill: parent
                     anchors.margins: Theme.spacingM
-                    spacing: Theme.spacingM
 
                     LimitBucket {
-                        width: (parent.width - Theme.spacingM) / 2
-                        title: "Session"
-                        allowance: root.weakestAllowance("session")
-                        selected: root.selectedAllowanceWindow() === "session"
-                    }
-
-                    LimitBucket {
-                        width: (parent.width - Theme.spacingM) / 2
-                        title: "Weekly"
-                        allowance: root.weakestAllowance("weekly")
-                        selected: root.selectedAllowanceWindow() === "weekly"
+                        anchors.fill: parent
+                        title: root.overallQuotaTitle()
+                        allowance: root.overallQuotaAllowance()
+                        detail: root.overallQuotaDetail()
                     }
                 }
             }
@@ -581,7 +736,7 @@ PluginComponent {
 
                     StyledRect {
                         width: parent.width
-                        height: root.providerNote(modelData) !== "" ? 184 : 144
+                        height: 96 + root.providerQuotaHeight(modelData) + root.providerResetHeight(modelData) + (root.providerNote(modelData) !== "" ? 40 : 0)
                         radius: Theme.cornerRadius
                         color: Theme.surfaceContainerHigh
 
@@ -601,10 +756,9 @@ PluginComponent {
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: Theme.spacingS
 
-                                    DankIcon {
-                                        name: root.providerIcon(modelData.id)
+                                    ProviderLogo {
+                                        provider: modelData
                                         size: Theme.fontSizeMedium
-                                        color: root.providerColor(modelData)
                                         anchors.verticalCenter: parent.verticalCenter
                                     }
 
@@ -627,7 +781,7 @@ PluginComponent {
                                     spacing: Theme.spacingXS
 
                                     StyledText {
-                                        text: root.allowanceLabel(modelData.sessionLeft) + " / " + root.allowanceLabel(modelData.weeklyLeft)
+                                        text: root.providerAllowanceSummary(modelData)
                                         width: Math.min(150, implicitWidth)
                                         font.pixelSize: Theme.fontSizeMedium
                                         font.weight: Font.Bold
@@ -649,41 +803,89 @@ PluginComponent {
                                 }
                             }
 
-                            Row {
+                            Column {
                                 width: parent.width
-                                spacing: Theme.spacingS
+                                height: root.providerQuotaHeight(modelData)
+                                spacing: Theme.spacingXS
 
-                                UsageMetric {
-                                    width: (parent.width - Theme.spacingS * 2) / 3
-                                    label: "Session"
-                                    value: root.allowanceLabel(modelData.sessionLeft)
-                                    detail: root.allowanceDetail(modelData.sessionLeft)
-                                    valueColor: root.allowanceColor(modelData.sessionLeft)
+                                Repeater {
+                                    model: root.providerQuotaBuckets(modelData)
+
+                                    QuotaBar {
+                                        width: parent.width
+                                        bucket: modelData
+                                    }
                                 }
 
-                                UsageMetric {
-                                    width: (parent.width - Theme.spacingS * 2) / 3
-                                    label: "Week"
-                                    value: root.allowanceLabel(modelData.weeklyLeft)
-                                    detail: root.allowanceDetail(modelData.weeklyLeft)
-                                    valueColor: root.allowanceColor(modelData.weeklyLeft)
-                                }
-
-                                UsageMetric {
-                                    width: (parent.width - Theme.spacingS * 2) / 3
-                                    label: "Tokens"
-                                    value: root.inputTokenLabel(modelData.period)
-                                    detail: root.outputTokenLabel(modelData.period)
-                                    valueColor: Theme.surfaceText
+                                StyledText {
+                                    width: parent.width
+                                    text: "Quota data unavailable"
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceVariantText
+                                    visible: root.providerQuotaBuckets(modelData).length === 0
                                 }
                             }
 
-                            StyledText {
+                            Item {
                                 width: parent.width
-                                text: "Resets: session " + root.formatReset(modelData.sessionLeft) + ", week " + root.formatReset(modelData.weeklyLeft)
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceVariantText
-                                elide: Text.ElideRight
+                                height: 30
+
+                                StyledText {
+                                    text: "Local token history"
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceVariantText
+                                }
+
+                                StyledText {
+                                    text: root.inputTokenLabel(modelData.period) + " / " + root.outputTokenLabel(modelData.period)
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceText
+                                }
+                            }
+
+                            Item {
+                                width: parent.width
+                                height: 34
+                                visible: root.providerResets(modelData).length > 0
+
+                                DankIcon {
+                                    name: "refresh"
+                                    size: Theme.fontSizeMedium
+                                    color: Theme.primary
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Column {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: Theme.fontSizeMedium + Theme.spacingS
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 1
+
+                                    StyledText {
+                                        width: parent.width
+                                        text: root.providerResetSummary(modelData)
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.weight: Font.Medium
+                                        color: Theme.primary
+                                        elide: Text.ElideRight
+                                        maximumLineCount: 1
+                                    }
+
+                                    StyledText {
+                                        width: parent.width
+                                        text: root.providerResetDetail(modelData)
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                        elide: Text.ElideRight
+                                        maximumLineCount: 1
+                                    }
+                                }
                             }
 
                             StyledText {
@@ -722,46 +924,101 @@ PluginComponent {
         }
     }
 
-    component UsageMetric: Column {
-        property string label: ""
-        property string value: ""
-        property string detail: ""
-        property var valueColor: Theme.surfaceText
-        spacing: 2
+    component QuotaBar: Item {
+        property var bucket: null
+        height: 48
 
         StyledText {
-            text: parent.value
-            font.pixelSize: Theme.fontSizeMedium
+            text: bucket ? bucket.label : "Quota"
+            anchors.left: parent.left
+            anchors.right: quotaBarValue.left
+            anchors.rightMargin: Theme.spacingS
+            anchors.top: parent.top
+            font.pixelSize: Theme.fontSizeSmall
             font.weight: Font.Medium
-            color: parent.valueColor
-            width: parent.width
+            color: Theme.surfaceText
             elide: Text.ElideRight
             maximumLineCount: 1
         }
 
         StyledText {
-            text: parent.label
+            id: quotaBarValue
+            text: root.quotaValue(bucket)
+            anchors.right: parent.right
+            anchors.top: parent.top
             font.pixelSize: Theme.fontSizeSmall
-            color: Theme.surfaceVariantText
-            width: parent.width
+            font.weight: Font.Medium
+            color: root.allowanceColor(bucket ? bucket.allowance : null)
             elide: Text.ElideRight
             maximumLineCount: 1
         }
 
+        StyledRect {
+            id: quotaTrack
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.topMargin: 21
+            height: 6
+            radius: 3
+            color: Qt.rgba(Theme.surfaceVariantText.r, Theme.surfaceVariantText.g, Theme.surfaceVariantText.b, 0.18)
+
+            StyledRect {
+                width: parent.width * root.quotaProgress(bucket) / 100
+                height: parent.height
+                radius: parent.radius
+                color: root.allowanceColor(bucket ? bucket.allowance : null)
+            }
+        }
+
         StyledText {
-            text: parent.detail
+            text: root.quotaDetail(bucket)
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceVariantText
             elide: Text.ElideRight
-            width: parent.width
             maximumLineCount: 1
+        }
+    }
+
+    component ProviderLogo: Item {
+        id: providerLogoRoot
+
+        property var provider: null
+        property int size: 24
+        readonly property string logoPath: provider && provider.id === "claude"
+            ? "m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"
+            : "M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"
+
+        implicitWidth: size
+        implicitHeight: size
+
+        Shape {
+            width: 24
+            height: 24
+            anchors.centerIn: parent
+            scale: providerLogoRoot.size / 24
+            antialiasing: true
+            preferredRendererType: Shape.CurveRenderer
+
+            ShapePath {
+                fillColor: root.providerLogoColor(providerLogoRoot.provider)
+                strokeColor: "transparent"
+                strokeWidth: 0
+
+                PathSvg {
+                    path: providerLogoRoot.logoPath
+                }
+            }
         }
     }
 
     component LimitBucket: Item {
         property string title: ""
         property var allowance: null
-        property bool selected: false
+        property string detail: ""
 
         height: parent ? parent.height : 64
 
@@ -774,7 +1031,7 @@ PluginComponent {
                 spacing: Theme.spacingXS
 
                 DankIcon {
-                    name: selected ? "filter_alt" : "hourglass_top"
+                    name: "monitoring"
                     size: Theme.fontSizeSmall
                     color: root.allowanceColor(allowance)
                     anchors.verticalCenter: parent.verticalCenter
@@ -784,8 +1041,8 @@ PluginComponent {
                     width: parent.width - Theme.fontSizeSmall - Theme.spacingXS
                     text: title
                     font.pixelSize: Theme.fontSizeSmall
-                    font.weight: selected ? Font.Bold : Font.Medium
-                    color: selected ? Theme.surfaceText : Theme.surfaceVariantText
+                    font.weight: Font.Medium
+                    color: Theme.surfaceVariantText
                     anchors.verticalCenter: parent.verticalCenter
                     elide: Text.ElideRight
                     maximumLineCount: 1
@@ -804,7 +1061,7 @@ PluginComponent {
 
             StyledText {
                 width: parent.width
-                text: root.formatReset(allowance)
+                text: detail !== "" ? detail : root.formatReset(allowance)
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.surfaceVariantText
                 elide: Text.ElideRight
@@ -812,11 +1069,6 @@ PluginComponent {
             }
         }
 
-        MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.setFocusWindow(title === "Weekly" ? "weekly" : "session")
-        }
     }
 
     popoutWidth: 420

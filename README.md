@@ -4,19 +4,34 @@ DankAIUsage is a DankMaterialShell widget for Codex and Claude subscription
 usage. It follows the standalone plugin shape used by DankCalendar and keeps
 the QML widget thin by collecting data through the `dankaiusage` helper.
 
-The main display is remaining session and weekly allowance. Token totals are
+The main display is a provider-defined list of quota bars rather than a fixed
+session/weekly grid. Codex currently exposes its general subscription allowance
+as a weekly window and may add model-scoped limits. Claude exposes five-hour,
+weekly, model-scoped, and extra-usage credit limits. Missing buckets are omitted
+instead of inferred from their position in an API response. Token totals are
 kept as a secondary detail. Cached tokens are excluded from displayed totals by
 default because Claude Code can attach large cached prompt/context blocks to
 very small requests; enable "Include cached tokens" when you want to inspect
 that overhead.
 
+The top bar uses provider logos. Claude's five-hour, weekly, and extra-usage
+credit values can each be enabled independently in plugin settings; these
+choices do not remove any quota bars from the dropdown. Compact mode retains
+one selected quota for each enabled provider rather than hiding a provider.
+The generic plugin icon and provider logos are independently configurable, so
+the bar can show either icon style, both styles, or text only.
+
 ## Data sources
 
 - Codex limits: queries the local Codex app server with
-  `account/rateLimits/read`.
+  `account/rateLimits/read`. Windows are classified by their returned duration,
+  and available banked resets are shown with their expiry. Apply a reset from
+  Codex **Settings → Usage**; the widget never consumes one automatically.
 - Claude limits: queries Anthropic's OAuth usage endpoint using the local
   Claude Code sign-in (see
   [ADR-0001](docs/adr/ADR-0001-claude-limits-from-oauth-usage-api.md)).
+  The helper prefers the structured `spend` object for extra-usage credits and
+  falls back to `extra_usage`, deduplicating both into one monetary quota bar.
   The statusline JSON cached by `dankaiusage claude-statusline` is the
   fallback source.
 - Token history: reads Codex `logs_2.sqlite` and Claude project JSONL
