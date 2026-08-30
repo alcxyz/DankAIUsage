@@ -1,8 +1,8 @@
 {
   "id": "dankAIUsage",
   "name": "AI Usage",
-  "description": "Monitor Codex and Claude subscription usage",
-  "version": "0.1.0",
+  "description": "Monitor Codex and Claude quotas, credits, and token history",
+  "version": "0.3.0",
   "author": "alcxyz",
   "icon": "monitoring",
   "type": "widget",
@@ -30,15 +30,35 @@
       "type": "boolean",
       "default": true
     },
-    "includeCachedTokens": {
-      "type": "boolean",
-      "default": true
-    },
-    "compactPill": {
+    "barShowPluginIcon": {
       "type": "boolean",
       "default": false
     },
-    "focusWeekly": {
+    "barShowProviderLogos": {
+      "type": "boolean",
+      "default": true
+    },
+    "barShowClaudeSession": {
+      "type": "boolean",
+      "default": true
+    },
+    "barShowClaudeWeekly": {
+      "type": "boolean",
+      "default": true
+    },
+    "barShowClaudeCredits": {
+      "type": "boolean",
+      "default": false
+    },
+    "enableClaudePrime": {
+      "type": "boolean",
+      "default": false
+    },
+    "includeCachedTokens": {
+      "type": "boolean",
+      "default": false
+    },
+    "compactPill": {
       "type": "boolean",
       "default": false
     }

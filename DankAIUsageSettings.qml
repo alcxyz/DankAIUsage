@@ -41,6 +41,62 @@ PluginSettings {
     }
 
     StyledText {
+        text: "Top bar: icons"
+        font.pixelSize: Theme.fontSizeLarge
+        font.weight: Font.Bold
+        color: Theme.surfaceText
+    }
+
+    ToggleSetting {
+        settingKey: "barShowPluginIcon"
+        label: "AI Usage plugin icon"
+        description: "Show the generic monitoring icon at the start of the top-bar pill"
+        defaultValue: false
+    }
+
+    ToggleSetting {
+        settingKey: "barShowProviderLogos"
+        label: "Provider logos"
+        description: "Show the OpenAI and Claude logos beside their top-bar quota values"
+        defaultValue: true
+    }
+
+    StyledText {
+        text: "Top bar: Claude quotas"
+        font.pixelSize: Theme.fontSizeLarge
+        font.weight: Font.Bold
+        color: Theme.surfaceText
+    }
+
+    ToggleSetting {
+        settingKey: "barShowClaudeSession"
+        label: "Claude 5-hour session"
+        description: "Include Claude's current five-hour window in the top-bar overview"
+        defaultValue: true
+    }
+
+    ToggleSetting {
+        settingKey: "barShowClaudeWeekly"
+        label: "Claude weekly limit"
+        description: "Include Claude's weekly window in the top-bar overview"
+        defaultValue: true
+    }
+
+    ToggleSetting {
+        settingKey: "barShowClaudeCredits"
+        label: "Claude extra-use credits"
+        description: "Include Claude's paid extra-usage credit balance in the top-bar overview"
+        defaultValue: false
+    }
+
+    ToggleSetting {
+        settingKey: "enableClaudePrime"
+        label: "Enable Claude prime"
+        description: "Automatically run a tiny Claude request when no active session timer is known"
+        defaultValue: false
+    }
+
+    StyledText {
         text: "Subscription limits"
         font.pixelSize: Theme.fontSizeLarge
         font.weight: Font.Bold
@@ -59,20 +115,14 @@ PluginSettings {
         settingKey: "includeCachedTokens"
         label: "Include cached tokens"
         description: "Include cache read and cache creation tokens in displayed totals"
-        defaultValue: true
+        defaultValue: false
     }
 
     ToggleSetting {
         settingKey: "compactPill"
         label: "Compact pill"
-        description: "Show only the lowest remaining subscription percentage in the bar"
+        description: "Show only the most constrained selected quota for each visible provider"
         defaultValue: false
     }
 
-    ToggleSetting {
-        settingKey: "focusWeekly"
-        label: "Focus weekly limits"
-        description: "Use weekly instead of session limits for compact and summary emphasis"
-        defaultValue: false
-    }
 }
