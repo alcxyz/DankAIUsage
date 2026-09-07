@@ -2,7 +2,7 @@
   "id": "dankAIUsage",
   "name": "AI Usage",
   "description": "Monitor Codex and Claude quotas, credits, and token history",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "alcxyz",
   "icon": "monitoring",
   "type": "widget",
@@ -10,6 +10,10 @@
   "component": "./DankAIUsageWidget.qml",
   "settings": "./DankAIUsageSettings.qml",
   "settings_schema": {
+    "showUsed": {
+      "type": "boolean",
+      "default": false
+    },
     "refreshInterval": {
       "type": "integer",
       "default": 300,

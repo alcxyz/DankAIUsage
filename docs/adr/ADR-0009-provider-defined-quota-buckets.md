@@ -27,6 +27,12 @@ both `spend` and `extra_usage` forms.
 - Render every bucket with the same label/value/detail/progress-bar component.
 - Use the lowest remaining bucket for provider summaries, the compact pill,
   and the overall "Most constrained" summary.
+- Allow a persisted Left / Used display choice directly in the dropdown.
+  All quota percentages and progress bars, including credits, follow that
+  choice. Remaining is the default; warning severity and most-constrained
+  ordering always use remaining allowance. Credit details retain the provider's
+  formatted monetary values. Quick bar controls use the same saved preferences
+  as the full settings menu.
 
 ## Consequences
 
