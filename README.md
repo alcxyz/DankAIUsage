@@ -1,8 +1,14 @@
 # DankAIUsage
 
-DankAIUsage is a DankMaterialShell widget for Codex and Claude subscription
-usage. It follows the standalone plugin shape used by DankCalendar and keeps
-the QML widget thin by collecting data through the `dankaiusage` helper.
+DankAIUsage is a [DankMaterialShell](https://github.com/AvengeMedia/DankMaterialShell)
+widget for Codex and Claude subscription quotas, extra-usage credits, and local
+token history. A small Go helper collects usage for the widget.
+
+![AI Usage dropdown with Codex and Claude quotas](docs/screenshot.png)
+
+![AI Usage on the DankBar with provider logos and selected quotas](docs/screenshot-bar.png)
+
+## Features
 
 The main display is a provider-defined list of quota bars rather than a fixed
 session/weekly grid. Codex currently exposes its general subscription allowance
@@ -20,6 +26,81 @@ choices do not remove any quota bars from the dropdown. Compact mode retains
 one selected quota for each enabled provider rather than hiding a provider.
 The generic plugin icon and provider logos are independently configurable, so
 the bar can show either icon style, both styles, or text only.
+
+Use **Left / Used** in the dropdown to switch all quota percentages and progress
+bars together, including credits. Left is the default: 26% left fills 26% of the
+bar; Used shows 74% used and fills 74%. Credit details show the remaining balance
+or spending against the budget. Warning colors always reflect proximity to the
+limit, regardless of display mode.
+
+## Installation
+
+Install the plugin files in
+`~/.config/DankMaterialShell/plugins/DankAIUsage/`, then enable **AI Usage** in
+DMS plugin settings and add it to your bar. The widget also needs the
+`dankaiusage` helper on the DMS process's `PATH`; copying the QML files alone
+does not install the helper.
+
+### Nix
+
+Build the helper from this checkout with `nix build`, or install the released
+source with:
+
+```sh
+nix profile install github:alcxyz/DankAIUsage/main
+```
+
+For a declarative setup, install the helper and plugin source together from
+the same pinned revision. This repository exposes `packages.<system>.default`
+for the helper; use the source directory for your DMS plugin configuration.
+The maintained `dms-plugins` aggregate exports this source as `srcs.aiusage`.
+
+### Manual
+
+With Go 1.22 or newer, build and install the helper from this checkout:
+
+```sh
+go build -o dankaiusage ./cmd/dankaiusage
+install -Dm755 dankaiusage ~/.local/bin/dankaiusage
+```
+
+Copy `plugin.json`, `DankAIUsageWidget.qml`, `DankAIUsageSettings.qml`, and
+`assets/` into the plugin directory above. Ensure `~/.local/bin` is on the
+shell's `PATH` before starting DMS.
+
+### Provider setup
+
+- Install and sign in to the CLI for each provider you enable: Codex, Claude
+  Code, or both. Disable providers you do not use in plugin settings.
+- Install `sqlite3` for Codex local token history. Subscription percentages
+  come from the provider and do not depend on token-history totals.
+- Claude prime is off by default. Enabling it makes small model requests that
+  consume usage to start session windows; it is not required to display quotas.
+
+## Settings
+
+Plugin settings control the refresh interval (five minutes by default), token
+history period, enabled providers, cached-token totals, and compact mode.
+The dropdown's **Bar controls** also offers immediate toggles for compact mode,
+provider logos, the plugin icon, and Claude session/weekly/credits selection.
+These controls save the same preferences as the plugin settings menu and do
+not need a data refresh. The Left / Used choice is saved as well.
+Under **Top bar: icons**, choose the plugin icon, provider logos, both, or
+neither. Under **Top bar: Claude quotas**, select session, weekly, and credits
+independently. All available quotas remain visible in the dropdown.
+
+## Troubleshooting
+
+If Claude quotas disappear, run `claude auth status`. If signed out, run
+`claude auth login`. The helper backs off briefly after authentication errors;
+after the retry window expires, click Refresh in the dropdown or wait for the
+next automatic refresh. Restarting DMS is not required after signing in.
+
+If the widget cannot run its helper, check `dankaiusage version` from the same
+environment as DMS. For Nix installations, ensure the helper and plugin files
+come from the same revision. `dankaiusage summary --pretty` reports provider
+diagnostics under `meta`; a provider being available means its CLI is present,
+not necessarily that its account is signed in.
 
 ## Data sources
 

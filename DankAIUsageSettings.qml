@@ -8,6 +8,13 @@ PluginSettings {
 
     pluginId: "dankAIUsage"
 
+    ToggleSetting {
+        settingKey: "showUsed"
+        label: "Show used allowance"
+        description: "Show used percentages and bar fill instead of remaining allowance. Also available as Left / Used in the dropdown."
+        defaultValue: false
+    }
+
     SliderSetting {
         settingKey: "refreshInterval"
         label: "Refresh interval (seconds)"

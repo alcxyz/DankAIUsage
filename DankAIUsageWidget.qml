@@ -22,6 +22,8 @@ PluginComponent {
     property bool barShowClaudeCredits: false
     property bool includeCachedTokens: false
     property bool compactPill: false
+    property bool showUsed: false
+    property bool quickControlsOpen: false
     property bool enableClaudePrime: false
 
     property bool isLoading: true
@@ -54,6 +56,7 @@ PluginComponent {
         barShowClaudeCredits = pluginService.loadPluginData(pluginId, "barShowClaudeCredits", false) === true
         includeCachedTokens = pluginService.loadPluginData(pluginId, "includeCachedTokens", false) === true
         compactPill = pluginService.loadPluginData(pluginId, "compactPill", false) === true
+        showUsed = pluginService.loadPluginData(pluginId, "showUsed", false) === true
         enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
         if (!wasEnabled && enableClaudePrime) {
             lastClaudeAutoPrimeFailed = false
@@ -252,17 +255,28 @@ PluginComponent {
         return allowance && allowance.known
     }
 
+    function setQuickSetting(key, value) {
+        root[key] = value
+        if (pluginService && pluginService.savePluginData)
+            pluginService.savePluginData(pluginId, key, value)
+    }
+
+    function displayPercent(allowance) {
+        if (!knownAllowance(allowance)) return 0
+        return Math.max(0, Math.min(100, (showUsed ? allowance.percentUsed : allowance.percentRemaining) || 0))
+    }
+
     function allowanceLabel(allowance) {
         if (allowance && allowance.source === "claude-prime local usage") return "Timer"
         if (!knownAllowance(allowance)) return "--"
-        return Math.round(allowance.percentRemaining || 0) + "%"
+        return Math.round(displayPercent(allowance)) + (showUsed ? "% used" : "% left")
     }
 
     function allowanceDetail(allowance) {
         if (allowance && allowance.source === "claude-prime local usage") return "Started by Claude prime"
         if (!knownAllowance(allowance)) return "Limit unavailable"
-        if (allowance.unit === "percent") return Math.round(allowance.percentRemaining || 0) + "% left of subscription window"
-        return formatTokens(allowance.remaining || 0) + " left of " + formatTokens(allowance.limit || 0)
+        if (allowance.unit === "percent") return allowanceLabel(allowance) + " of subscription window"
+        return formatTokens((showUsed ? allowance.used : allowance.remaining) || 0) + (showUsed ? " used of " : " left of ") + formatTokens(allowance.limit || 0)
     }
 
     function allowanceColor(allowance) {
@@ -285,12 +299,15 @@ PluginComponent {
 
     function quotaValue(bucket) {
         if (!bucket) return "--"
-        if (bucket.valueLabel) return bucket.valueLabel
-        return allowanceLabel(bucket.allowance) + " left"
+        return allowanceLabel(bucket.allowance)
     }
 
     function quotaDetail(bucket) {
         if (!bucket) return "Limit unavailable"
+        if (bucket.kind === "credits") {
+            if (showUsed && bucket.valueLabel) return bucket.valueLabel + " used"
+            if (!showUsed && bucket.detail) return bucket.detail
+        }
         if (bucket.detail) return bucket.detail
         var reset = formatReset(bucket.allowance)
         return reset === "--" ? allowanceDetail(bucket.allowance) : "Resets " + reset
@@ -298,7 +315,7 @@ PluginComponent {
 
     function quotaProgress(bucket) {
         if (!bucket || !knownAllowance(bucket.allowance)) return 0
-        return Math.max(0, Math.min(100, bucket.allowance.percentUsed || 0))
+        return displayPercent(bucket.allowance)
     }
 
     function quotaShortLabel(bucket) {
@@ -651,7 +668,7 @@ PluginComponent {
                     StyledText {
                         id: headerSubtitle
                         width: parent.width
-                        text: root.quotaBucketCount() + " quota buckets" + (root.lastUpdated ? " - " + root.lastUpdated : "")
+                        text: root.quotaBucketCount() + " limits" + (root.lastUpdated ? " - " + root.lastUpdated : "")
                         font.pixelSize: Theme.fontSizeSmall
                         color: Theme.surfaceVariantText
                         elide: Text.ElideRight
@@ -667,6 +684,58 @@ PluginComponent {
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     onClicked: root.refreshUsage()
+                }
+            }
+
+            Flow {
+                width: parent.width
+                spacing: Theme.spacingXS
+
+                QuickToggle {
+                    text: "Left"
+                    checked: !root.showUsed
+                    onClicked: root.setQuickSetting("showUsed", false)
+                }
+                QuickToggle {
+                    text: "Used"
+                    checked: root.showUsed
+                    onClicked: root.setQuickSetting("showUsed", true)
+                }
+                QuickToggle {
+                    text: "Bar controls"
+                    checked: root.quickControlsOpen
+                    onClicked: root.quickControlsOpen = !root.quickControlsOpen
+                }
+            }
+
+            Column {
+                width: parent.width
+                spacing: Theme.spacingXS
+                visible: root.quickControlsOpen
+
+                StyledText {
+                    text: "Top bar"
+                    color: Theme.surfaceVariantText
+                    font.pixelSize: Theme.fontSizeSmall
+                }
+                Flow {
+                    width: parent.width
+                    spacing: Theme.spacingXS
+                    QuickToggle { text: "Compact"; checked: root.compactPill; onClicked: root.setQuickSetting("compactPill", !root.compactPill) }
+                    QuickToggle { text: "Logos"; checked: root.barShowProviderLogos; onClicked: root.setQuickSetting("barShowProviderLogos", !root.barShowProviderLogos) }
+                    QuickToggle { text: "Plugin icon"; checked: root.barShowPluginIcon; onClicked: root.setQuickSetting("barShowPluginIcon", !root.barShowPluginIcon) }
+                }
+                StyledText {
+                    text: "Claude in the top bar"
+                    color: Theme.surfaceVariantText
+                    font.pixelSize: Theme.fontSizeSmall
+                }
+                Flow {
+                    width: parent.width
+                    spacing: Theme.spacingXS
+                    QuickToggle { text: "Session"; checked: root.barShowClaudeSession; onClicked: root.setQuickSetting("barShowClaudeSession", !root.barShowClaudeSession) }
+                    QuickToggle { text: "Weekly"; checked: root.barShowClaudeWeekly; onClicked: root.setQuickSetting("barShowClaudeWeekly", !root.barShowClaudeWeekly) }
+                    QuickToggle { text: "Credits"; checked: root.barShowClaudeCredits; onClicked: root.setQuickSetting("barShowClaudeCredits", !root.barShowClaudeCredits) }
                 }
             }
 
@@ -921,6 +990,38 @@ PluginComponent {
                 font.pixelSize: Theme.fontSizeMedium
                 visible: root.isLoading
             }
+        }
+    }
+
+    component QuickToggle: StyledRect {
+        id: quickToggle
+        property string text: ""
+        property bool checked: false
+        signal clicked()
+        width: quickLabel.implicitWidth + Theme.spacingM * 2
+        height: 30
+        radius: Theme.cornerRadius
+        color: checked ? Theme.primary : Theme.surfaceContainerHigh
+        activeFocusOnTab: true
+        border.width: activeFocus ? 2 : 0
+        border.color: Theme.surfaceText
+        Accessible.role: Accessible.CheckBox
+        Accessible.name: text
+        Accessible.checked: checked
+        Accessible.onPressAction: clicked()
+        Keys.onSpacePressed: clicked()
+        Keys.onReturnPressed: clicked()
+        StyledText {
+            id: quickLabel
+            anchors.centerIn: parent
+            text: quickToggle.text
+            color: quickToggle.checked ? Theme.primaryText : Theme.surfaceText
+            font.pixelSize: Theme.fontSizeSmall
+        }
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: quickToggle.clicked()
         }
     }
 
