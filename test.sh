@@ -45,6 +45,19 @@ plugin_id = plugin["id"]
 assert f'pluginId: "{plugin_id}"' in component_text
 assert f'pluginId: "{plugin_id}"' in settings_text
 
+# Redemption is an explicit helper-owned one-shot, never a default-on setting
+# or an implicit side effect of collecting usage.
+assert 'armed: false' in component_text
+assert '["dankaiusage", "codex-reset", action]' in component_text
+assert 'runCodexReset("status")' in component_text
+assert 'root.showCodex ? "check" : "status"' in component_text
+assert 'codexResetStatus.armed ? "disarm" : "arm"' in component_text
+assert 'root.codexResetReady = status.stateKnown === true' in component_text
+assert 'Qt.callLater(root.refreshUsage)' in component_text
+assert '!root.codexResetReady || root.codexResetStatus.armed ? "disarm" : "arm"' in component_text
+assert 'id: providerContent' in component_text
+assert 'height: providerContent.implicitHeight' in component_text
+
 schema = plugin["settings_schema"]
 for key in schema:
     assert f'"{key}"' in component_text, f"component does not load {key}"
@@ -94,11 +107,14 @@ else
 fi
 
 echo "documentation"
-ADR_COUNT="$(find docs/adr -maxdepth 1 -type f -name 'ADR-*.md' | wc -l | tr -d '[:space:]')"
-if [ "$ADR_COUNT" -ge 9 ]; then
+shopt -s nullglob
+ADR_FILES=(docs/adr/ADR-*.md)
+shopt -u nullglob
+ADR_COUNT="${#ADR_FILES[@]}"
+if [ "$ADR_COUNT" -ge 10 ]; then
     pass "$ADR_COUNT ADRs present"
 else
-    fail "ADRs" "expected at least 9, found $ADR_COUNT"
+    fail "ADRs" "expected at least 10, found $ADR_COUNT"
 fi
 
 echo

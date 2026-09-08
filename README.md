@@ -8,11 +8,57 @@ token history. A small Go helper collects usage for the widget.
 
 ![AI Usage on the DankBar with provider logos and selected quotas](docs/screenshot-bar.png)
 
+## Why this plugin?
+
+Choose DankAIUsage when you mainly use Codex and Claude and want a quota widget
+without installing a separate third-party usage-monitoring application or
+running a proxy service. Keeping the dependency footprint small is a design
+goal: this repository maintains both the DMS widget and its small Go helper,
+using the provider CLIs and their existing local sign-ins.
+
+It brings their remaining allowances together, with local token history
+available in the same dropdown.
+It displays the limits each provider reports, including model-scoped windows,
+Claude extra-usage credits, and available Codex resets with their expiry.
+Left/Used and bar controls let you adjust the view while checking your usage.
+
+The scope is deliberately two providers. The Go helper uses the local Codex
+app server and Claude sign-in; it also exposes a JSON summary for terminal use.
+Install that helper alongside the widget, plus `sqlite3` if you want Codex local
+token history. This is not a dependency-free plugin: it avoids an additional
+quota application, rather than eliminating the helper or provider CLIs.
+Token history covers local CLI
+activity, so it is not a complete account activity ledger. Claude prime is an
+optional session-scheduling feature that consumes usage and is off by default.
+
+### Similar plugins
+
+Several registry plugins cover overlapping needs. Used/remaining views,
+provider logos, and configurable bar values are shared features, not exclusive
+to DankAIUsage. The dependency distinction is clearest against
+[CodexBar](https://github.com/zakstam/dms-codexbar#readme), which wraps the separate
+CodexBar CLI, and [CLIProxyAPI Quota](https://github.com/SpyrosPsarras/dms-cliproxy-quota#readme),
+which requires a CLIProxyAPI server with pi-bridge. Other plugins also use local
+provider sign-ins directly, so this is not a claim of fewer dependencies than
+every alternative. These options are worth considering for different setups:
+
+| Plugin | When it may fit your workflow |
+|---|---|
+| [AI Quotas](https://github.com/agneswd/dms-ai-quotas#readme) | You want additional providers and balances, with per-limit pinning and a used/remaining toggle. |
+| [AiOverviewControl](https://github.com/bernardopg/AiOverviewControl#readme) | You want a broader provider dashboard with quota notifications, usage analytics, and history export. |
+| [Claude Usage](https://github.com/bogdan-velicu/DankClaudeUsage#readme) | You want a focused Claude limit display with rings or numbers and support for existing Claude Code or OpenCode sign-ins. |
+| [Claude Code Usage](https://github.com/titeya/dms-claudecode#readme) | You want Claude pacing, daily activity charts, profile breakdowns, and estimated API costs. |
+| [CodexBar](https://github.com/zakstam/dms-codexbar#readme) | You already use the CodexBar CLI and want its quota output in DMS. |
+| [CLIProxyAPI Quota](https://github.com/SpyrosPsarras/dms-cliproxy-quota#readme) | You want to monitor accounts behind a CLIProxyAPI server running pi-bridge. |
+
+These comparisons describe the linked projects' documentation as reviewed in
+September 2026; check their current documentation for changes.
+
 ## Features
 
 The main display is a provider-defined list of quota bars rather than a fixed
-session/weekly grid. Codex currently exposes its general subscription allowance
-as a weekly window and may add model-scoped limits. Claude exposes five-hour,
+session/weekly grid. Codex may expose its general subscription allowance
+as a weekly-only window alongside separate model-scoped limits. Claude exposes five-hour,
 weekly, model-scoped, and extra-usage credit limits. Missing buckets are omitted
 instead of inferred from their position in an API response. Token totals are
 kept as a secondary detail. Cached tokens are excluded from displayed totals by
@@ -77,6 +123,48 @@ shell's `PATH` before starting DMS.
 - Claude prime is off by default. Enabling it makes small model requests that
   consume usage to start session windows; it is not required to display quotas.
 
+### One-shot Codex reset
+
+The Codex dropdown includes **Auto-use one reset**, off by default. Turning it
+on selects the earliest-expiring available reset with a known ID and expiry.
+It waits until general Codex usage reaches 99%, or until ten minutes before
+that reset expires with some general allowance used in a window whose natural
+reset time is known and still in the future. It avoids the 99% trigger
+when a natural quota reset is already within ten minutes. Spark usage alone
+does not trigger it.
+
+The control turns off before its single redemption attempt, including if that
+attempt fails. After an uncertain result, check Codex's usage page before
+arming again. It never purchases credits or chooses another reset silently.
+Only the provider decides whether a window is eligible to reset.
+
+Checks run once per minute while DMS is running and Codex is visible. Sleeping,
+closing DMS, hiding Codex, or losing connectivity can miss the expiry; there is
+no separate background service. The timing balances retained allowance against
+a small safety margin, rather than guaranteeing the last possible moment.
+
+The helper owns the state, so restarting DMS does not forget an armed reset and
+multiple widget instances cannot independently redeem it. Terminal controls:
+
+```sh
+dankaiusage codex-reset status
+dankaiusage codex-reset arm
+dankaiusage codex-reset disarm
+```
+
+Requires a Codex CLI exposing the documented
+[earned-reset app-server method](https://learn.chatgpt.com/docs/app-server#8-earned-rate-limit-resets-chatgpt).
+Unsupported helpers or CLI versions show an error rather than using an
+undocumented endpoint.
+
+### Why does Spark have two bars?
+
+Spark has [separate usage limits](https://learn.chatgpt.com/docs/agent-configuration/speed#codex-spark).
+When Codex reports both five-hour and weekly Spark windows, the plugin shows
+both, independently of the general Codex allowance. These are live provider
+buckets, not hardcoded legacy quotas. A window disappears when the provider
+stops reporting it; identical percentages alone do not make two windows duplicates.
+
 ## Settings
 
 Plugin settings control the refresh interval (five minutes by default), token
@@ -107,7 +195,7 @@ not necessarily that its account is signed in.
 - Codex limits: queries the local Codex app server with
   `account/rateLimits/read`. Windows are classified by their returned duration,
   and available banked resets are shown with their expiry. Apply a reset from
-  Codex **Settings → Usage**; the widget never consumes one automatically.
+  Codex **Settings → Usage**, or explicitly arm the one-shot control above.
 - Claude limits: queries Anthropic's OAuth usage endpoint using the local
   Claude Code sign-in (see
   [ADR-0001](docs/adr/ADR-0001-claude-limits-from-oauth-usage-api.md)).

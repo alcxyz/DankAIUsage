@@ -4,6 +4,9 @@
 **Date:** 2026-08-30
 **Applies to:** `cmd/dankaiusage/main.go`, `DankAIUsageWidget.qml`
 
+**Amended by:** [ADR-0010](ADR-0010-one-shot-codex-reset.md) permits an explicit,
+default-off one-shot reset control through the supported app-server protocol.
+
 ## Context
 
 The Codex app-server originally returned a five-hour window in `primary` and a
