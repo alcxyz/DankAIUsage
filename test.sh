@@ -23,6 +23,7 @@ if python3 - <<'PY'
 import json
 import pathlib
 import re
+import struct
 
 manifest_path = pathlib.Path("plugin.json")
 plugin = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -45,6 +46,16 @@ plugin_id = plugin["id"]
 assert f'pluginId: "{plugin_id}"' in component_text
 assert f'pluginId: "{plugin_id}"' in settings_text
 
+readme = pathlib.Path("README.md").read_text(encoding="utf-8")
+for screenshot in ("docs/screenshot.png", "docs/screenshot-bar.png"):
+    assert f"]({screenshot})" in readme, f"README does not reference {screenshot}"
+    with pathlib.Path(screenshot).open("rb") as image:
+        header = image.read(24)
+    assert header[:8] == b"\x89PNG\r\n\x1a\n", f"{screenshot} is not PNG"
+    assert header[12:16] == b"IHDR", f"{screenshot} has no PNG dimensions"
+    width, height = struct.unpack(">II", header[16:24])
+    assert width > 0 and height > 0, f"{screenshot} is empty"
+
 # Redemption is an explicit helper-owned one-shot, never a default-on setting
 # or an implicit side effect of collecting usage.
 assert 'armed: false' in component_text
@@ -55,8 +66,24 @@ assert 'codexResetStatus.armed ? "disarm" : "arm"' in component_text
 assert 'root.codexResetReady = status.stateKnown === true' in component_text
 assert 'Qt.callLater(root.refreshUsage)' in component_text
 assert '!root.codexResetReady || root.codexResetStatus.armed ? "disarm" : "arm"' in component_text
+assert re.search(r'DankToggle\s*\{\s*id: codexAutoResetToggle', component_text)
+assert 'toggling: codexResetProcess.running' in component_text
+assert 'Accessible.onToggleAction: handleClick()' in component_text
+assert 'Keys.onSpacePressed: handleClick()' in component_text
+assert 'border.width: codexAutoResetToggle.activeFocus ? 2 : 0' in component_text
 assert 'id: providerContent' in component_text
 assert 'height: providerContent.implicitHeight' in component_text
+assert 'usageHistory = summary.history || []' in component_text
+assert 'historyError = summary.historyError || ""' in component_text
+assert 'case "reset_redeemed_inferred": return "Likely reset redeemed"' in component_text
+assert 'delete cachedSummary.history' in component_text
+assert 'root.historyEventDetail(modelData)' in component_text
+
+# Both bar layouts omit the mode suffix; dropdown labels retain it by default.
+assert 'includeMode === false ? "%"' in component_text
+assert 'allowanceLabel(buckets[i].allowance, false)' in component_text
+assert 'allowanceLabel(compactWeakest.allowance, false)' in component_text
+assert 'return allowanceLabel(bucket.allowance)' in component_text
 
 schema = plugin["settings_schema"]
 for key in schema:
@@ -111,10 +138,10 @@ shopt -s nullglob
 ADR_FILES=(docs/adr/ADR-*.md)
 shopt -u nullglob
 ADR_COUNT="${#ADR_FILES[@]}"
-if [ "$ADR_COUNT" -ge 10 ]; then
+if [ "$ADR_COUNT" -ge 11 ]; then
     pass "$ADR_COUNT ADRs present"
 else
-    fail "ADRs" "expected at least 10, found $ADR_COUNT"
+    fail "ADRs" "expected at least 11, found $ADR_COUNT"
 fi
 
 echo
