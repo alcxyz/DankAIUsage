@@ -18,7 +18,7 @@
         };
 
         devShells.default = pkgs.mkShell {
-          packages = with pkgs; [ go gopls gotools sqlite ];
+          packages = with pkgs; [ go gopls gotools ];
         };
       }
     );

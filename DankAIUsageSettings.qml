@@ -26,8 +26,8 @@ PluginSettings {
 
     SliderSetting {
         settingKey: "periodDays"
-        label: "Token history (days)"
-        description: "How many days to include in the secondary token total"
+        label: "Legacy token history (days)"
+        description: "Kept for compatibility with older cached summaries; choose 5h, 7d, 30d, 90d, or Tracked in the dropdown"
         minimum: 1
         maximum: 90
         defaultValue: 7

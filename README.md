@@ -4,7 +4,9 @@ DankAIUsage is a [DankMaterialShell](https://github.com/AvengeMedia/DankMaterial
 widget for Codex and Claude subscription quotas, extra-usage credits, and local
 token history. A small Go helper collects usage for the widget.
 
-![AI Usage dropdown with Codex and Claude quotas, display toggles, and reset controls](docs/screenshot.png)
+![Advanced dropdown with Codex and Claude quotas, local token history, and reset controls](docs/screenshot.png)
+
+![Simple dropdown focused on Codex and Claude quotas](docs/screenshot-simple.png)
 
 ![AI Usage on the DankBar with provider logos and minimal quota percentages](docs/screenshot-bar.png)
 
@@ -24,9 +26,9 @@ Left/Used and bar controls let you adjust the view while checking your usage.
 
 The scope is deliberately two providers. The Go helper uses the local Codex
 app server and Claude sign-in; it also exposes a JSON summary for terminal use.
-Install that helper alongside the widget, plus `sqlite3` if you want Codex local
-token history. This is not a dependency-free plugin: it avoids an additional
-quota application, rather than eliminating the helper or provider CLIs.
+Install that helper alongside the widget. This is not a dependency-free plugin:
+it avoids an additional quota application, rather than eliminating the helper
+or provider CLIs.
 Token history covers local CLI
 activity, so it is not a complete account activity ledger. Claude prime is an
 optional session-scheduling feature that consumes usage and is off by default.
@@ -56,6 +58,17 @@ September 2026; check their current documentation for changes.
 
 ## Features
 
+The dropdown has a remembered **Simple / Advanced** toggle button. Its label
+shows the current mode; click to switch. Simple focuses on
+provider quota bars, percentages, reset countdowns, and warnings. Advanced adds
+the overall summary, local token history and tracking controls, available reset
+details, reset history, automation controls, and quick top-bar settings.
+New installations start in Simple; existing installations with a cached usage
+summary retain Advanced on upgrade. Either choice leaves the topbar layout,
+tracking, and automation settings unchanged. Armed Codex resets remain visible
+and cancellable in Simple, as do reset errors or unknown outcomes. Enabled
+Claude session scheduling is also indicated there.
+
 The main display is a provider-defined list of quota bars rather than a fixed
 session/weekly grid. Codex may expose its general subscription allowance
 as a weekly-only window alongside separate model-scoped limits. Claude exposes five-hour,
@@ -73,13 +86,63 @@ one selected quota for each enabled provider rather than hiding a provider.
 The generic plugin icon and provider logos are independently configurable, so
 the bar can show either icon style, both styles, or text only.
 
-Use **Left / Used** in the dropdown to switch all quota percentages and progress
+Click the **Left / Used** toggle in the dropdown to switch all quota percentages and progress
 bars together, including credits. Left is the default: 26% left fills 26% of the
 bar; Used shows 74% used and fills 74%. Credit details show the remaining balance
 or spending against the budget. Warning colors always reflect proximity to the
 limit, regardless of display mode.
 Both bar layouts show only the percentage, without repeating "left" or "used";
 the dropdown retains those labels.
+
+Click a **Local tokens** row to choose **5h**, **7d**, **30d**, or **90d** directly.
+These are rolling ranges across local conversations, not active-conversation
+totals or subscription reset windows. The configured history range remains
+available when it differs from the presets. The selection is remembered and
+does not make another provider request. The rows support keyboard activation
+and show unavailable or partial collection explicitly.
+
+### Optional tracked totals
+
+**Tracked total** is a separate, opt-in view. Tracking is **off by default**.
+Enable it in the token-range controls to seed a persistent total from retained
+Codex and Claude transcripts, without a 90-day cutoff. The start date records
+when tracking was enabled; the seed can include older usage. Missing, deleted,
+or remote history cannot be recovered, so this is not called all-time usage.
+
+While enabled, normal refreshes add newly observed usage without counting the
+same events again. Saved totals survive deletion of the original transcripts.
+**Pause** retains the total and its duplicate-detection checkpoints; resuming
+does not backfill the explicitly paused interval. **Clear** requires confirmation,
+removes only tracking totals/checkpoints, and turns tracking off. It does not
+delete CLI transcripts, plugin preferences, or quota reset history.
+
+Tracking is local, with no extra database, service, or provider calls for its
+controls. It stores token counters, dates, and hashed event checkpoints—not
+prompts, credentials, raw session identifiers, or transcript contents. Partial
+seed history is disclosed rather than silently presented as complete.
+Enabled tracking scans retained transcripts, so it can take longer than the
+rolling views; checkpoint storage grows with observed usage. Usage deleted
+before a refresh observes it cannot be preserved.
+Late or changed Codex checkpoints behind an already observed session timestamp
+are conservatively skipped and flagged as partial coverage to avoid recounting.
+
+Tracking state lives in `$XDG_STATE_HOME/dankaiusage/token-tracking.json`, falling
+back to `~/.local/state/dankaiusage/token-tracking.json`. Keep it if you want the
+tracked period to survive a configuration reinstall; it is separate from both
+the quota-reset observation log and provider transcripts.
+
+Terminal controls use the same helper-owned state as the widget:
+
+```sh
+dankaiusage tracking status
+dankaiusage tracking enable
+dankaiusage tracking pause
+```
+
+The separate `dankaiusage tracking clear` command permanently clears this local
+tracked period and disables tracking. See
+[ADR-0012](docs/adr/ADR-0012-optional-persistent-token-totals.md) for the tracking
+scope and checkpoint policy.
 
 ## Installation
 
@@ -120,8 +183,8 @@ shell's `PATH` before starting DMS.
 
 - Install and sign in to the CLI for each provider you enable: Codex, Claude
   Code, or both. Disable providers you do not use in plugin settings.
-- Install `sqlite3` for Codex local token history. Subscription percentages
-  come from the provider and do not depend on token-history totals.
+- Token history reads local CLI transcripts directly; `sqlite3` is not required.
+  Subscription percentages come from the provider, independently of those totals.
 - Claude prime is off by default. Enabling it makes small model requests that
   consume usage to start session windows; it is not required to display quotas.
 
@@ -239,12 +302,12 @@ not necessarily that its account is signed in.
   falls back to `extra_usage`, deduplicating both into one monetary quota bar.
   The statusline JSON cached by `dankaiusage claude-statusline` is the
   fallback source.
-- Token history: reads Codex `logs_2.sqlite` and Claude project JSONL
+- Token history: reads Codex session/archived-session JSONL and Claude project JSONL
   transcripts from their normal CLI config locations. Claude token totals are
   local Claude Code history only; usage from claude.ai, mobile, or other online
   surfaces is not written to those transcripts and is not exposed through a
   Claude CLI usage command.
-- CLI availability: reports whether `codex`, `claude`, and `sqlite3` are on
+- CLI availability: reports whether `codex` and `claude` are on
   `PATH`.
 
 For Claude limits the helper reads the Claude Code OAuth token from
