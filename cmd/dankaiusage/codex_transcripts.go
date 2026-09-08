@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 )
 
@@ -123,6 +124,7 @@ type codexUsageSnapshot struct {
 	Last      codexTokenUsage
 	HasLast   bool
 	Model     string
+	SourceID  string
 }
 
 type codexSnapshotKey struct {
@@ -130,6 +132,7 @@ type codexSnapshotKey struct {
 	Total     codexTokenUsage
 	Last      codexTokenUsage
 	HasLast   bool
+	SourceID  string
 }
 
 type codexSessionMeta struct {
@@ -180,6 +183,7 @@ func collectCodexTranscriptEvents(root string, cutoff time.Time) ([]tokenEvent, 
 
 	sort.Strings(files)
 	bySession := make(map[string][]codexUsageSnapshot)
+	trackableSessions := make(map[string]bool)
 	var events []tokenEvent
 	for _, path := range files {
 		snapshots, session, fileStats := readCodexTranscript(path)
@@ -190,6 +194,8 @@ func collectCodexTranscriptEvents(root string, cutoff time.Time) ([]tokenEvent, 
 		sessionKey := session.ID
 		if sessionKey == "" {
 			sessionKey = path
+		} else {
+			trackableSessions[sessionKey] = true
 		}
 		if len(snapshots) > 0 && (session.ID == "" || session.StartedAt.IsZero()) {
 			stats.Incomplete++
@@ -206,7 +212,7 @@ func collectCodexTranscriptEvents(root string, cutoff time.Time) ([]tokenEvent, 
 		sort.SliceStable(snapshots, func(i, j int) bool {
 			return snapshots[i].Timestamp.Before(snapshots[j].Timestamp)
 		})
-		sessionEvents, incomplete := codexEventsFromSnapshots(session, snapshots)
+		sessionEvents, incomplete := codexEventsFromSnapshots(session, snapshots, trackableSessions[session])
 		stats.Incomplete += incomplete
 		events = append(events, sessionEvents...)
 	}
@@ -279,7 +285,7 @@ func readCodexTranscript(path string) ([]codexUsageSnapshot, codexSessionMeta, c
 		}
 		stats.UsageRecords++
 		snapshots = append(snapshots, codexUsageSnapshot{
-			Timestamp: timestamp, Total: total, Last: last, HasLast: hasLast, Model: model,
+			Timestamp: timestamp, Total: total, Last: last, HasLast: hasLast, Model: model, SourceID: row.Payload.ID,
 		})
 	})
 	if err != nil {
@@ -288,7 +294,7 @@ func readCodexTranscript(path string) ([]codexUsageSnapshot, codexSessionMeta, c
 	return snapshots, session, stats
 }
 
-func codexEventsFromSnapshots(session string, snapshots []codexUsageSnapshot) ([]tokenEvent, int) {
+func codexEventsFromSnapshots(session string, snapshots []codexUsageSnapshot, trackable bool) ([]tokenEvent, int) {
 	var events []tokenEvent
 	var previous codexTokenUsage
 	hasPrevious := false
@@ -297,7 +303,7 @@ func codexEventsFromSnapshots(session string, snapshots []codexUsageSnapshot) ([
 	for _, snapshot := range snapshots {
 		key := codexSnapshotKey{
 			Timestamp: snapshot.Timestamp.UnixNano(), Total: snapshot.Total,
-			Last: snapshot.Last, HasLast: snapshot.HasLast,
+			Last: snapshot.Last, HasLast: snapshot.HasLast, SourceID: snapshot.SourceID,
 		}
 		if _, duplicate := seen[key]; duplicate {
 			continue
@@ -326,10 +332,32 @@ func codexEventsFromSnapshots(session string, snapshots []codexUsageSnapshot) ([
 		previous = snapshot.Total
 		hasPrevious = true
 		if emit && usage.hasTokens() {
+			trackKey := ""
+			trackFingerprint := ""
+			if trackable {
+				trackFingerprint = tokenIdentityHash(
+					"codex-snapshot", session, snapshot.SourceID, snapshot.Timestamp.UTC().Format(time.RFC3339Nano),
+					strconv.FormatInt(snapshot.Total.Input, 10), strconv.FormatInt(snapshot.Total.Output, 10),
+					strconv.FormatInt(snapshot.Total.Cached, 10), strconv.FormatInt(snapshot.Total.Reasoning, 10),
+					strconv.FormatInt(snapshot.Last.Input, 10), strconv.FormatInt(snapshot.Last.Output, 10),
+					strconv.FormatInt(snapshot.Last.Cached, 10), strconv.FormatInt(snapshot.Last.Reasoning, 10),
+					strconv.FormatBool(snapshot.HasLast),
+				)
+				if snapshot.SourceID != "" {
+					trackKey = tokenIdentityHash("codex-event", session, snapshot.SourceID)
+				} else {
+					// Current Codex token_count rows have no native event ID and can
+					// legitimately share timestamps. The raw cumulative snapshot is
+					// the stable source identity; the computed delta is deliberately
+					// absent so transcript retention cannot change an existing key.
+					trackKey = tokenIdentityHash("codex-event-snapshot", trackFingerprint)
+				}
+			}
 			events = append(events, tokenEvent{
 				Provider: "codex", Timestamp: snapshot.Timestamp, Session: session,
 				Model: snapshot.Model, Input: usage.Input, Output: usage.Output,
 				Cached: usage.Cached, Reasoning: usage.Reasoning,
+				TrackKey: trackKey, TrackFingerprint: trackFingerprint,
 			})
 		}
 	}

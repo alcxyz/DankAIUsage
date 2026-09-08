@@ -30,11 +30,13 @@ The summary states this explicitly via `meta.tokenDataScope` and
 `meta.tokenDataIncludesWeb = false` so the UI can annotate it, because limits
 (account-wide) and tokens (local-only) intentionally have different scopes.
 
-The dropdown token rows switch together between a rolling five-hour view and
-the configured history period (seven days by default). Label the range
-explicitly: neither means the active conversation, all-time history, or an
-account quota window. Remember this presentation choice locally; switching
-views does not trigger provider calls or alter the collected totals.
+The dropdown token rows select explicitly labeled rolling ranges together:
+five hours, seven days, thirty days, and ninety days. The configured history
+period remains available for compatibility. None means the active conversation,
+all-time history, or an account quota window. Remember this presentation choice
+locally; switching views does not trigger provider calls or alter the collected
+totals. Optional persistent totals are separate, governed by
+[ADR-0012](ADR-0012-optional-persistent-token-totals.md).
 
 ## Alternatives Considered
 

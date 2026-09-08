@@ -85,12 +85,41 @@ assert 'allowanceLabel(buckets[i].allowance, false)' in component_text
 assert 'allowanceLabel(compactWeakest.allowance, false)' in component_text
 assert 'return allowanceLabel(bucket.allowance)' in component_text
 assert 'component TokenHistoryRow: StyledRect' in component_text
-assert 'name: "swap_horiz"' in component_text
-assert 'Keys.onSpacePressed: root.toggleTokenHistory()' in component_text
-assert 'return tokenHistorySession ? provider.session : provider.period' in component_text
+assert 'property string tokenHistoryRange: "7d"' in component_text
+for token_range in ('5h', '7d', '30d', '90d', 'tracked'):
+    assert f'{{ key: "{token_range}"' in component_text
+assert 'loadPluginState(pluginId, "tokenHistorySession", false)' in component_text
+assert 'loadPluginState(pluginId, "tokenHistoryRange", "")' in component_text
+assert 'savePluginState(pluginId, "tokenHistoryRange", tokenHistoryRange)' in component_text
+assert 'Keys.onSpacePressed: tokenRow.selectorOpen = !tokenRow.selectorOpen' in component_text
+assert 'model: root.tokenHistoryRangeChoices()' in component_text
+assert 'root.selectTokenHistoryRange(modelData.key)' in component_text
+assert 'height: selectorOpen ? 36 + tokenRangeFlow.implicitHeight + Theme.spacingXS : 32' in component_text
+assert 'anchors.verticalCenter: tokenRowHeader.verticalCenter' in component_text
+assert 'if (days === 7 || days === 30 || days === 90) return days + "d"' in component_text
+assert 'if (tokenHistoryRange === "period") return provider.period' in component_text
+for field in ('fiveHours', 'sevenDays', 'thirtyDays', 'ninetyDays'):
+    assert f'rolling.{field}' in component_text
+assert 'var trackedProviders = trackingStatus.providers || {}' in component_text
+assert 'if (!tokenHistoryTotals(provider)) return false' in component_text
+assert 'trackingStatus.known !== true || !trackingStatus.startedAt' in component_text
 assert 'meta.tokenDataAvailable === false' in component_text
 assert 'if (available === 0) return "Unavailable"' in component_text
 assert 'sqlite3' not in plugin["requires"]
+
+# Persistent tracking remains helper-owned, fail-closed, and explicit.
+assert '["dankaiusage", "tracking", action]' in component_text
+assert 'typeof status.known !== "boolean"' in component_text
+assert 'if (action !== "status" && usageProcess.running) return' in component_text
+assert '&& !trackingProcess.running && !usageProcess.running' in component_text
+assert 'root.runTracking(root.trackingStatus.enabled === true ? "pause" : "enable")' in component_text
+assert 'if (root.clearTrackingConfirm) root.runTracking("clear")' in component_text
+assert 'text: root.clearTrackingConfirm ? "Confirm clear" : "Clear tracked data"' in component_text
+assert 'delete cachedSummary.tracking' in component_text
+assert 'Qt.callLater(root.refreshUsage)' in component_text
+assert 'Some tracked token data is incomplete.' in component_text
+assert 'The initial total may include older retained local history.' in component_text
+assert 'all-time' not in component_text.lower()
 
 schema = plugin["settings_schema"]
 for key in schema:

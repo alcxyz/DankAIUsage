@@ -33,6 +33,13 @@ type PeriodTotals struct {
 	LastTimestamp string `json:"lastTimestamp,omitempty"`
 }
 
+type RollingTotals struct {
+	FiveHours  PeriodTotals `json:"fiveHours"`
+	SevenDays  PeriodTotals `json:"sevenDays"`
+	ThirtyDays PeriodTotals `json:"thirtyDays"`
+	NinetyDays PeriodTotals `json:"ninetyDays"`
+}
+
 type Allowance struct {
 	Known            bool    `json:"known"`
 	Window           string  `json:"window"`
@@ -92,6 +99,7 @@ type ProviderUsage struct {
 	Week              PeriodTotals   `json:"week"`
 	Month             PeriodTotals   `json:"month"`
 	Period            PeriodTotals   `json:"period"`
+	Rolling           RollingTotals  `json:"rolling"`
 	SessionLeft       Allowance      `json:"sessionLeft"`
 	WeeklyLeft        Allowance      `json:"weeklyLeft"`
 	ExtraLimits       []ExtraLimit   `json:"extraLimits,omitempty"`
@@ -113,19 +121,22 @@ type Summary struct {
 	HistoryError string              `json:"historyError,omitempty"`
 	Errors       []string            `json:"errors,omitempty"`
 	Capabilities map[string]bool     `json:"capabilities"`
+	Tracking     TrackingSummary     `json:"tracking"`
 }
 
 type tokenEvent struct {
-	Provider  string
-	Timestamp time.Time
-	Session   string
-	Project   string
-	Model     string
-	Input     int64
-	Output    int64
-	Cached    int64
-	Reasoning int64
-	Tool      int64
+	Provider         string
+	Timestamp        time.Time
+	Session          string
+	Project          string
+	Model            string
+	Input            int64
+	Output           int64
+	Cached           int64
+	Reasoning        int64
+	Tool             int64
+	TrackKey         string
+	TrackFingerprint string
 }
 
 type options struct {
@@ -155,6 +166,10 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "history" {
 		runUsageHistoryCommand(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "tracking" {
+		runTokenTrackingCommand(os.Args[2:])
 		return
 	}
 
@@ -212,6 +227,7 @@ func collect(opts options) Summary {
 	codex := collectCodex(now, opts)
 	claude := collectClaude(now, opts)
 	out.Providers = []ProviderUsage{codex, claude}
+	out.Tracking = refreshTokenTracking(tokenTrackingPath(), now)
 
 	for _, provider := range out.Providers {
 		addTotals(&out.GrandTotal, provider.Period)
@@ -253,7 +269,7 @@ func collectCodex(now time.Time, opts options) ProviderUsage {
 	setProviderMeta(&provider, "tokenDataScope", "Codex CLI local history only")
 	setProviderMeta(&provider, "tokenDataIncludesWeb", false)
 
-	cutoff := now.AddDate(0, 0, -maxInt(opts.PeriodDays, 31)-1)
+	cutoff := now.AddDate(0, 0, -maxInt(opts.PeriodDays, 90)-1)
 	events, stats := collectCodexTranscriptEvents(root, cutoff)
 	applyEvents(&provider, events, now, opts)
 	available := stats.UsableRecords > 0
@@ -305,7 +321,7 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 		return provider
 	}
 
-	cutoff := now.AddDate(0, 0, -maxInt(opts.PeriodDays, 31)-1)
+	cutoff := now.AddDate(0, 0, -maxInt(opts.PeriodDays, 90)-1)
 	var events []tokenEvent
 	var latestUsage time.Time
 	var transcriptFiles int
@@ -333,6 +349,10 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 	})
 	if err != nil {
 		setProviderMeta(&provider, "tokenDataError", err.Error())
+	}
+	events, ambiguousRevisions := normalizeClaudeTokenEvents(events)
+	if ambiguousRevisions > 0 {
+		setProviderMeta(&provider, "tokenDataError", "Claude token history contains ambiguous message revisions")
 	}
 
 	applyEvents(&provider, events, now, opts)
@@ -378,20 +398,84 @@ func readClaudeJSONL(path string) ([]tokenEvent, error) {
 		if !ok {
 			continue
 		}
-		session, _ := row["sessionId"].(string)
+		session := firstNonEmpty(stringValue(row["sessionId"]), stringValue(row["session_id"]))
 		model, _ := msg["model"].(string)
+		stableID := firstNonEmpty(
+			stringValue(msg["id"]),
+			stringValue(msg["requestId"]),
+			stringValue(msg["request_id"]),
+			stringValue(row["requestId"]),
+			stringValue(row["request_id"]),
+			stringValue(row["messageId"]),
+			stringValue(row["uuid"]),
+		)
+		input := jsonInt(usage["input_tokens"])
+		output := jsonInt(usage["output_tokens"])
+		cached := jsonInt(usage["cache_creation_input_tokens"]) + jsonInt(usage["cache_read_input_tokens"])
+		trackKey := ""
+		trackFingerprint := ""
+		if stableID != "" {
+			trackKey = tokenIdentityHash("claude-event", stableID)
+			trackFingerprint = tokenIdentityHash("claude-usage", stableID,
+				strconv.FormatInt(input, 10), strconv.FormatInt(output, 10), strconv.FormatInt(cached, 10))
+		}
 		events = append(events, tokenEvent{
-			Provider:  "claude",
-			Timestamp: ts,
-			Session:   session,
-			Project:   project,
-			Model:     model,
-			Input:     jsonInt(usage["input_tokens"]),
-			Output:    jsonInt(usage["output_tokens"]),
-			Cached:    jsonInt(usage["cache_creation_input_tokens"]) + jsonInt(usage["cache_read_input_tokens"]),
+			Provider:         "claude",
+			Timestamp:        ts,
+			Session:          session,
+			Project:          project,
+			Model:            model,
+			Input:            input,
+			Output:           output,
+			Cached:           cached,
+			TrackKey:         trackKey,
+			TrackFingerprint: trackFingerprint,
 		})
 	}
 	return events, nil
+}
+
+// Claude transcripts can repeat progressively updated usage for one assistant
+// message. Keep the greatest monotonic revision so rolling and persistent views
+// use the same request semantics. Mixed increases and decreases are ambiguous;
+// retaining the first observed revision avoids synthesizing an inflated vector.
+func normalizeClaudeTokenEvents(events []tokenEvent) ([]tokenEvent, int) {
+	out := make([]tokenEvent, 0, len(events))
+	byKey := make(map[string]int)
+	ambiguous := 0
+	for _, event := range events {
+		if event.Provider != "claude" || event.TrackKey == "" {
+			out = append(out, event)
+			continue
+		}
+		index, exists := byKey[event.TrackKey]
+		if !exists {
+			byKey[event.TrackKey] = len(out)
+			out = append(out, event)
+			continue
+		}
+		existing := out[index]
+		switch {
+		case tokenEventAtLeast(event, existing):
+			if event.Timestamp.Before(existing.Timestamp) {
+				event.Timestamp = existing.Timestamp
+			}
+			if event.Session == "" {
+				event.Session = existing.Session
+			}
+			out[index] = event
+		case tokenEventAtLeast(existing, event):
+			// Older streamed revision or replay.
+		default:
+			ambiguous++
+		}
+	}
+	return out, ambiguous
+}
+
+func tokenEventAtLeast(left, right tokenEvent) bool {
+	return left.Input >= right.Input && left.Output >= right.Output && left.Cached >= right.Cached &&
+		left.Reasoning >= right.Reasoning && left.Tool >= right.Tool
 }
 
 func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, opts options) {
@@ -406,6 +490,10 @@ func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, op
 	weekStart := todayStart.AddDate(0, 0, -weekdayOffset)
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	periodStart := now.AddDate(0, 0, -opts.PeriodDays)
+	fiveHoursStart := now.Add(-5 * time.Hour)
+	sevenDaysStart := now.Add(-7 * 24 * time.Hour)
+	thirtyDaysStart := now.Add(-30 * 24 * time.Hour)
+	ninetyDaysStart := now.Add(-90 * 24 * time.Hour)
 
 	models := map[string]*ModelUsage{}
 	periodSessions := map[string]bool{}
@@ -413,9 +501,37 @@ func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, op
 	sessionSessions := map[string]bool{}
 	weekSessions := map[string]bool{}
 	monthSessions := map[string]bool{}
+	fiveHourSessions := map[string]bool{}
+	sevenDaySessions := map[string]bool{}
+	thirtyDaySessions := map[string]bool{}
+	ninetyDaySessions := map[string]bool{}
 	var sessionOldest *time.Time
 
 	for _, event := range events {
+		if atOrAfter(event.Timestamp, fiveHoursStart) {
+			addEvent(&provider.Rolling.FiveHours, event)
+			if event.Session != "" {
+				fiveHourSessions[event.Session] = true
+			}
+		}
+		if atOrAfter(event.Timestamp, sevenDaysStart) {
+			addEvent(&provider.Rolling.SevenDays, event)
+			if event.Session != "" {
+				sevenDaySessions[event.Session] = true
+			}
+		}
+		if atOrAfter(event.Timestamp, thirtyDaysStart) {
+			addEvent(&provider.Rolling.ThirtyDays, event)
+			if event.Session != "" {
+				thirtyDaySessions[event.Session] = true
+			}
+		}
+		if atOrAfter(event.Timestamp, ninetyDaysStart) {
+			addEvent(&provider.Rolling.NinetyDays, event)
+			if event.Session != "" {
+				ninetyDaySessions[event.Session] = true
+			}
+		}
 		if event.Timestamp.After(todayStart) || event.Timestamp.Equal(todayStart) {
 			addEvent(&provider.Today, event)
 			if event.Session != "" {
@@ -469,6 +585,10 @@ func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, op
 	provider.Week.Sessions = int64(len(weekSessions))
 	provider.Month.Sessions = int64(len(monthSessions))
 	provider.Period.Sessions = int64(len(periodSessions))
+	provider.Rolling.FiveHours.Sessions = int64(len(fiveHourSessions))
+	provider.Rolling.SevenDays.Sessions = int64(len(sevenDaySessions))
+	provider.Rolling.ThirtyDays.Sessions = int64(len(thirtyDaySessions))
+	provider.Rolling.NinetyDays.Sessions = int64(len(ninetyDaySessions))
 
 	provider.Models = []ModelUsage{}
 	for _, model := range models {
@@ -488,6 +608,10 @@ func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, op
 	if !provider.WeeklyLeft.Known && provider.WeeklyLeft.Source == "" {
 		provider.WeeklyLeft = makeUnknownAllowance("weekly", weekStart.AddDate(0, 0, 7))
 	}
+}
+
+func atOrAfter(value, start time.Time) bool {
+	return value.After(start) || value.Equal(start)
 }
 
 func addEvent(totals *PeriodTotals, event tokenEvent) {

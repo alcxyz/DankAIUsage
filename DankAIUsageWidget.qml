@@ -25,7 +25,20 @@ PluginComponent {
     property bool showUsed: false
     property bool quickControlsOpen: false
     property bool historyOpen: false
-    property bool tokenHistorySession: false
+    // tokenHistorySession is read once in loadCache() to migrate the former
+    // two-state selector. New versions persist an explicit range key.
+    property string tokenHistoryRange: "7d"
+    readonly property var tokenHistoryRanges: [
+        { key: "5h", label: "5h" },
+        { key: "7d", label: "7d" },
+        { key: "30d", label: "30d" },
+        { key: "90d", label: "90d" },
+        { key: "tracked", label: "Tracked" }
+    ]
+    property var trackingStatus: ({ known: false, enabled: false, providers: {}, errors: [] })
+    property string _trackingOutput: ""
+    property string trackingCommandError: ""
+    property bool clearTrackingConfirm: false
     property bool enableClaudePrime: false
 
     property bool isLoading: true
@@ -78,7 +91,14 @@ PluginComponent {
 
     function loadCache() {
         if (!pluginService || !pluginService.loadPluginState) return
-        tokenHistorySession = pluginService.loadPluginState(pluginId, "tokenHistorySession", false) === true
+        var savedRange = pluginService.loadPluginState(pluginId, "tokenHistoryRange", "") || ""
+        if (isTokenHistoryRange(savedRange)) {
+            tokenHistoryRange = savedRange
+        } else if (pluginService.loadPluginState(pluginId, "tokenHistorySession", false) === true) {
+            tokenHistoryRange = "5h"
+        } else {
+            tokenHistoryRange = migratedPeriodRange(periodDays)
+        }
         lastClaudeAutoPrimeAt = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeAt", 0) || 0
         lastClaudeAutoPrimeFailed = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeFailed", false) === true
         var cached = pluginService.loadPluginState(pluginId, "lastSummary", null)
@@ -154,6 +174,10 @@ PluginComponent {
     }
 
     function refreshUsage() {
+        if (trackingProcess.running) {
+            _usageRefreshPending = true
+            return
+        }
         if (usageProcess.running) {
             _usageRefreshPending = true
             return
@@ -211,6 +235,8 @@ PluginComponent {
                     var cachedSummary = Object.assign({}, summary)
                     delete cachedSummary.history
                     delete cachedSummary.historyError
+                    // The helper owns tracked totals and control state.
+                    delete cachedSummary.tracking
                     root.pluginService.savePluginState(root.pluginId, "lastSummary", cachedSummary)
                 }
             } catch (e) {
@@ -218,6 +244,40 @@ PluginComponent {
                 root.errorText = "Could not parse usage data"
             }
             root.isLoading = false
+        }
+    }
+
+    function runTracking(action) {
+        if (trackingProcess.running) return
+        if (action !== "status" && usageProcess.running) return
+        _trackingOutput = ""
+        trackingCommandError = ""
+        clearTrackingConfirm = false
+        trackingProcess.command = ["dankaiusage", "tracking", action]
+        trackingProcess.running = true
+    }
+
+    Process {
+        id: trackingProcess
+        running: false
+        stdout: SplitParser {
+            onRead: data => { root._trackingOutput += data + "\n" }
+        }
+        onExited: (exitCode, exitStatus) => {
+            try {
+                var result = JSON.parse(root._trackingOutput.trim())
+                var status = result.tracking || result
+                if (typeof status.known !== "boolean") throw new Error("Invalid tracking status")
+                root.trackingStatus = status
+                if (exitCode !== 0 || status.known !== true)
+                    root.trackingCommandError = "Tracking status is unavailable. Retry after checking the helper."
+            } catch (e) {
+                root.trackingStatus = ({ known: false, enabled: false, providers: {}, errors: [] })
+                root.trackingCommandError = "Tracking status is unavailable. Retry after checking the helper."
+            }
+            // Re-read all totals after each serialized helper-owned transition.
+            root._usageRefreshPending = false
+            Qt.callLater(root.refreshUsage)
         }
     }
 
@@ -262,6 +322,7 @@ PluginComponent {
         providers = summary.providers || []
         usageHistory = summary.history || []
         historyError = summary.historyError || ""
+        if (summary.tracking) trackingStatus = summary.tracking
         grandTotal = summary.grandTotal || ({ total: 0, input: 0, output: 0, cached: 0, requests: 0, sessions: 0 })
         hasError = (summary.errors || []).length > 0
         errorText = hasError ? summary.errors.join("\n") : ""
@@ -683,14 +744,22 @@ PluginComponent {
         var partial = false
         for (var i = 0; i < list.length; i++) {
             if (tokenHistoryAvailable(list[i])) available++
-            if (!tokenHistoryAvailable(list[i]) || (list[i].meta && list[i].meta.tokenDataError)) partial = true
+            if (!tokenHistoryAvailable(list[i])) partial = true
+            if (tokenHistoryRange !== "tracked" && list[i].meta && list[i].meta.tokenDataError) partial = true
         }
+        if (tokenHistoryRange === "tracked" && trackingStatus.errors && trackingStatus.errors.length > 0)
+            partial = true
         if (available === 0) return "Unavailable"
         return formatTokens(filteredGrandInput()) + " in / " + formatTokens(filteredGrandOutput()) + " out" + (partial ? " (partial)" : "")
     }
 
     function tokenHistoryAvailable(provider) {
         if (!provider) return false
+        if (tokenHistoryRange === "tracked") {
+            if (trackingStatus.known !== true || !trackingStatus.startedAt) return false
+            return !!tokenHistoryTotals(provider)
+        }
+        if (!tokenHistoryTotals(provider)) return false
         var meta = provider.meta || {}
         if (meta.tokenDataAvailable === false) return false
         if (meta.tokenDataAvailable === true) return true
@@ -698,25 +767,82 @@ PluginComponent {
                 || (provider.session && provider.session.requests > 0)
     }
 
+    function isTokenHistoryRange(value) {
+        if (value === "period") return periodDays !== 7 && periodDays !== 30 && periodDays !== 90
+        for (var i = 0; i < tokenHistoryRanges.length; i++) {
+            if (tokenHistoryRanges[i].key === value) return true
+        }
+        return false
+    }
+
+    function migratedPeriodRange(days) {
+        if (days === 7 || days === 30 || days === 90) return days + "d"
+        return "period"
+    }
+
+    function tokenHistoryRangeChoices() {
+        var choices = tokenHistoryRanges.slice(0)
+        if (periodDays !== 7 && periodDays !== 30 && periodDays !== 90)
+            choices.splice(choices.length - 1, 0, { key: "period", label: periodDays + "d" })
+        return choices
+    }
+
     function tokenHistoryTotals(provider) {
-        return tokenHistorySession ? provider.session : provider.period
+        if (!provider) return null
+        if (tokenHistoryRange === "tracked") {
+            var trackedProviders = trackingStatus.providers || {}
+            return trackedProviders[provider.id] || null
+        }
+        var rolling = provider.rolling || {}
+        if (tokenHistoryRange === "5h" && rolling.fiveHours) return rolling.fiveHours
+        if (tokenHistoryRange === "7d" && rolling.sevenDays) return rolling.sevenDays
+        if (tokenHistoryRange === "30d" && rolling.thirtyDays) return rolling.thirtyDays
+        if (tokenHistoryRange === "90d" && rolling.ninetyDays) return rolling.ninetyDays
+        // Compatibility while cached summaries migrate to rolling totals.
+        if (tokenHistoryRange === "5h") return provider.session
+        if (tokenHistoryRange === "period") return provider.period
+        return null
     }
 
     function tokenHistoryLabel() {
-        return "Local tokens · " + (tokenHistorySession ? "5h" : periodDays + "d")
+        var label = tokenHistoryRange === "period" ? periodDays + "d" : tokenHistoryRange
+        return "Local tokens · " + (label === "tracked" ? "Tracked" : label)
     }
 
-    function toggleTokenHistory() {
-        tokenHistorySession = !tokenHistorySession
+    function selectTokenHistoryRange(range) {
+        if (!isTokenHistoryRange(range)) return
+        clearTrackingConfirm = false
+        tokenHistoryRange = range
         if (pluginService && pluginService.savePluginState)
-            pluginService.savePluginState(pluginId, "tokenHistorySession", tokenHistorySession)
+            pluginService.savePluginState(pluginId, "tokenHistoryRange", tokenHistoryRange)
+    }
+
+    function trackingStateText() {
+        if (trackingStatus.known !== true) return "Tracking status unavailable"
+        var started = formatShortDateTime(trackingStatus.startedAt)
+        if (trackingStatus.enabled === true)
+            return "Tracking enabled" + (started ? " · started " + started : "")
+        if (started) return "Tracking paused · started " + started
+        return "Tracking is off · no tracked period yet"
+    }
+
+    function trackingDetailText() {
+        if (trackingCommandError !== "") return trackingCommandError
+        if (trackingStatus.errors && trackingStatus.errors.length > 0)
+            return "Some tracked token data is incomplete. Refresh or check the helper."
+        if (trackingStatus.enabled === true)
+            return "The initial total may include older retained local history."
+        if (trackingStatus.startedAt) return "Totals are retained; paused usage is not backfilled on resume."
+        return "Enable to seed a persistent total from retained local history."
     }
 
     function providerTokenBreakdown(provider) {
         if (!tokenHistoryAvailable(provider)) return "Unavailable"
         var totals = tokenHistoryTotals(provider)
         return inputTokenLabel(totals) + " / " + outputTokenLabel(totals)
-                + (provider.meta && provider.meta.tokenDataError ? " (partial)" : "")
+                + (tokenHistoryRange === "tracked"
+                    ? (trackingStatus.errors && trackingStatus.errors.length > 0 ? " (partial)" : "")
+                    : (provider.meta && provider.meta.tokenDataError ? " (partial)" : ""))
     }
 
     function providerLogoColor(provider) {
@@ -944,6 +1070,11 @@ PluginComponent {
             TokenHistoryRow {
                 width: parent.width
                 value: root.filteredGrandTokenBreakdown()
+            }
+
+            TrackingPanel {
+                width: parent.width
+                visible: root.tokenHistoryRange === "tracked"
             }
 
             StyledText {
@@ -1267,7 +1398,8 @@ PluginComponent {
     component TokenHistoryRow: StyledRect {
         id: tokenRow
         property string value: ""
-        height: 32
+        property bool selectorOpen: false
+        height: selectorOpen ? 36 + tokenRangeFlow.implicitHeight + Theme.spacingXS : 32
         radius: Theme.cornerRadius
         color: Theme.surfaceContainerHigh
         border.width: activeFocus ? 2 : 1
@@ -1275,19 +1407,26 @@ PluginComponent {
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
         Accessible.name: root.tokenHistoryLabel() + ": " + value
-        Accessible.description: "Switch between the last 5 hours and the selected history range"
-        Accessible.onPressAction: root.toggleTokenHistory()
-        Keys.onSpacePressed: root.toggleTokenHistory()
-        Keys.onReturnPressed: root.toggleTokenHistory()
+        Accessible.description: "Open token history range selector"
+        Accessible.onPressAction: tokenRow.selectorOpen = !tokenRow.selectorOpen
+        Keys.onSpacePressed: tokenRow.selectorOpen = !tokenRow.selectorOpen
+        Keys.onReturnPressed: tokenRow.selectorOpen = !tokenRow.selectorOpen
+
+        Item {
+            id: tokenRowHeader
+            width: parent.width
+            height: 32
+            anchors.top: parent.top
+        }
 
         DankIcon {
             id: tokenSwitchIcon
-            name: "swap_horiz"
+            name: tokenRow.selectorOpen ? "expand_less" : "expand_more"
             size: 16
             color: Theme.primary
             anchors.left: parent.left
             anchors.leftMargin: Theme.spacingS
-            anchors.verticalCenter: parent.verticalCenter
+            anchors.verticalCenter: tokenRowHeader.verticalCenter
         }
         StyledText {
             text: root.tokenHistoryLabel()
@@ -1295,7 +1434,7 @@ PluginComponent {
             anchors.leftMargin: Theme.spacingXS
             anchors.right: tokenValue.left
             anchors.rightMargin: Theme.spacingS
-            anchors.verticalCenter: parent.verticalCenter
+            anchors.verticalCenter: tokenRowHeader.verticalCenter
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceVariantText
             elide: Text.ElideRight
@@ -1306,16 +1445,158 @@ PluginComponent {
             width: Math.min(implicitWidth, parent.width * 0.55)
             anchors.right: parent.right
             anchors.rightMargin: Theme.spacingS
-            anchors.verticalCenter: parent.verticalCenter
+            anchors.verticalCenter: tokenRowHeader.verticalCenter
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceText
             elide: Text.ElideRight
             horizontalAlignment: Text.AlignRight
         }
         MouseArea {
-            anchors.fill: parent
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 32
             cursorShape: Qt.PointingHandCursor
-            onClicked: root.toggleTokenHistory()
+            onClicked: tokenRow.selectorOpen = !tokenRow.selectorOpen
+        }
+
+        Flow {
+            id: tokenRangeFlow
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: Theme.spacingXS
+            anchors.rightMargin: Theme.spacingXS
+            anchors.top: parent.top
+            anchors.topMargin: 36
+            spacing: Theme.spacingXS
+            visible: tokenRow.selectorOpen
+
+            Repeater {
+                model: root.tokenHistoryRangeChoices()
+
+                QuickToggle {
+                    text: modelData.label
+                    checked: root.tokenHistoryRange === modelData.key
+                    onClicked: {
+                        root.selectTokenHistoryRange(modelData.key)
+                        tokenRow.selectorOpen = false
+                    }
+                }
+            }
+        }
+    }
+
+    Timer {
+        interval: 15000
+        running: root.clearTrackingConfirm
+        onTriggered: root.clearTrackingConfirm = false
+    }
+
+    component TrackingPanel: StyledRect {
+        id: trackingPanel
+        readonly property bool controlsReady: root.trackingStatus.known === true
+                && !trackingProcess.running && !usageProcess.running
+        height: trackingPanelContent.implicitHeight + 2 * Theme.spacingS
+        radius: Theme.cornerRadius
+        color: Theme.surfaceContainerHigh
+
+        Column {
+            id: trackingPanelContent
+            x: Theme.spacingS
+            y: Theme.spacingS
+            width: parent.width - 2 * Theme.spacingS
+            spacing: Theme.spacingXS
+
+            StyledText {
+                width: parent.width
+                text: trackingProcess.running ? "Updating tracked total..." : root.trackingStateText()
+                font.pixelSize: Theme.fontSizeSmall
+                font.weight: Font.Medium
+                color: root.trackingStatus.known === true ? Theme.surfaceText : "#ff6b6b"
+                wrapMode: Text.WordWrap
+            }
+
+            StyledText {
+                width: parent.width
+                text: root.trackingDetailText()
+                textFormat: Text.PlainText
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.surfaceVariantText
+                wrapMode: Text.WordWrap
+            }
+
+            Flow {
+                width: parent.width
+                spacing: Theme.spacingXS
+
+                CompactAction {
+                    text: root.trackingStatus.enabled === true ? "Pause" : "Enable tracking"
+                    enabled: trackingPanel.controlsReady
+                    onClicked: root.runTracking(root.trackingStatus.enabled === true ? "pause" : "enable")
+                }
+
+                CompactAction {
+                    text: root.clearTrackingConfirm ? "Confirm clear" : "Clear tracked data"
+                    enabled: trackingPanel.controlsReady && !!root.trackingStatus.startedAt
+                    warning: root.clearTrackingConfirm
+                    onClicked: {
+                        if (root.clearTrackingConfirm) root.runTracking("clear")
+                        else root.clearTrackingConfirm = true
+                    }
+                }
+
+                CompactAction {
+                    text: "Cancel"
+                    visible: root.clearTrackingConfirm
+                    enabled: !trackingProcess.running
+                    onClicked: root.clearTrackingConfirm = false
+                }
+            }
+
+            StyledText {
+                width: parent.width
+                text: "Clear removes tracked totals and disables tracking. Provider transcripts and reset history are unchanged."
+                textFormat: Text.PlainText
+                font.pixelSize: Theme.fontSizeSmall
+                color: "#ffaa00"
+                wrapMode: Text.WordWrap
+                visible: root.clearTrackingConfirm
+            }
+        }
+    }
+
+    component CompactAction: StyledRect {
+        id: compactAction
+        property string text: ""
+        property bool warning: false
+        signal clicked()
+        width: compactActionLabel.implicitWidth + Theme.spacingM * 2
+        height: 30
+        radius: Theme.cornerRadius
+        color: warning ? "#ff6b6b" : Theme.surfaceContainerHigh
+        opacity: enabled ? 1 : 0.5
+        activeFocusOnTab: enabled && visible
+        border.width: activeFocus ? 2 : 1
+        border.color: activeFocus ? Theme.primary : Theme.surfaceVariantText
+        Accessible.role: Accessible.Button
+        Accessible.name: text
+        Accessible.onPressAction: if (enabled) clicked()
+        Keys.onSpacePressed: if (enabled) clicked()
+        Keys.onReturnPressed: if (enabled) clicked()
+
+        StyledText {
+            id: compactActionLabel
+            anchors.centerIn: parent
+            text: compactAction.text
+            color: compactAction.warning ? "white" : Theme.surfaceText
+            font.pixelSize: Theme.fontSizeSmall
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            enabled: compactAction.enabled
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: compactAction.clicked()
         }
     }
 

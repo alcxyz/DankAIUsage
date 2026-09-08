@@ -81,12 +81,55 @@ limit, regardless of display mode.
 Both bar layouts show only the percentage, without repeating "left" or "used";
 the dropdown retains those labels.
 
-Click a **Local tokens** row to switch all token totals between **5h** (the last
-five hours across local conversations) and the configured history range,
-**7d** by default. The selection is remembered and does not make another
-provider request. This is neither an active-conversation total nor all-time
-history, and neither range is tied to a subscription reset. The rows support
-keyboard activation and show unavailable or partial collection explicitly.
+Click a **Local tokens** row to choose **5h**, **7d**, **30d**, or **90d** directly.
+These are rolling ranges across local conversations, not active-conversation
+totals or subscription reset windows. The configured history range remains
+available when it differs from the presets. The selection is remembered and
+does not make another provider request. The rows support keyboard activation
+and show unavailable or partial collection explicitly.
+
+### Optional tracked totals
+
+**Tracked total** is a separate, opt-in view. Tracking is **off by default**.
+Enable it in the token-range controls to seed a persistent total from retained
+Codex and Claude transcripts, without a 90-day cutoff. The start date records
+when tracking was enabled; the seed can include older usage. Missing, deleted,
+or remote history cannot be recovered, so this is not called all-time usage.
+
+While enabled, normal refreshes add newly observed usage without counting the
+same events again. Saved totals survive deletion of the original transcripts.
+**Pause** retains the total and its duplicate-detection checkpoints; resuming
+does not backfill the explicitly paused interval. **Clear** requires confirmation,
+removes only tracking totals/checkpoints, and turns tracking off. It does not
+delete CLI transcripts, plugin preferences, or quota reset history.
+
+Tracking is local, with no extra database, service, or provider calls for its
+controls. It stores token counters, dates, and hashed event checkpoints—not
+prompts, credentials, raw session identifiers, or transcript contents. Partial
+seed history is disclosed rather than silently presented as complete.
+Enabled tracking scans retained transcripts, so it can take longer than the
+rolling views; checkpoint storage grows with observed usage. Usage deleted
+before a refresh observes it cannot be preserved.
+Late or changed Codex checkpoints behind an already observed session timestamp
+are conservatively skipped and flagged as partial coverage to avoid recounting.
+
+Tracking state lives in `$XDG_STATE_HOME/dankaiusage/token-tracking.json`, falling
+back to `~/.local/state/dankaiusage/token-tracking.json`. Keep it if you want the
+tracked period to survive a configuration reinstall; it is separate from both
+the quota-reset observation log and provider transcripts.
+
+Terminal controls use the same helper-owned state as the widget:
+
+```sh
+dankaiusage tracking status
+dankaiusage tracking enable
+dankaiusage tracking pause
+```
+
+The separate `dankaiusage tracking clear` command permanently clears this local
+tracked period and disables tracking. See
+[ADR-0012](docs/adr/ADR-0012-optional-persistent-token-totals.md) for the tracking
+scope and checkpoint policy.
 
 ## Installation
 
