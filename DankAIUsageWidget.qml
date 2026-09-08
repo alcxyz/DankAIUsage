@@ -1101,12 +1101,30 @@ PluginComponent {
                                 spacing: Theme.spacingXS
                                 visible: modelData.id === "codex"
 
-                                QuickToggle {
+                                DankToggle {
+                                    id: codexAutoResetToggle
+                                    width: parent.width
                                     text: codexResetProcess.running ? "Checking reset..." : !root.codexResetReady ? "Cancel auto reset" : "Auto-use one reset"
                                     checked: root.codexResetStatus.armed === true
+                                    toggling: codexResetProcess.running
                                     enabled: !codexResetProcess.running && (root.codexResetReady || root.codexResetStatus.stateKnown === false)
-                                    opacity: enabled ? 1 : 0.5
                                     onClicked: root.runCodexReset(!root.codexResetReady || root.codexResetStatus.armed ? "disarm" : "arm")
+                                    activeFocusOnTab: true
+                                    Accessible.role: Accessible.CheckBox
+                                    Accessible.name: text
+                                    Accessible.checked: checked
+                                    Accessible.onPressAction: handleClick()
+                                    Accessible.onToggleAction: handleClick()
+                                    Keys.onSpacePressed: handleClick()
+                                    Keys.onReturnPressed: handleClick()
+
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        color: "transparent"
+                                        radius: Theme.cornerRadius
+                                        border.width: codexAutoResetToggle.activeFocus ? 2 : 0
+                                        border.color: Theme.primary
+                                    }
                                 }
 
                                 StyledText {

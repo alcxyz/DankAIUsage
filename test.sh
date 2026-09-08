@@ -66,6 +66,11 @@ assert 'codexResetStatus.armed ? "disarm" : "arm"' in component_text
 assert 'root.codexResetReady = status.stateKnown === true' in component_text
 assert 'Qt.callLater(root.refreshUsage)' in component_text
 assert '!root.codexResetReady || root.codexResetStatus.armed ? "disarm" : "arm"' in component_text
+assert re.search(r'DankToggle\s*\{\s*id: codexAutoResetToggle', component_text)
+assert 'toggling: codexResetProcess.running' in component_text
+assert 'Accessible.onToggleAction: handleClick()' in component_text
+assert 'Keys.onSpacePressed: handleClick()' in component_text
+assert 'border.width: codexAutoResetToggle.activeFocus ? 2 : 0' in component_text
 assert 'id: providerContent' in component_text
 assert 'height: providerContent.implicitHeight' in component_text
 assert 'usageHistory = summary.history || []' in component_text
