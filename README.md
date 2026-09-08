@@ -203,6 +203,9 @@ attempt fails. After an uncertain result, check Codex's usage page before
 arming again. It never purchases credits or chooses another reset silently.
 Only the provider decides whether a window is eligible to reset.
 
+If you are considering a subscription change, see the cautious, anecdotal
+[upgrade timing note](docs/usage-tips.md#timing-a-codex-subscription-upgrade).
+
 Checks run once per minute while DMS is running and Codex is visible. Sleeping,
 closing DMS, hiding Codex, or losing connectivity can miss the expiry; there is
 no separate background service. The timing balances retained allowance against
