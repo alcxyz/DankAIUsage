@@ -23,6 +23,7 @@ if python3 - <<'PY'
 import json
 import pathlib
 import re
+import struct
 
 manifest_path = pathlib.Path("plugin.json")
 plugin = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -44,6 +45,16 @@ settings_text = settings.read_text(encoding="utf-8")
 plugin_id = plugin["id"]
 assert f'pluginId: "{plugin_id}"' in component_text
 assert f'pluginId: "{plugin_id}"' in settings_text
+
+readme = pathlib.Path("README.md").read_text(encoding="utf-8")
+for screenshot in ("docs/screenshot.png", "docs/screenshot-bar.png"):
+    assert f"]({screenshot})" in readme, f"README does not reference {screenshot}"
+    with pathlib.Path(screenshot).open("rb") as image:
+        header = image.read(24)
+    assert header[:8] == b"\x89PNG\r\n\x1a\n", f"{screenshot} is not PNG"
+    assert header[12:16] == b"IHDR", f"{screenshot} has no PNG dimensions"
+    width, height = struct.unpack(">II", header[16:24])
+    assert width > 0 and height > 0, f"{screenshot} is empty"
 
 # Redemption is an explicit helper-owned one-shot, never a default-on setting
 # or an implicit side effect of collecting usage.
