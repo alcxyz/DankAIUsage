@@ -14,3 +14,8 @@ evidence that waiting for exactly 1% remaining is optimal: task timing and
 billing considerations may matter more than preserving a small remainder. Do
 not upgrade solely in expectation of an allowance reset, and do not depend on
 banked resets carrying over.
+
+If you see a similar refill, use **What changed? → Changed subscription** in
+the dropdown, or **Explain** on the event in Advanced reset history. This adds
+your explanation as user-reported context while preserving the original quota
+observation; it does not turn one account's experience into a provider policy.

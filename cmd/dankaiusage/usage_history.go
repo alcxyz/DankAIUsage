@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -8,18 +10,32 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 const (
-	usageHistoryStateVersion = 1
-	usageHistoryMaxEvents    = 200
-	usageHistoryMaxAge       = 30 * 24 * time.Hour
-	usageHistoryLockTimeout  = 250 * time.Millisecond
+	usageHistoryLegacyVersion = 1
+	usageHistoryStateVersion  = 2
+	usageHistoryMaxEvents     = 200
+	usageHistoryMaxAge        = 30 * 24 * time.Hour
+	usageHistoryLockTimeout   = 250 * time.Millisecond
+	usageHistoryExplainMax    = 4 * 1024
+	usageHistoryNoteMaxRunes  = 280
 )
+
+var usageHistoryExplanationReasons = []string{
+	"subscription_change",
+	"external_reset",
+	"account_change",
+	"provider_bonus",
+	"unknown",
+	"dismissed",
+}
 
 type UsageHistoryValue struct {
 	UsedPercent      *float64 `json:"usedPercent,omitempty"`
@@ -27,18 +43,41 @@ type UsageHistoryValue struct {
 	AvailableCredits *int     `json:"availableCredits,omitempty"`
 }
 
+type UsageHistoryExplanation struct {
+	Reason    string `json:"reason"`
+	Note      string `json:"note,omitempty"`
+	UpdatedAt string `json:"updatedAt"`
+	Source    string `json:"source"`
+}
+
 type UsageHistoryEvent struct {
-	ObservedAt         string             `json:"observedAt"`
-	PreviousObservedAt string             `json:"previousObservedAt,omitempty"`
-	Provider           string             `json:"provider"`
-	Bucket             string             `json:"bucket,omitempty"`
-	Label              string             `json:"label"`
-	Kind               string             `json:"kind"`
-	Source             string             `json:"source"`
-	Confidence         string             `json:"confidence"`
-	Before             *UsageHistoryValue `json:"before,omitempty"`
-	After              *UsageHistoryValue `json:"after,omitempty"`
-	Message            string             `json:"message"`
+	ObservedAt         string                   `json:"observedAt"`
+	PreviousObservedAt string                   `json:"previousObservedAt,omitempty"`
+	Provider           string                   `json:"provider"`
+	Bucket             string                   `json:"bucket,omitempty"`
+	Label              string                   `json:"label"`
+	Kind               string                   `json:"kind"`
+	Source             string                   `json:"source"`
+	Confidence         string                   `json:"confidence"`
+	Before             *UsageHistoryValue       `json:"before,omitempty"`
+	After              *UsageHistoryValue       `json:"after,omitempty"`
+	Message            string                   `json:"message"`
+	GroupID            string                   `json:"groupId,omitempty"`
+	Explainable        bool                     `json:"explainable"`
+	ExplanationChoices []string                 `json:"explanationChoices"`
+	Explanation        *UsageHistoryExplanation `json:"explanation,omitempty"`
+	ExpiryExplained    bool                     `json:"expiryExplained,omitempty"`
+}
+
+type usageHistoryExplainRequest struct {
+	GroupID string  `json:"groupId"`
+	Reason  string  `json:"reason"`
+	Note    *string `json:"note,omitempty"`
+}
+
+type usageHistoryResult struct {
+	History      []UsageHistoryEvent `json:"history"`
+	HistoryError string              `json:"historyError,omitempty"`
 }
 
 type usageHistoryObservation struct {
@@ -92,13 +131,14 @@ func defaultUsageHistoryState() usageHistoryState {
 }
 
 func runUsageHistoryCommand(args []string) {
+	if len(args) > 0 && args[0] == "explain" {
+		runUsageHistoryExplainCommand(args[1:])
+		return
+	}
 	fs := flag.NewFlagSet("history", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	pretty := fs.Bool("pretty", false, "pretty-print JSON")
-	result := struct {
-		History      []UsageHistoryEvent `json:"history"`
-		HistoryError string              `json:"historyError,omitempty"`
-	}{History: []UsageHistoryEvent{}}
+	result := usageHistoryResult{History: []UsageHistoryEvent{}}
 	failed := false
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
 		result.HistoryError = "invalid history arguments"
@@ -121,6 +161,79 @@ func runUsageHistoryCommand(args []string) {
 	}
 }
 
+func runUsageHistoryExplainCommand(args []string) {
+	result := usageHistoryResult{History: []UsageHistoryEvent{}}
+	failed := false
+	if len(args) != 0 {
+		result.HistoryError = "invalid history explanation arguments"
+		failed = true
+	} else if request, err := readUsageHistoryExplainRequest(os.Stdin); err != nil {
+		result.HistoryError = "invalid history explanation request"
+		failed = true
+	} else if events, err := explainUsageHistory(usageHistoryPath(), time.Now(), request); err != nil {
+		result.HistoryError = formatUsageHistoryError(err)
+		failed = true
+	} else {
+		result.History = events
+	}
+	data, _ := json.Marshal(result)
+	fmt.Println(string(data))
+	if failed {
+		os.Exit(1)
+	}
+}
+
+func readUsageHistoryExplainRequest(input io.Reader) (usageHistoryExplainRequest, error) {
+	reader := bufio.NewReaderSize(input, usageHistoryExplainMax+2)
+	data, err := reader.ReadSlice('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return usageHistoryExplainRequest{}, errors.New("invalid explanation request")
+	}
+	if len(data) > 0 && data[len(data)-1] == '\n' {
+		data = data[:len(data)-1]
+		if len(data) > 0 && data[len(data)-1] == '\r' {
+			data = data[:len(data)-1]
+		}
+	}
+	if len(data) == 0 || len(data) > usageHistoryExplainMax {
+		return usageHistoryExplainRequest{}, errors.New("invalid explanation request")
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	var request usageHistoryExplainRequest
+	if err := decoder.Decode(&request); err != nil {
+		return usageHistoryExplainRequest{}, errors.New("invalid explanation request")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return usageHistoryExplainRequest{}, errors.New("invalid explanation request")
+	}
+	request, err = normalizeUsageHistoryExplainRequest(request)
+	if err != nil {
+		return usageHistoryExplainRequest{}, err
+	}
+	return request, nil
+}
+
+func normalizeUsageHistoryExplainRequest(request usageHistoryExplainRequest) (usageHistoryExplainRequest, error) {
+	if request.GroupID == "" || request.Reason == "" || !slices.Contains(usageHistoryExplanationReasons, request.Reason) {
+		return usageHistoryExplainRequest{}, errors.New("invalid explanation request")
+	}
+	if request.Note == nil {
+		return request, nil
+	}
+	note := strings.TrimSpace(*request.Note)
+	if utf8.RuneCountInString(note) > usageHistoryNoteMaxRunes {
+		return usageHistoryExplainRequest{}, errors.New("invalid explanation request")
+	}
+	if note == "" {
+		request.Note = nil
+	} else {
+		request.Note = &note
+	}
+	return request, nil
+}
+
 func observeUsageHistory(path string, now time.Time, providers []ProviderUsage) ([]UsageHistoryEvent, error) {
 	var events []UsageHistoryEvent
 	err := withUsageHistoryLock(path, func() error {
@@ -133,6 +246,9 @@ func observeUsageHistory(path string, now time.Time, providers []ProviderUsage) 
 			observeProviderHistory(&state, provider, now)
 		}
 		pruneUsageHistory(&state, now)
+		if err := decorateUsageHistoryEvents(state.Events); err != nil {
+			return err
+		}
 		if err := saveUsageHistoryState(path, state); err != nil {
 			return errors.New("could not save usage history")
 		}
@@ -162,6 +278,178 @@ func readUsageHistory(path string) ([]UsageHistoryEvent, error) {
 		return nil
 	})
 	return events, err
+}
+
+func explainUsageHistory(path string, now time.Time, request usageHistoryExplainRequest) ([]UsageHistoryEvent, error) {
+	request, err := normalizeUsageHistoryExplainRequest(request)
+	if err != nil {
+		return nil, err
+	}
+	var events []UsageHistoryEvent
+	err = withUsageHistoryLock(path, func() error {
+		state, err := loadUsageHistoryState(path)
+		if err != nil {
+			return err
+		}
+		pruneUsageHistory(&state, now)
+		groupIndexes := make([]int, 0)
+		allowed := false
+		for index := range state.Events {
+			event := &state.Events[index]
+			if !event.Explainable || event.GroupID != request.GroupID {
+				continue
+			}
+			groupIndexes = append(groupIndexes, index)
+			if slices.Contains(event.ExplanationChoices, request.Reason) {
+				allowed = true
+			}
+		}
+		if len(groupIndexes) == 0 {
+			return errors.New("usage history explanation group is unavailable")
+		}
+		if !allowed {
+			return errors.New("usage history explanation reason is not supported")
+		}
+		explanation := &UsageHistoryExplanation{
+			Reason:    request.Reason,
+			UpdatedAt: historyTimestamp(now),
+			Source:    "user",
+		}
+		if request.Note != nil {
+			explanation.Note = *request.Note
+		}
+		for _, index := range groupIndexes {
+			copy := *explanation
+			state.Events[index].Explanation = &copy
+		}
+		if err := saveUsageHistoryState(path, state); err != nil {
+			return errors.New("could not save usage history")
+		}
+		events = append([]UsageHistoryEvent{}, state.Events...)
+		return nil
+	})
+	return events, err
+}
+
+func decorateUsageHistoryEvents(events []UsageHistoryEvent) error {
+	groups := make(map[string][]int)
+	for index := range events {
+		event := &events[index]
+		choices := usageHistoryChoices(*event)
+		if len(choices) == 0 {
+			if event.GroupID != "" || event.Explanation != nil {
+				return errors.New("saved usage history is unreadable")
+			}
+			event.GroupID = ""
+			event.Explainable = false
+			event.ExplanationChoices = []string{}
+			continue
+		}
+		if event.Provider == "" || event.ObservedAt == "" {
+			return errors.New("saved usage history is unreadable")
+		}
+		groupID := usageHistoryGroupID(event.Provider, event.ObservedAt)
+		if event.GroupID != "" && event.GroupID != groupID {
+			return errors.New("saved usage history is unreadable")
+		}
+		event.GroupID = groupID
+		event.Explainable = true
+		event.ExplanationChoices = choices
+		groups[groupID] = append(groups[groupID], index)
+	}
+	for _, indexes := range groups {
+		var expected *UsageHistoryExplanation
+		for _, index := range indexes {
+			explanation := events[index].Explanation
+			if explanation == nil {
+				if expected != nil {
+					return errors.New("saved usage history is unreadable")
+				}
+				continue
+			}
+			if !validUsageHistoryExplanation(*explanation) {
+				return errors.New("saved usage history is unreadable")
+			}
+			if expected == nil {
+				copy := *explanation
+				expected = &copy
+				continue
+			}
+			if *explanation != *expected {
+				return errors.New("saved usage history is unreadable")
+			}
+		}
+		if expected != nil {
+			for _, index := range indexes {
+				if events[index].Explanation == nil {
+					return errors.New("saved usage history is unreadable")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func usageHistoryGroupID(provider, observedAt string) string {
+	digest := sha256.Sum256([]byte(provider + "\x00" + observedAt))
+	return fmt.Sprintf("%x", digest)
+}
+
+func usageHistoryChoices(event UsageHistoryEvent) []string {
+	if event.ExpiryExplained || event.Source == "plugin_reset" || strings.HasPrefix(event.Kind, "plugin_") {
+		return nil
+	}
+	switch event.Kind {
+	case "allowance_increased_unknown", "window_changed_unknown", "credits_changed", "reset_redeemed_inferred":
+	default:
+		return nil
+	}
+	refillOrSchedule := usageHistoryRefillOrSchedule(event)
+	creditIncrease, creditDecrease := usageHistoryCreditDirection(event)
+	choices := make([]string, 0, len(usageHistoryExplanationReasons))
+	for _, reason := range usageHistoryExplanationReasons {
+		switch reason {
+		case "external_reset":
+			if event.Provider != "codex" || (!refillOrSchedule && !creditDecrease) {
+				continue
+			}
+		case "provider_bonus":
+			if !refillOrSchedule && !creditIncrease {
+				continue
+			}
+		}
+		choices = append(choices, reason)
+	}
+	return choices
+}
+
+func usageHistoryRefillOrSchedule(event UsageHistoryEvent) bool {
+	if event.Kind == "allowance_increased_unknown" || event.Kind == "window_changed_unknown" || event.Kind == "reset_redeemed_inferred" {
+		return true
+	}
+	if event.Before == nil || event.After == nil {
+		return false
+	}
+	if event.Before.UsedPercent != nil && event.After.UsedPercent != nil && *event.After.UsedPercent < *event.Before.UsedPercent {
+		return true
+	}
+	return event.Before.ResetAt != "" && event.After.ResetAt != "" && event.Before.ResetAt != event.After.ResetAt
+}
+
+func usageHistoryCreditDirection(event UsageHistoryEvent) (increase, decrease bool) {
+	if event.Before == nil || event.After == nil || event.Before.AvailableCredits == nil || event.After.AvailableCredits == nil {
+		return false, false
+	}
+	return *event.After.AvailableCredits > *event.Before.AvailableCredits,
+		*event.After.AvailableCredits < *event.Before.AvailableCredits
+}
+
+func validUsageHistoryExplanation(explanation UsageHistoryExplanation) bool {
+	if explanation.Source != "user" || !slices.Contains(usageHistoryExplanationReasons, explanation.Reason) || strings.TrimSpace(explanation.Note) != explanation.Note || utf8.RuneCountInString(explanation.Note) > usageHistoryNoteMaxRunes {
+		return false
+	}
+	updatedAt, err := time.Parse(time.RFC3339, explanation.UpdatedAt)
+	return err == nil && !updatedAt.IsZero()
 }
 
 func observeProviderHistory(state *usageHistoryState, provider ProviderUsage, now time.Time) {
@@ -201,7 +489,7 @@ func observeProviderHistory(state *usageHistoryState, provider ProviderUsage, no
 		if !creditCountKnown {
 			return
 		}
-		observeCreditCount(state, provider.ID, currentCredits, !redemptionEmitted)
+		observeCreditCount(state, provider.ID, currentCredits, now, !redemptionEmitted)
 	}
 }
 
@@ -321,7 +609,7 @@ func quotaHistoryEvent(before, after usageHistoryObservation, kind, confidence, 
 	}
 }
 
-func observeCreditCount(state *usageHistoryState, provider string, current usageHistoryCreditObservation, emitChange bool) {
+func observeCreditCount(state *usageHistoryState, provider string, current usageHistoryCreditObservation, validationNow time.Time, emitChange bool) {
 	previous, ok := state.Credits[provider]
 	if !ok {
 		state.Credits[provider] = current
@@ -347,9 +635,34 @@ func observeCreditCount(state *usageHistoryState, provider string, current usage
 			Before:             &UsageHistoryValue{AvailableCredits: &beforeCount},
 			After:              &UsageHistoryValue{AvailableCredits: &afterCount},
 			Message:            "Available earned reset count changed; this does not confirm an award or use.",
+			ExpiryExplained:    creditChangeIsExplainedByExpiry(previous, current, validationNow),
 		})
 	}
 	state.Credits[provider] = current
+}
+
+func creditChangeIsExplainedByExpiry(previous, current usageHistoryCreditObservation, now time.Time) bool {
+	if current.AvailableCredits >= previous.AvailableCredits ||
+		len(previous.ExpiresAt) != previous.AvailableCredits || len(current.ExpiresAt) != current.AvailableCredits {
+		return false
+	}
+	future := make([]string, 0, len(previous.ExpiresAt))
+	expired := 0
+	for _, value := range previous.ExpiresAt {
+		expiresAt, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			return false
+		}
+		if expiresAt.After(now) {
+			future = append(future, value)
+		} else {
+			expired++
+		}
+	}
+	sort.Strings(future)
+	currentExpiries := append([]string(nil), current.ExpiresAt...)
+	sort.Strings(currentExpiries)
+	return expired == previous.AvailableCredits-current.AvailableCredits && slices.Equal(future, currentExpiries)
 }
 
 func historyAvailableResetCount(meta map[string]any) (int, bool) {
@@ -446,6 +759,9 @@ func recordCodexResetHistory(path string, record codexResetHistoryRecord) error 
 			updateCodexObservationsFromLimits(&state, *record.After, record.ObservedAt)
 		}
 		pruneUsageHistory(&state, record.ObservedAt)
+		if err := decorateUsageHistoryEvents(state.Events); err != nil {
+			return err
+		}
 		if err := saveUsageHistoryState(path, state); err != nil {
 			return errors.New("could not save usage history")
 		}
@@ -671,13 +987,14 @@ func loadUsageHistoryState(path string) (usageHistoryState, error) {
 	if err != nil {
 		return usageHistoryState{}, errors.New("could not read usage history")
 	}
-	state := defaultUsageHistoryState()
+	var state usageHistoryState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return usageHistoryState{}, errors.New("saved usage history is unreadable")
 	}
-	if state.Version != usageHistoryStateVersion {
+	if state.Version != usageHistoryLegacyVersion && state.Version != usageHistoryStateVersion {
 		return usageHistoryState{}, errors.New("saved usage history version is unsupported")
 	}
+	state.Version = usageHistoryStateVersion
 	if state.Observations == nil {
 		state.Observations = map[string]usageHistoryObservation{}
 	}
@@ -686,6 +1003,9 @@ func loadUsageHistoryState(path string) (usageHistoryState, error) {
 	}
 	if state.Events == nil {
 		state.Events = []UsageHistoryEvent{}
+	}
+	if err := decorateUsageHistoryEvents(state.Events); err != nil {
+		return usageHistoryState{}, err
 	}
 	return state, nil
 }

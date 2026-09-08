@@ -235,7 +235,7 @@ stops reporting it; identical percentages alone do not make two windows duplicat
 
 ### Reset history
 
-Open **Reset history** in the dropdown to see the latest eight observed events
+Open **Reset history** in the Advanced dropdown to see the latest eight observed events
 for your enabled providers. The helper keeps at most 200 events for 30 days,
 locally, without a separate service or database. History starts with the first
 observation; it cannot reconstruct earlier resets.
@@ -260,8 +260,37 @@ Left/Used also controls historical allowance percentages.
 The log records when a change was observed, not its exact occurrence time.
 Unchanged reset counts do not prove provider generosity: a new credit could
 offset a redemption. Sleep, unavailable data, caching, and gaps between polls
-can hide intermediate events. No credentials, account identifiers, prompts, or
-opaque reset-credit IDs are stored in this history.
+can hide intermediate events. Automatic observations do not store credentials,
+account identifiers, prompts, or opaque reset-credit IDs.
+
+#### Explain an unexpected change
+
+Both Simple and Advanced can show a compact **What changed?** prompt for the
+latest unexplained change observed within the last 24 hours. Related changes
+sampled together for one provider share a response. Ordinary scheduled resets,
+confirmed plugin actions, and reset-count drops fully explained by known expiry
+evidence do not prompt.
+
+Choose a relevant explanation: **Changed subscription**, **Used a reset
+elsewhere**, **Switched account/workspace**, **Provider announced a bonus/reset**,
+or **Not sure**. You can add a short optional note; it is stored locally with
+history, so do not include sensitive information. **Dismiss** hides the prompt
+without claiming a cause. Answering or dismissing the latest change does not
+bring up a queue of older prompts.
+
+Use **Explain / Edit explanation** in Advanced reset history to add context
+later or correct your choice. Explanations are labelled **user reported** and
+kept alongside the original observations, not substituted for them. They do not
+confirm provider generosity or establish that a reset was redeemed. Saving an
+explanation does not contact providers or change tracking or automation. A
+failed save leaves the draft available for retry. Explanations and notes expire
+with their events under the existing 30-day/200-event history limit.
+Existing history migrates automatically when saved. Older helpers cannot read
+the new history format, so keep the helper and widget updated together; a
+downgrade leaves the saved history intact rather than silently erasing notes.
+
+See [ADR-0014](docs/adr/ADR-0014-user-reported-history-explanations.md) for the
+grouping and attribution policy.
 
 The history file is `$XDG_STATE_HOME/dankaiusage/usage-history.json`, falling
 back to `~/.local/state/dankaiusage/usage-history.json`. Read the retained events

@@ -50,6 +50,16 @@ PluginComponent {
     property var providers: []
     property var usageHistory: []
     property string historyError: ""
+    property var historyExplanationGroup: null
+    property string historyExplanationLocation: ""
+    property bool historyExplanationExpanded: false
+    property string historyExplanationReason: ""
+    property string historyExplanationNote: ""
+    property string historyExplanationError: ""
+    property string _historyExplanationOutput: ""
+    property string _historyExplanationStderr: ""
+    property string _historyExplanationPayload: ""
+    property bool _historyExplanationTimedOut: false
     property var grandTotal: ({ total: 0, input: 0, output: 0, cached: 0, requests: 0, sessions: 0 })
     property var capabilities: ({})
     property string _pendingOutput: ""
@@ -199,6 +209,10 @@ PluginComponent {
     }
 
     function refreshUsage() {
+        if (historyExplanationProcess.running) {
+            _usageRefreshPending = true
+            return
+        }
         if (trackingProcess.running) {
             _usageRefreshPending = true
             return
@@ -269,6 +283,324 @@ PluginComponent {
                 root.errorText = "Could not parse usage data"
             }
             root.isLoading = false
+        }
+    }
+
+    function historyGroupKey(event, fallbackIndex) {
+        if (!event || !event.groupId) return "legacy:" + fallbackIndex
+        return event.provider + "\u0000" + event.observedAt + "\u0000" + event.groupId
+    }
+
+    function historyEventEligible(event) {
+        if (!event || event.explainable !== true || !event.groupId) return false
+        return event.kind !== "scheduled_window"
+                && (!event.kind || event.kind.indexOf("plugin_reset_") !== 0)
+    }
+
+    function explanationChoicesForGroup(group) {
+        var choices = []
+        var seen = ({})
+        if (!group || !group.events) return choices
+        for (var i = 0; i < group.events.length; i++) {
+            if (!historyEventEligible(group.events[i])) continue
+            var eventChoices = group.events[i].explanationChoices || []
+            for (var j = 0; j < eventChoices.length; j++) {
+                var choice = eventChoices[j]
+                if (!seen[choice]) {
+                    seen[choice] = true
+                    choices.push(choice)
+                }
+            }
+        }
+        return choices
+    }
+
+    function historyGroups(events) {
+        var groups = []
+        var indexes = ({})
+        for (var i = 0; i < events.length; i++) {
+            var event = events[i]
+            if (!event) continue
+            var key = historyGroupKey(event, i)
+            var index = indexes[key]
+            if (index === undefined) {
+                index = groups.length
+                indexes[key] = index
+                groups.push({
+                    key: key,
+                    groupId: event.groupId || "",
+                    provider: event.provider || "",
+                    observedAt: event.observedAt || "",
+                    events: [],
+                    explainable: false,
+                    eligibleCount: 0,
+                    explanation: null,
+                    explanationChoices: []
+                })
+            }
+            var group = groups[index]
+            group.events.push(event)
+            if (historyEventEligible(event)) {
+                group.explainable = true
+                group.eligibleCount++
+            }
+            if (!group.explanation && event.explanation) group.explanation = event.explanation
+        }
+        for (var g = 0; g < groups.length; g++)
+            groups[g].explanationChoices = explanationChoicesForGroup(groups[g])
+        groups.sort(function(a, b) {
+            return Date.parse(b.observedAt) - Date.parse(a.observedAt)
+        })
+        return groups
+    }
+
+    function historyProviderVisible(event) {
+        return event && ((event.provider === "codex" && showCodex)
+                || (event.provider === "claude" && showClaude))
+    }
+
+    function hasHistoryExplanation(group) {
+        return !!(group && group.explanation && group.explanation.reason)
+    }
+
+    function latestExplanationPrompt(nowMs) {
+        var eligibleEvents = usageHistory.filter(function(event) {
+            return historyProviderVisible(event) && historyEventEligible(event)
+        })
+        var groups = historyGroups(eligibleEvents)
+        if (groups.length === 0) return null
+        // Select the newest candidate before checking its answer. This is one
+        // prompt, not a queue that reveals older unanswered observations.
+        var latest = groups[0]
+        if (hasHistoryExplanation(latest)) return null
+        var observed = Date.parse(latest.observedAt)
+        var age = nowMs - observed
+        if (!isFinite(observed) || age < 0 || age > 24 * 60 * 60 * 1000) return null
+        return latest
+    }
+
+    function visibleHistoryGroups() {
+        // Keep ADR-0011's latest-eight-event scope, but hydrate any selected
+        // group from retained history so its related-change count and edit
+        // target describe the whole exact observation group.
+        var recentGroups = historyGroups(visibleHistory())
+        var fullGroups = historyGroups(usageHistory.filter(function(event) {
+            return historyProviderVisible(event)
+        }))
+        var fullByKey = ({})
+        for (var i = 0; i < fullGroups.length; i++) fullByKey[fullGroups[i].key] = fullGroups[i]
+        for (var j = 0; j < recentGroups.length; j++) {
+            if (recentGroups[j].groupId && fullByKey[recentGroups[j].key])
+                recentGroups[j] = fullByKey[recentGroups[j].key]
+        }
+        return recentGroups
+    }
+
+    function historyGroupsForDisplay() {
+        var groups = visibleHistoryGroups()
+        if (!historyExplanationGroup || historyExplanationLocation === "prompt") return groups
+        if (!advancedDropdown) return [historyExplanationGroup]
+        for (var i = 0; i < groups.length; i++) {
+            if (groups[i].key === historyExplanationGroup.key) return groups
+        }
+        groups.push(historyExplanationGroup)
+        groups.sort(function(a, b) {
+            return Date.parse(b.observedAt) - Date.parse(a.observedAt)
+        })
+        return groups
+    }
+
+    function historyProviderName(provider) {
+        return provider === "codex" ? "Codex" : provider === "claude" ? "Claude" : provider
+    }
+
+    function historyGroupSummary(group) {
+        if (!group) return ""
+        return historyProviderName(group.provider) + " · observed " + formatShortDateTime(group.observedAt)
+                + " · " + group.eligibleCount + (group.eligibleCount === 1 ? " change" : " related changes")
+    }
+
+    function historyPromptTitle(group) {
+        if (!group || !group.events) return "Recent quota change"
+        for (var i = 0; i < group.events.length; i++) {
+            var event = group.events[i]
+            if (historyEventEligible(event))
+                return historyEventTitle(event) + (event.label ? " · " + event.label : "")
+        }
+        return "Recent quota change"
+    }
+
+    function historyExplanationLabel(reason) {
+        switch (reason) {
+        case "subscription_change": return "Subscription or plan changed"
+        case "external_reset": return "Reset used outside this plugin"
+        case "account_change": return "Account or workspace changed"
+        case "provider_bonus": return "Provider-announced bonus or reset"
+        case "unknown": return "Not sure what caused this change"
+        case "dismissed": return "Dismissed without assigning a cause"
+        default: return "Explanation unavailable"
+        }
+    }
+
+    function historyExplanationText(explanation) {
+        return explanation && explanation.reason ? historyExplanationLabel(explanation.reason) : ""
+    }
+
+    function historyExplanationReasonChoices(group) {
+        return explanationChoicesForGroup(group).filter(function(reason) {
+            return reason !== "dismissed"
+        }).map(function(reason) {
+            return { key: reason, label: historyExplanationLabel(reason) }
+        })
+    }
+
+    function historyNoteRuneLength(value) {
+        var count = 0
+        for (var i = 0; i < value.length; i++) {
+            var code = value.charCodeAt(i)
+            if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length) {
+                var next = value.charCodeAt(i + 1)
+                if (next >= 0xdc00 && next <= 0xdfff) i++
+            }
+            count++
+        }
+        return count
+    }
+
+    function truncateHistoryNote(value, maxRunes) {
+        var count = 0
+        var end = 0
+        while (end < value.length && count < maxRunes) {
+            var code = value.charCodeAt(end++)
+            if (code >= 0xd800 && code <= 0xdbff && end < value.length) {
+                var next = value.charCodeAt(end)
+                if (next >= 0xdc00 && next <= 0xdfff) end++
+            }
+            count++
+        }
+        return value.slice(0, end)
+    }
+
+    function beginHistoryExplanation(group, location, expanded) {
+        if (!group || !group.explainable || !group.groupId || historyExplanationProcess.running) return
+        if (historyExplanationGroup) {
+            if (historyExplanationGroup.key === group.key
+                    && historyExplanationLocation === (location || "prompt")) {
+                if (expanded !== false) historyExplanationExpanded = true
+            }
+            return
+        }
+        // Keep this exact group as the edit target. A poll may replace
+        // usageHistory, but it must not retarget an in-progress edit.
+        historyExplanationReason = group.explanation ? group.explanation.reason || "" : ""
+        historyExplanationNote = group.explanation ? group.explanation.note || "" : ""
+        historyExplanationError = ""
+        // Publish the target only after its draft is initialized; inline
+        // editors become visible synchronously when these properties change.
+        historyExplanationGroup = group
+        historyExplanationLocation = location || "prompt"
+        historyExplanationExpanded = expanded !== false
+    }
+
+    function cancelHistoryExplanation() {
+        if (historyExplanationProcess.running) return
+        historyExplanationGroup = null
+        historyExplanationLocation = ""
+        historyExplanationExpanded = false
+        historyExplanationReason = ""
+        historyExplanationNote = ""
+        historyExplanationError = ""
+    }
+
+    function historyExplanationChoiceAllowed(group, reason) {
+        return explanationChoicesForGroup(group).indexOf(reason) >= 0
+    }
+
+    function answerHistoryPrompt(group, reason) {
+        if (!group) return
+        if (historyExplanationGroup && (historyExplanationGroup.key !== group.key
+                || historyExplanationLocation !== "prompt")) return
+        beginHistoryExplanation(group, "prompt", false)
+        if (historyExplanationGroup && historyExplanationGroup.key === group.key
+                && historyExplanationLocation === "prompt")
+            submitHistoryExplanation(reason)
+    }
+
+    function submitHistoryExplanation(reasonOverride) {
+        if (!historyExplanationGroup || historyExplanationProcess.running) return
+        if (usageProcess.running) {
+            historyExplanationError = "Usage is refreshing. Try again in a moment."
+            return
+        }
+        var reason = reasonOverride || historyExplanationReason
+        if (!historyExplanationChoiceAllowed(historyExplanationGroup, reason)) {
+            historyExplanationError = "Choose one of the available explanations."
+            return
+        }
+        if (reasonOverride) {
+            historyExplanationReason = reason
+            historyExplanationNote = ""
+        }
+        _historyExplanationOutput = ""
+        _historyExplanationStderr = ""
+        _historyExplanationTimedOut = false
+        historyExplanationError = ""
+        _historyExplanationPayload = JSON.stringify({
+            groupId: historyExplanationGroup.groupId,
+            reason: reason,
+            note: historyExplanationNote
+        })
+        historyExplanationProcess.command = ["dankaiusage", "history", "explain"]
+        historyExplanationProcess.stdinEnabled = true
+        historyExplanationProcess.running = true
+    }
+
+    Process {
+        id: historyExplanationProcess
+        running: false
+
+        onStarted: {
+            write(root._historyExplanationPayload + "\n")
+            // Quickshell closes the write channel when stdin is disabled.
+            stdinEnabled = false
+        }
+        stdout: SplitParser {
+            onRead: data => { root._historyExplanationOutput += data + "\n" }
+        }
+        stderr: SplitParser {
+            onRead: data => { root._historyExplanationStderr += data + "\n" }
+        }
+        onExited: (exitCode, exitStatus) => {
+            if (root._historyExplanationTimedOut) {
+                root._historyExplanationTimedOut = false
+                root.historyExplanationError = "Saving timed out. Your draft is still here; retry when ready."
+            } else {
+                try {
+                    var result = JSON.parse(root._historyExplanationOutput.trim())
+                    if (exitCode !== 0 || !Array.isArray(result.history))
+                        throw new Error(result.historyError || "The explanation could not be saved.")
+                    root.usageHistory = result.history
+                    root.historyError = result.historyError || ""
+                    root.cancelHistoryExplanation()
+                } catch (e) {
+                    root.historyExplanationError = e.message || "The explanation could not be saved. Retry when ready."
+                }
+            }
+            root._historyExplanationPayload = ""
+            if (root._usageRefreshPending) {
+                root._usageRefreshPending = false
+                Qt.callLater(root.refreshUsage)
+            }
+        }
+    }
+
+    Timer {
+        id: historyExplanationTimeout
+        interval: 10000
+        running: historyExplanationProcess.running
+        onTriggered: {
+            root._historyExplanationTimedOut = true
+            historyExplanationProcess.running = false
         }
     }
 
@@ -1116,6 +1448,104 @@ PluginComponent {
                 visible: root.hasError && root.errorText !== ""
             }
 
+            StyledRect {
+                id: historyPrompt
+                property var group: root.historyExplanationLocation === "prompt" && root.historyExplanationGroup
+                        ? root.historyExplanationGroup : root.latestExplanationPrompt(Date.now())
+                width: parent.width
+                height: historyPromptContent.implicitHeight + 2 * Theme.spacingS
+                visible: group !== null
+                radius: Theme.cornerRadius
+                color: Theme.surfaceContainerHigh
+                border.width: 1
+                border.color: Theme.primary
+
+                Column {
+                    id: historyPromptContent
+                    x: Theme.spacingS
+                    y: Theme.spacingS
+                    width: parent.width - 2 * Theme.spacingS
+                    spacing: Theme.spacingXS
+
+                    StyledText {
+                        width: parent.width
+                        text: root.historyPromptTitle(historyPrompt.group)
+                        textFormat: Text.PlainText
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.weight: Font.Medium
+                        color: Theme.surfaceText
+                    }
+
+                    StyledText {
+                        width: parent.width
+                        text: root.historyGroupSummary(historyPrompt.group)
+                        textFormat: Text.PlainText
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Flow {
+                        width: parent.width
+                        spacing: Theme.spacingXS
+
+                        CompactAction {
+                            text: "What changed?"
+                            visible: !(root.historyExplanationLocation === "prompt"
+                                    && root.historyExplanationExpanded)
+                            enabled: !historyExplanationProcess.running
+                                    && !usageProcess.running && historyPrompt.group !== null
+                                    && (!root.historyExplanationGroup
+                                        || root.historyExplanationLocation === "prompt")
+                            onClicked: root.beginHistoryExplanation(historyPrompt.group, "prompt", true)
+                        }
+
+                        CompactAction {
+                            text: historyExplanationProcess.running
+                                    && root.historyExplanationReason === "unknown" ? "Saving..." : "Not sure"
+                            visible: historyPrompt.group !== null
+                                    && root.historyExplanationChoiceAllowed(historyPrompt.group, "unknown")
+                                    && !(root.historyExplanationLocation === "prompt"
+                                        && root.historyExplanationExpanded)
+                            enabled: !historyExplanationProcess.running && !usageProcess.running
+                                    && (!root.historyExplanationGroup
+                                        || root.historyExplanationLocation === "prompt")
+                            onClicked: root.answerHistoryPrompt(historyPrompt.group, "unknown")
+                        }
+
+                        CompactAction {
+                            text: historyExplanationProcess.running
+                                    && root.historyExplanationReason === "dismissed" ? "Saving..." : "Dismiss"
+                            visible: historyPrompt.group !== null
+                                    && root.historyExplanationChoiceAllowed(historyPrompt.group, "dismissed")
+                                    && !(root.historyExplanationLocation === "prompt"
+                                        && root.historyExplanationExpanded)
+                            enabled: !historyExplanationProcess.running && !usageProcess.running
+                                    && (!root.historyExplanationGroup
+                                        || root.historyExplanationLocation === "prompt")
+                            onClicked: root.answerHistoryPrompt(historyPrompt.group, "dismissed")
+                        }
+                    }
+
+                    StyledText {
+                        width: parent.width
+                        text: root.historyExplanationError
+                        textFormat: Text.PlainText
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: "#ff6b6b"
+                        wrapMode: Text.WordWrap
+                        visible: root.historyExplanationLocation === "prompt"
+                                && !root.historyExplanationExpanded && text !== ""
+                    }
+
+                    HistoryExplanationEditor {
+                        width: parent.width
+                        visible: root.historyExplanationLocation === "prompt"
+                                && root.historyExplanationExpanded
+                    }
+                }
+            }
+
             Column {
                 width: parent.width
                 spacing: Theme.spacingS
@@ -1353,12 +1783,19 @@ PluginComponent {
             Column {
                 width: parent.width
                 spacing: Theme.spacingS
-                visible: root.advancedDropdown && (root.showCodex || root.showClaude)
+                visible: (root.advancedDropdown && (root.showCodex || root.showClaude))
+                        || (root.historyExplanationGroup !== null
+                            && root.historyExplanationLocation !== "prompt")
 
                 QuickToggle {
                     text: "Reset history" + (root.visibleHistory().length ? " · " + root.visibleHistory().length : "")
-                    checked: root.historyOpen
-                    onClicked: root.historyOpen = !root.historyOpen
+                    checked: root.historyOpen || (root.historyExplanationGroup !== null
+                            && root.historyExplanationLocation !== "prompt")
+                    onClicked: {
+                        if (root.historyExplanationGroup && root.historyExplanationLocation !== "prompt")
+                            root.historyOpen = true
+                        else root.historyOpen = !root.historyOpen
+                    }
                 }
 
                 StyledText {
@@ -1374,7 +1811,8 @@ PluginComponent {
                 Column {
                     width: parent.width
                     spacing: Theme.spacingS
-                    visible: root.historyOpen
+                    visible: root.historyOpen || (root.historyExplanationGroup !== null
+                            && root.historyExplanationLocation !== "prompt")
 
                     StyledText {
                         width: parent.width
@@ -1388,9 +1826,11 @@ PluginComponent {
                     }
 
                     Repeater {
-                        model: root.visibleHistory()
+                        model: root.historyGroupsForDisplay()
 
                         StyledRect {
+                            id: historyGroupCard
+                            property var historyGroup: modelData
                             width: parent.width
                             height: historyContent.implicitHeight + 2 * Theme.spacingS
                             color: Theme.surfaceContainerHigh
@@ -1403,23 +1843,72 @@ PluginComponent {
                                 width: parent.width - 2 * Theme.spacingS
                                 spacing: Theme.spacingXS
 
-                                StyledText {
-                                    width: parent.width
-                                    text: root.historyEventTitle(modelData)
-                                    textFormat: Text.PlainText
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    wrapMode: Text.WordWrap
+                                Repeater {
+                                    model: historyGroupCard.historyGroup.events
+
+                                    Column {
+                                        width: parent.width
+                                        spacing: 2
+
+                                        StyledText {
+                                            width: parent.width
+                                            text: root.historyEventTitle(modelData)
+                                            textFormat: Text.PlainText
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.weight: Font.Medium
+                                            color: Theme.surfaceText
+                                            wrapMode: Text.WordWrap
+                                        }
+
+                                        StyledText {
+                                            width: parent.width
+                                            text: root.historyEventDetail(modelData)
+                                            textFormat: Text.PlainText
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            color: Theme.surfaceVariantText
+                                            wrapMode: Text.WordWrap
+                                        }
+                                    }
                                 }
 
                                 StyledText {
                                     width: parent.width
-                                    text: root.historyEventDetail(modelData)
+                                    text: "User reported · "
+                                            + root.historyExplanationText(historyGroupCard.historyGroup.explanation)
                                     textFormat: Text.PlainText
                                     font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
+                                    font.weight: Font.Medium
+                                    color: Theme.primary
                                     wrapMode: Text.WordWrap
+                                    visible: root.hasHistoryExplanation(historyGroupCard.historyGroup)
+                                }
+
+                                StyledText {
+                                    width: parent.width
+                                    text: historyGroupCard.historyGroup.explanation
+                                            ? historyGroupCard.historyGroup.explanation.note || "" : ""
+                                    textFormat: Text.PlainText
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceText
+                                    wrapMode: Text.WordWrap
+                                    visible: text !== ""
+                                }
+
+                                CompactAction {
+                                    text: root.hasHistoryExplanation(historyGroupCard.historyGroup)
+                                            ? "Edit explanation" : "Explain"
+                                    visible: historyGroupCard.historyGroup.explainable
+                                            && root.historyExplanationLocation !== historyGroupCard.historyGroup.key
+                                    enabled: !historyExplanationProcess.running && !usageProcess.running
+                                            && root.historyExplanationGroup === null
+                                    onClicked: root.beginHistoryExplanation(historyGroupCard.historyGroup,
+                                            historyGroupCard.historyGroup.key, true)
+                                }
+
+                                HistoryExplanationEditor {
+                                    width: parent.width
+                                    visible: root.historyExplanationGroup !== null
+                                            && root.historyExplanationLocation === historyGroupCard.historyGroup.key
                                 }
                             }
                         }
@@ -1432,6 +1921,172 @@ PluginComponent {
                 color: Theme.surfaceVariantText
                 font.pixelSize: Theme.fontSizeMedium
                 visible: root.isLoading
+            }
+        }
+    }
+
+    component HistoryExplanationEditor: StyledRect {
+        id: explanationEditor
+        height: explanationEditorContent.implicitHeight + 2 * Theme.spacingS
+        radius: Theme.cornerRadius
+        color: "transparent"
+        border.width: 1
+        border.color: Theme.surfaceVariantText
+
+        Column {
+            id: explanationEditorContent
+            x: Theme.spacingS
+            y: Theme.spacingS
+            width: parent.width - 2 * Theme.spacingS
+            spacing: Theme.spacingXS
+
+            StyledText {
+                width: parent.width
+                text: "What changed?"
+                textFormat: Text.PlainText
+                font.pixelSize: Theme.fontSizeMedium
+                font.weight: Font.Medium
+                color: Theme.surfaceText
+            }
+
+            StyledText {
+                width: parent.width
+                text: root.historyGroupSummary(root.historyExplanationGroup)
+                textFormat: Text.PlainText
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.surfaceVariantText
+                wrapMode: Text.WordWrap
+            }
+
+            StyledText {
+                width: parent.width
+                text: "Applies to " + (root.historyExplanationGroup
+                        ? root.historyExplanationGroup.eligibleCount : 0) + " changes observed together"
+                textFormat: Text.PlainText
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.surfaceVariantText
+                wrapMode: Text.WordWrap
+            }
+
+            Flow {
+                width: parent.width
+                spacing: Theme.spacingXS
+
+                Repeater {
+                    model: root.historyExplanationReasonChoices(root.historyExplanationGroup)
+
+                    QuickToggle {
+                        text: modelData.label
+                        checked: root.historyExplanationReason === modelData.key
+                        enabled: !historyExplanationProcess.running
+                        Accessible.name: text + (checked ? "; selected" : "")
+                        onClicked: {
+                            root.historyExplanationReason = modelData.key
+                            root.historyExplanationError = ""
+                        }
+                    }
+                }
+            }
+
+            StyledText {
+                width: parent.width
+                text: "Optional local note"
+                textFormat: Text.PlainText
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.surfaceVariantText
+            }
+
+            Rectangle {
+                width: parent.width
+                height: Math.max(72, historyNoteInput.contentHeight + 2 * Theme.spacingXS)
+                radius: Theme.cornerRadius
+                color: Qt.rgba(Theme.surfaceVariantText.r, Theme.surfaceVariantText.g,
+                        Theme.surfaceVariantText.b, 0.12)
+                border.width: historyNoteInput.activeFocus ? 2 : 1
+                border.color: historyNoteInput.activeFocus ? Theme.primary : Theme.surfaceVariantText
+
+                TextEdit {
+                    id: historyNoteInput
+                    anchors.fill: parent
+                    anchors.margins: Theme.spacingXS
+                    color: Theme.surfaceText
+                    font.pixelSize: Theme.fontSizeSmall
+                    textFormat: TextEdit.PlainText
+                    wrapMode: TextEdit.Wrap
+                    selectByMouse: true
+                    activeFocusOnTab: true
+                    enabled: !historyExplanationProcess.running
+                    Accessible.name: "Optional local explanation note"
+
+                    Component.onCompleted: text = root.historyExplanationNote
+                    onVisibleChanged: if (visible) text = root.historyExplanationNote
+                    onTextChanged: {
+                        var limited = root.truncateHistoryNote(text, 280)
+                        if (limited !== text) {
+                            var oldPosition = cursorPosition
+                            text = limited
+                            cursorPosition = Math.min(oldPosition, text.length)
+                        }
+                        root.historyExplanationNote = text
+                    }
+
+                    StyledText {
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        text: "Add context (optional)"
+                        textFormat: Text.PlainText
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                        visible: historyNoteInput.text === "" && !historyNoteInput.activeFocus
+                    }
+                }
+            }
+
+            StyledText {
+                width: parent.width
+                text: root.historyNoteRuneLength(root.historyExplanationNote) + "/280 · Stored locally with history. Do not include prompts, account details, or other sensitive information."
+                textFormat: Text.PlainText
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.surfaceVariantText
+                wrapMode: Text.WordWrap
+            }
+
+            StyledText {
+                width: parent.width
+                text: root.historyExplanationError
+                textFormat: Text.PlainText
+                font.pixelSize: Theme.fontSizeSmall
+                color: "#ff6b6b"
+                wrapMode: Text.WordWrap
+                visible: text !== ""
+            }
+
+            Flow {
+                width: parent.width
+                spacing: Theme.spacingXS
+
+                CompactAction {
+                    text: historyExplanationProcess.running ? "Saving..."
+                            : root.hasHistoryExplanation(root.historyExplanationGroup)
+                                ? "Save changes" : "Save explanation"
+                    enabled: !historyExplanationProcess.running && !usageProcess.running
+                            && root.historyExplanationChoiceAllowed(root.historyExplanationGroup,
+                                root.historyExplanationReason)
+                    onClicked: root.submitHistoryExplanation("")
+                }
+
+                CompactAction {
+                    text: "Dismiss"
+                    visible: root.historyExplanationChoiceAllowed(root.historyExplanationGroup, "dismissed")
+                    enabled: !historyExplanationProcess.running && !usageProcess.running
+                    onClicked: root.submitHistoryExplanation("dismissed")
+                }
+
+                CompactAction {
+                    text: "Cancel"
+                    enabled: !historyExplanationProcess.running
+                    onClicked: root.cancelHistoryExplanation()
+                }
             }
         }
     }

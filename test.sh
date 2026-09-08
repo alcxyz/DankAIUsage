@@ -202,7 +202,7 @@ for expected in (
     'visible: root.advancedDropdown && root.tokenHistoryRange === "tracked"',
     'visible: root.advancedDropdown && root.providerResets(modelData).length > 0',
     'visible: modelData.id === "codex" && root.resetControlsVisible()',
-    'visible: root.advancedDropdown && (root.showCodex || root.showClaude)',
+    'visible: (root.advancedDropdown && (root.showCodex || root.showClaude))',
     'visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime',
 ):
     assert expected in component, f"missing dropdown visibility contract: {expected}"
@@ -310,6 +310,229 @@ JS
     fi
 else
     pass "dropdown JavaScript behavior (structurally checked; node unavailable)"
+fi
+
+echo "History explanations"
+if python3 - <<'PY'
+import pathlib
+import re
+
+component = pathlib.Path("DankAIUsageWidget.qml").read_text(encoding="utf-8")
+
+# The helper receives one bounded JSON record over stdin. No user note is ever
+# interpolated into argv or evaluated by a shell.
+assert 'historyExplanationProcess.command = ["dankaiusage", "history", "explain"]' in component
+assert '["sh", "-c"' not in component
+assert '_historyExplanationPayload = JSON.stringify({' in component
+assert 'note: historyExplanationNote' in component
+assert re.search(
+    r'id:\s*historyExplanationProcess.*?onStarted:\s*\{\s*'
+    r'write\(root\._historyExplanationPayload \+ "\\n"\)\s*'
+    r'.*?stdinEnabled = false',
+    component,
+    re.S,
+)
+start_save = component.index('historyExplanationProcess.stdinEnabled = true')
+start_process = component.index('historyExplanationProcess.running = true', start_save)
+assert start_save < start_process
+
+# A confirmed helper response is the only history mutation. Failures and the
+# bounded timeout retain the root-owned draft for an explicit retry.
+assert 'root.usageHistory = result.history' in component
+assert 'root.cancelHistoryExplanation()' in component
+assert 'root.historyExplanationError = e.message ||' in component
+assert 'Saving timed out. Your draft is still here; retry when ready.' in component
+assert 'interval: 10000' in component
+assert 'running: historyExplanationProcess.running' in component
+assert 'root._historyExplanationStderr.trim()' not in component
+assert 'if (historyExplanationProcess.running)' in component
+assert '_usageRefreshPending = true' in component
+
+# Prompt and editor UX: the prompt itself is not Advanced-only, retained edits
+# are inline, and user text/error rendering is explicitly plain text.
+assert 'id: historyPrompt' in component
+assert 'text: root.historyPromptTitle(historyPrompt.group)' in component
+assert 'root.latestExplanationPrompt(Date.now())' in component
+assert 'component HistoryExplanationEditor: StyledRect' in component
+assert 'Applies to " + (root.historyExplanationGroup' in component
+assert 'root.beginHistoryExplanation(historyGroupCard.historyGroup,' in component
+begin = component[component.index('function beginHistoryExplanation('):component.index('function cancelHistoryExplanation(')]
+assert begin.index('historyExplanationNote =') < begin.index('historyExplanationGroup = group')
+assert 'text: "User reported · "' in component
+assert 'textFormat: TextEdit.PlainText' in component
+assert component.count('textFormat: Text.PlainText') >= 12
+assert 'root.truncateHistoryNote(text, 280)' in component
+assert 'height: Math.max(72, historyNoteInput.contentHeight + 2 * Theme.spacingXS)' in component
+assert 'Do not include prompts, account details, or other sensitive information.' in component
+assert 'case "dismissed": return "Dismissed without assigning a cause"' in component
+PY
+then
+    pass "history explanation stdin, persistence, failure, and UI contracts"
+else
+    fail "history explanation contracts" "stdin, persistence, failure, or UI wiring is inconsistent"
+fi
+
+if command -v quickshell >/dev/null 2>&1; then
+    cp tests/fixtures/history-stdin-probe.qml "$TEST_TMP/history-stdin-probe.qml"
+    PROBE_OUTPUT="$(QT_QPA_PLATFORM=offscreen quickshell --no-color -p "$TEST_TMP/history-stdin-probe.qml" 2>&1)"
+    if [[ "$PROBE_OUTPUT" == *'HISTORY-STDIN:{"groupId":"group-probe","reason":"unknown","note":"literal; $(not a shell)"}'* ]]; then
+        pass "Quickshell flushes one JSON stdin record before closing the write channel"
+    else
+        fail "Quickshell history stdin" "one-shot JSON record was not received intact"
+    fi
+else
+    pass "Quickshell history stdin (structurally checked; quickshell unavailable)"
+fi
+
+if command -v node >/dev/null 2>&1; then
+    if node <<'JS'
+const fs = require("fs");
+const qml = fs.readFileSync("DankAIUsageWidget.qml", "utf8");
+
+function extractFunction(name) {
+    const marker = new RegExp(`\\bfunction\\s+${name}\\s*\\([^)]*\\)\\s*\\{`, "g");
+    const match = marker.exec(qml);
+    if (!match) throw new Error(`missing ${name}()`);
+    const brace = qml.indexOf("{", match.index);
+    let depth = 0;
+    let quote = null;
+    let escaped = false;
+    for (let i = brace; i < qml.length; i++) {
+        const char = qml[i];
+        if (quote !== null) {
+            if (escaped) escaped = false;
+            else if (char === "\\") escaped = true;
+            else if (char === quote) quote = null;
+            continue;
+        }
+        if (char === '"' || char === "'" || char === "`") quote = char;
+        else if (char === "{") depth++;
+        else if (char === "}" && --depth === 0) return qml.slice(match.index, i + 1);
+    }
+    throw new Error(`unterminated ${name}()`);
+}
+
+function bindQmlFunction(name, scope) {
+    const expression = extractFunction(name).replace(/^function\s+\w+/, "function");
+    return new Function("scope", `with (scope) { return (${expression}); }`)(scope);
+}
+
+function equal(actual, expected, description) {
+    if (actual !== expected)
+        throw new Error(`${description}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+}
+
+const scope = { Date, isFinite, showCodex: true, showClaude: true, usageHistory: [] };
+for (const name of [
+    "historyGroupKey",
+    "historyEventEligible",
+    "explanationChoicesForGroup",
+    "historyGroups",
+    "historyProviderVisible",
+    "hasHistoryExplanation",
+    "latestExplanationPrompt",
+    "historyNoteRuneLength",
+    "truncateHistoryNote",
+]) scope[name] = bindQmlFunction(name, scope);
+scope.historyExplanationProcess = {running: false};
+scope.historyExplanationGroup = null;
+scope.historyExplanationLocation = "";
+scope.historyExplanationExpanded = false;
+scope.historyExplanationReason = "";
+scope.historyExplanationNote = "stale note";
+scope.historyExplanationError = "stale error";
+scope.beginHistoryExplanation = bindQmlFunction("beginHistoryExplanation", scope);
+
+function event({
+    kind = "allowance_increased_unknown",
+    provider = "codex",
+    observedAt = "2026-09-08T10:00:00Z",
+    groupId = "group-a",
+    explanationChoices = ["subscription_change", "unknown", "dismissed"],
+    explanation = null,
+    explainable = true,
+    label = "Weekly",
+} = {}) {
+    return {kind, provider, observedAt, groupId, explanationChoices, explanation, explainable, label};
+}
+
+const grouped = scope.historyGroups([
+    event(),
+    event({kind: "credits_changed", explanationChoices: ["external_reset", "unknown"]}),
+    event({provider: "claude"}),
+    event({observedAt: "2026-09-08T10:01:00Z"}),
+    event({groupId: "group-b"}),
+]);
+equal(grouped.length, 4, "groups require exact provider, observedAt, and groupId");
+const exact = grouped.find(group => group.key.includes("group-a") && group.events.length === 2);
+equal(exact.eligibleCount, 2, "group counts every eligible related event");
+equal(
+    JSON.stringify(exact.explanationChoices),
+    JSON.stringify(["subscription_change", "unknown", "dismissed", "external_reset"]),
+    "group choices are a stable union",
+);
+
+const editable = scope.historyGroups([
+    event({explanation: {reason: "external_reset", note: "existing context", source: "user"}}),
+])[0];
+scope.beginHistoryExplanation(editable, editable.key, true);
+equal(scope.historyExplanationNote, "existing context", "editing initializes the saved note");
+equal(scope.historyExplanationReason, "external_reset", "editing initializes the saved reason");
+const otherGroup = scope.historyGroups([event({groupId: "other-group"})])[0];
+scope.beginHistoryExplanation(otherGroup, otherGroup.key, true);
+equal(scope.historyExplanationGroup.key, editable.key, "another row cannot retarget an unsaved draft");
+scope.historyExplanationGroup = null;
+scope.historyExplanationLocation = "";
+
+equal(scope.historyEventEligible(event({kind: "scheduled_window"})), false, "scheduled windows are ignored");
+equal(scope.historyEventEligible(event({kind: "plugin_reset_reset"})), false, "confirmed plugin events are ignored");
+equal(scope.historyEventEligible(event({explainable: false})), false, "backend-ineligible events are ignored");
+equal(scope.historyEventEligible(event({groupId: ""})), false, "ungrouped legacy events are ignored");
+
+const now = Date.parse("2026-09-08T12:00:00Z");
+const older = event({observedAt: "2026-09-08T10:00:00Z", groupId: "older"});
+const latest = event({observedAt: "2026-09-08T11:00:00Z", groupId: "latest"});
+scope.usageHistory = [older, latest];
+equal(scope.latestExplanationPrompt(now).groupId, "latest", "newest visible eligible group prompts");
+
+scope.usageHistory = [older, {...latest, explanation: {reason: "external_reset", source: "user"}}];
+equal(scope.latestExplanationPrompt(now), null, "answering latest does not reveal older unanswered group");
+scope.usageHistory = [older, {...latest, explanation: {reason: "dismissed", source: "user"}}];
+equal(scope.latestExplanationPrompt(now), null, "dismissing latest does not reveal older unanswered group");
+
+scope.usageHistory = [
+    older,
+    event({kind: "scheduled_window", observedAt: "2026-09-08T11:30:00Z", groupId: "scheduled"}),
+    event({kind: "plugin_reset_reset", observedAt: "2026-09-08T11:45:00Z", groupId: "plugin"}),
+];
+equal(scope.latestExplanationPrompt(now).groupId, "older", "newer scheduled and plugin events do not displace prompt");
+
+scope.showCodex = false;
+scope.usageHistory = [
+    latest,
+    event({provider: "claude", observedAt: "2026-09-08T10:30:00Z", groupId: "visible-claude"}),
+];
+equal(scope.latestExplanationPrompt(now).groupId, "visible-claude", "provider visibility filters prompt candidates");
+scope.showClaude = false;
+equal(scope.latestExplanationPrompt(now), null, "no hidden provider prompts");
+scope.showCodex = true;
+scope.showClaude = true;
+
+scope.usageHistory = [event({observedAt: "2026-09-07T12:00:00Z", groupId: "boundary"})];
+equal(scope.latestExplanationPrompt(now).groupId, "boundary", "24-hour boundary is included");
+scope.usageHistory = [event({observedAt: "2026-09-07T11:59:59.999Z", groupId: "expired"})];
+equal(scope.latestExplanationPrompt(now), null, "older than 24 hours does not prompt");
+
+equal(scope.historyNoteRuneLength("a😀b"), 3, "note length counts Unicode code points");
+equal(scope.truncateHistoryNote("a😀b", 2), "a😀", "note truncation preserves surrogate pairs");
+JS
+    then
+        pass "history explanation JavaScript selection and grouping behavior"
+    else
+        fail "history explanation JavaScript behavior" "selection, grouping, or note bounds are inconsistent"
+    fi
+else
+    pass "history explanation JavaScript behavior (structurally checked; node unavailable)"
 fi
 
 echo "Go helper"
