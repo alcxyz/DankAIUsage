@@ -24,6 +24,7 @@ PluginComponent {
     property bool compactPill: false
     property bool showUsed: false
     property bool quickControlsOpen: false
+    property bool historyOpen: false
     property bool enableClaudePrime: false
 
     property bool isLoading: true
@@ -31,6 +32,8 @@ PluginComponent {
     property string errorText: ""
     property string lastUpdated: ""
     property var providers: []
+    property var usageHistory: []
+    property string historyError: ""
     property var grandTotal: ({ total: 0, input: 0, output: 0, cached: 0, requests: 0, sessions: 0 })
     property var capabilities: ({})
     property string _pendingOutput: ""
@@ -201,8 +204,13 @@ PluginComponent {
             try {
                 var summary = JSON.parse(root._pendingOutput.trim())
                 root.applySummary(summary, true)
-                if (root.pluginService && root.pluginService.savePluginState)
-                    root.pluginService.savePluginState(root.pluginId, "lastSummary", summary)
+                if (root.pluginService && root.pluginService.savePluginState) {
+                    // Keep the bounded helper history in one store, not in the DMS cache too.
+                    var cachedSummary = Object.assign({}, summary)
+                    delete cachedSummary.history
+                    delete cachedSummary.historyError
+                    root.pluginService.savePluginState(root.pluginId, "lastSummary", cachedSummary)
+                }
             } catch (e) {
                 root.hasError = true
                 root.errorText = "Could not parse usage data"
@@ -250,6 +258,8 @@ PluginComponent {
     function applySummary(summary, allowAutoPrime) {
         capabilities = summary.capabilities || {}
         providers = summary.providers || []
+        usageHistory = summary.history || []
+        historyError = summary.historyError || ""
         grandTotal = summary.grandTotal || ({ total: 0, input: 0, output: 0, cached: 0, requests: 0, sessions: 0 })
         hasError = (summary.errors || []).length > 0
         errorText = hasError ? summary.errors.join("\n") : ""
@@ -273,6 +283,57 @@ PluginComponent {
             out.push(providers[i])
         }
         return out
+    }
+
+    function visibleHistory() {
+        return usageHistory.filter(function(event) {
+            return event && ((event.provider === "codex" && root.showCodex)
+                    || (event.provider === "claude" && root.showClaude))
+        }).sort(function(a, b) {
+            return Date.parse(b.observedAt) - Date.parse(a.observedAt)
+        }).slice(0, 8)
+    }
+
+    function historyEventTitle(event) {
+        switch (event.kind) {
+        case "scheduled_window": return "Scheduled window change"
+        case "allowance_increased_unknown": return "Unexpected replenishment"
+        case "reset_redeemed_inferred": return "Likely reset redeemed"
+        case "window_changed_unknown": return "Reset schedule changed"
+        case "credits_changed": return "Available resets changed"
+        case "plugin_reset_reset": return "Plugin reset applied"
+        case "plugin_reset_already_redeemed": return "Reset already redeemed"
+        case "plugin_reset_nothing_to_reset": return "Nothing eligible to reset"
+        case "plugin_reset_no_credit": return "No reset credit available"
+        case "plugin_reset_attempt_unknown": return "Plugin reset outcome unknown"
+        default: return "Quota change observed"
+        }
+    }
+
+    function historyPercent(value) {
+        return Math.round((showUsed ? value : 100 - value) * 10) / 10
+                + (showUsed ? "% used" : "% left")
+    }
+
+    function historyEventDetail(event) {
+        var lines = []
+        var provider = event.provider === "codex" ? "Codex" : "Claude"
+        lines.push(provider + (event.label ? " · " + event.label : "")
+                + " · " + (event.confidence || "observed"))
+        lines.push("Observed " + formatShortDateTime(event.observedAt))
+        if (event.previousObservedAt)
+            lines.push("Previous sample " + formatShortDateTime(event.previousObservedAt))
+        var before = event.before || {}
+        var after = event.after || {}
+        if (typeof before.usedPercent === "number" && typeof after.usedPercent === "number")
+            lines.push(historyPercent(before.usedPercent) + " → " + historyPercent(after.usedPercent))
+        if (typeof before.availableCredits === "number" && typeof after.availableCredits === "number")
+            lines.push("Available resets: " + before.availableCredits + " → " + after.availableCredits)
+        if (before.resetAt && after.resetAt && before.resetAt !== after.resetAt)
+            lines.push("Reset time: " + formatShortDateTime(before.resetAt)
+                    + " → " + formatShortDateTime(after.resetAt))
+        if (event.message) lines.push(event.message)
+        return lines.join("\n")
     }
 
     function displayTotal(totals) {
@@ -327,10 +388,10 @@ PluginComponent {
         return Math.max(0, Math.min(100, (showUsed ? allowance.percentUsed : allowance.percentRemaining) || 0))
     }
 
-    function allowanceLabel(allowance) {
+    function allowanceLabel(allowance, includeMode) {
         if (allowance && allowance.source === "claude-prime local usage") return "Timer"
         if (!knownAllowance(allowance)) return "--"
-        return Math.round(displayPercent(allowance)) + (showUsed ? "% used" : "% left")
+        return Math.round(displayPercent(allowance)) + (includeMode === false ? "%" : (showUsed ? "% used" : "% left"))
     }
 
     function allowanceDetail(allowance) {
@@ -459,6 +520,8 @@ PluginComponent {
         var message = codexResetStatus.message || "Automatic reset is off"
         if (codexResetStatus.error)
             message += "\n" + codexResetStatus.error
+        if (codexResetStatus.historyError)
+            message += "\n" + codexResetStatus.historyError
         if (codexResetStatus.armed && codexResetStatus.expiresAt) {
             message = (codexResetStatus.title || "Usage reset") + " · expires "
                     + formatShortDateTime(codexResetStatus.expiresAt) + "\n" + message
@@ -498,7 +561,7 @@ PluginComponent {
         var buckets = providerTopBarBuckets(provider)
         var parts = []
         for (var i = 0; i < buckets.length; i++) {
-            parts.push(quotaShortLabel(buckets[i]) + " " + allowanceLabel(buckets[i].allowance))
+            parts.push(quotaShortLabel(buckets[i]) + " " + allowanceLabel(buckets[i].allowance, false))
         }
         return parts.join(" · ")
     }
@@ -520,7 +583,7 @@ PluginComponent {
                 if (compactWeakest) {
                     segments.push({
                         provider: list[i],
-                        text: (barShowProviderLogos ? "" : list[i].name + " ") + quotaShortLabel(compactWeakest) + " " + allowanceLabel(compactWeakest.allowance)
+                        text: (barShowProviderLogos ? "" : list[i].name + " ") + quotaShortLabel(compactWeakest) + " " + allowanceLabel(compactWeakest.allowance, false)
                     })
                 }
             }
@@ -1087,6 +1150,83 @@ PluginComponent {
                     text: "No providers enabled."
                     color: Theme.surfaceVariantText
                     font.pixelSize: Theme.fontSizeMedium
+                }
+            }
+
+            Column {
+                width: parent.width
+                spacing: Theme.spacingS
+                visible: root.showCodex || root.showClaude
+
+                QuickToggle {
+                    text: "Reset history" + (root.visibleHistory().length ? " · " + root.visibleHistory().length : "")
+                    checked: root.historyOpen
+                    onClicked: root.historyOpen = !root.historyOpen
+                }
+
+                StyledText {
+                    width: parent.width
+                    text: root.historyError
+                    textFormat: Text.PlainText
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                    wrapMode: Text.WordWrap
+                    visible: root.historyError !== ""
+                }
+
+                Column {
+                    width: parent.width
+                    spacing: Theme.spacingS
+                    visible: root.historyOpen
+
+                    StyledText {
+                        width: parent.width
+                        text: root.visibleHistory().length === 0
+                                ? "No reset changes recorded yet. History starts with observed usage; it cannot reconstruct earlier resets."
+                                : "Latest 8 events · up to 30 days retained. Times show when changes were observed, not necessarily when they happened."
+                        textFormat: Text.PlainText
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Repeater {
+                        model: root.visibleHistory()
+
+                        StyledRect {
+                            width: parent.width
+                            height: historyContent.implicitHeight + 2 * Theme.spacingS
+                            color: Theme.surfaceContainerHigh
+                            radius: Theme.cornerRadius
+
+                            Column {
+                                id: historyContent
+                                x: Theme.spacingS
+                                y: Theme.spacingS
+                                width: parent.width - 2 * Theme.spacingS
+                                spacing: Theme.spacingXS
+
+                                StyledText {
+                                    width: parent.width
+                                    text: root.historyEventTitle(modelData)
+                                    textFormat: Text.PlainText
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.weight: Font.Medium
+                                    color: Theme.surfaceText
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                StyledText {
+                                    width: parent.width
+                                    text: root.historyEventDetail(modelData)
+                                    textFormat: Text.PlainText
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceVariantText
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

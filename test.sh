@@ -57,6 +57,17 @@ assert 'Qt.callLater(root.refreshUsage)' in component_text
 assert '!root.codexResetReady || root.codexResetStatus.armed ? "disarm" : "arm"' in component_text
 assert 'id: providerContent' in component_text
 assert 'height: providerContent.implicitHeight' in component_text
+assert 'usageHistory = summary.history || []' in component_text
+assert 'historyError = summary.historyError || ""' in component_text
+assert 'case "reset_redeemed_inferred": return "Likely reset redeemed"' in component_text
+assert 'delete cachedSummary.history' in component_text
+assert 'root.historyEventDetail(modelData)' in component_text
+
+# Both bar layouts omit the mode suffix; dropdown labels retain it by default.
+assert 'includeMode === false ? "%"' in component_text
+assert 'allowanceLabel(buckets[i].allowance, false)' in component_text
+assert 'allowanceLabel(compactWeakest.allowance, false)' in component_text
+assert 'return allowanceLabel(bucket.allowance)' in component_text
 
 schema = plugin["settings_schema"]
 for key in schema:
@@ -111,10 +122,10 @@ shopt -s nullglob
 ADR_FILES=(docs/adr/ADR-*.md)
 shopt -u nullglob
 ADR_COUNT="${#ADR_FILES[@]}"
-if [ "$ADR_COUNT" -ge 10 ]; then
+if [ "$ADR_COUNT" -ge 11 ]; then
     pass "$ADR_COUNT ADRs present"
 else
-    fail "ADRs" "expected at least 10, found $ADR_COUNT"
+    fail "ADRs" "expected at least 11, found $ADR_COUNT"
 fi
 
 echo

@@ -78,6 +78,8 @@ bars together, including credits. Left is the default: 26% left fills 26% of the
 bar; Used shows 74% used and fills 74%. Credit details show the remaining balance
 or spending against the budget. Warning colors always reflect proximity to the
 limit, regardless of display mode.
+Both bar layouts show only the percentage, without repeating "left" or "used";
+the dropdown retains those labels.
 
 ## Installation
 
@@ -164,6 +166,40 @@ When Codex reports both five-hour and weekly Spark windows, the plugin shows
 both, independently of the general Codex allowance. These are live provider
 buckets, not hardcoded legacy quotas. A window disappears when the provider
 stops reporting it; identical percentages alone do not make two windows duplicates.
+
+### Reset history
+
+Open **Reset history** in the dropdown to see the latest eight observed events
+for your enabled providers. The helper keeps at most 200 events for 30 days,
+locally, without a separate service or database. History starts with the first
+observation; it cannot reconstruct earlier resets.
+
+Each entry includes the observation time, previous sample time where available,
+before/after allowance, and changes to the reset schedule or earned-reset count.
+Left/Used also controls historical allowance percentages.
+
+- **Scheduled window change:** a rollover consistent with the previous reset
+  schedule; inferred from snapshots.
+- **Unexpected replenishment:** allowance increased early. This can suggest a
+  provider-granted reset, but an external manual reset, account/plan change, or
+  corrected measurement cannot be ruled out.
+- **Likely reset redeemed:** an early general Codex refill coincided with fewer
+  available earned resets, and known expiry evidence does not explain the
+  decrease. This is an inference, not a confirmed manual action.
+- **Available resets changed:** the count changed; this alone cannot establish
+  whether credits were granted, redeemed, expired, or withdrawn.
+- **Plugin reset applied / outcome unknown:** the result of an explicit
+  one-shot plugin attempt, kept separate from inferred observations.
+
+The log records when a change was observed, not its exact occurrence time.
+Unchanged reset counts do not prove provider generosity: a new credit could
+offset a redemption. Sleep, unavailable data, caching, and gaps between polls
+can hide intermediate events. No credentials, account identifiers, prompts, or
+opaque reset-credit IDs are stored in this history.
+
+The history file is `$XDG_STATE_HOME/dankaiusage/usage-history.json`, falling
+back to `~/.local/state/dankaiusage/usage-history.json`. Read the retained events
+without contacting either provider with `dankaiusage history`.
 
 ## Settings
 
