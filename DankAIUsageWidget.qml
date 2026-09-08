@@ -25,6 +25,7 @@ PluginComponent {
     property bool showUsed: false
     property bool quickControlsOpen: false
     property bool historyOpen: false
+    property bool tokenHistorySession: false
     property bool enableClaudePrime: false
 
     property bool isLoading: true
@@ -77,6 +78,7 @@ PluginComponent {
 
     function loadCache() {
         if (!pluginService || !pluginService.loadPluginState) return
+        tokenHistorySession = pluginService.loadPluginState(pluginId, "tokenHistorySession", false) === true
         lastClaudeAutoPrimeAt = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeAt", 0) || 0
         lastClaudeAutoPrimeFailed = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeFailed", false) === true
         var cached = pluginService.loadPluginState(pluginId, "lastSummary", null)
@@ -355,21 +357,27 @@ PluginComponent {
     function filteredGrandTotal() {
         var total = 0
         var list = visibleProviders()
-        for (var i = 0; i < list.length; i++) total += displayTotal(list[i].period)
+        for (var i = 0; i < list.length; i++) {
+            if (tokenHistoryAvailable(list[i])) total += displayTotal(tokenHistoryTotals(list[i]))
+        }
         return total
     }
 
     function filteredGrandInput() {
         var total = 0
         var list = visibleProviders()
-        for (var i = 0; i < list.length; i++) total += displayInput(list[i].period)
+        for (var i = 0; i < list.length; i++) {
+            if (tokenHistoryAvailable(list[i])) total += displayInput(tokenHistoryTotals(list[i]))
+        }
         return total
     }
 
     function filteredGrandOutput() {
         var total = 0
         var list = visibleProviders()
-        for (var i = 0; i < list.length; i++) total += displayOutput(list[i].period)
+        for (var i = 0; i < list.length; i++) {
+            if (tokenHistoryAvailable(list[i])) total += displayOutput(tokenHistoryTotals(list[i]))
+        }
         return total
     }
 
@@ -670,7 +678,45 @@ PluginComponent {
     }
 
     function filteredGrandTokenBreakdown() {
-        return formatTokens(filteredGrandInput()) + " in / " + formatTokens(filteredGrandOutput()) + " out"
+        var list = visibleProviders()
+        var available = 0
+        var partial = false
+        for (var i = 0; i < list.length; i++) {
+            if (tokenHistoryAvailable(list[i])) available++
+            if (!tokenHistoryAvailable(list[i]) || (list[i].meta && list[i].meta.tokenDataError)) partial = true
+        }
+        if (available === 0) return "Unavailable"
+        return formatTokens(filteredGrandInput()) + " in / " + formatTokens(filteredGrandOutput()) + " out" + (partial ? " (partial)" : "")
+    }
+
+    function tokenHistoryAvailable(provider) {
+        if (!provider) return false
+        var meta = provider.meta || {}
+        if (meta.tokenDataAvailable === false) return false
+        if (meta.tokenDataAvailable === true) return true
+        return !meta.tokenDataError || (provider.period && provider.period.requests > 0)
+                || (provider.session && provider.session.requests > 0)
+    }
+
+    function tokenHistoryTotals(provider) {
+        return tokenHistorySession ? provider.session : provider.period
+    }
+
+    function tokenHistoryLabel() {
+        return "Local tokens · " + (tokenHistorySession ? "5h" : periodDays + "d")
+    }
+
+    function toggleTokenHistory() {
+        tokenHistorySession = !tokenHistorySession
+        if (pluginService && pluginService.savePluginState)
+            pluginService.savePluginState(pluginId, "tokenHistorySession", tokenHistorySession)
+    }
+
+    function providerTokenBreakdown(provider) {
+        if (!tokenHistoryAvailable(provider)) return "Unavailable"
+        var totals = tokenHistoryTotals(provider)
+        return inputTokenLabel(totals) + " / " + outputTokenLabel(totals)
+                + (provider.meta && provider.meta.tokenDataError ? " (partial)" : "")
     }
 
     function providerLogoColor(provider) {
@@ -895,32 +941,9 @@ PluginComponent {
                 }
             }
 
-            Item {
+            TokenHistoryRow {
                 width: parent.width
-                height: tokensValue.implicitHeight
-
-                StyledText {
-                    text: "Token history"
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceVariantText
-                    anchors.left: parent.left
-                    anchors.right: tokensValue.left
-                    anchors.rightMargin: Theme.spacingS
-                    anchors.verticalCenter: parent.verticalCenter
-                    elide: Text.ElideRight
-                    maximumLineCount: 1
-                }
-
-                StyledText {
-                    id: tokensValue
-                    text: root.filteredGrandTokenBreakdown()
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceVariantText
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    elide: Text.ElideRight
-                    maximumLineCount: 1
-                }
+                value: root.filteredGrandTokenBreakdown()
             }
 
             StyledText {
@@ -1034,25 +1057,9 @@ PluginComponent {
                                 }
                             }
 
-                            Item {
+                            TokenHistoryRow {
                                 width: parent.width
-                                height: 30
-
-                                StyledText {
-                                    text: "Local token history"
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                }
-
-                                StyledText {
-                                    text: root.inputTokenLabel(modelData.period) + " / " + root.outputTokenLabel(modelData.period)
-                                    anchors.right: parent.right
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceText
-                                }
+                                value: root.providerTokenBreakdown(modelData)
                             }
 
                             Item {
@@ -1254,6 +1261,61 @@ PluginComponent {
                 font.pixelSize: Theme.fontSizeMedium
                 visible: root.isLoading
             }
+        }
+    }
+
+    component TokenHistoryRow: StyledRect {
+        id: tokenRow
+        property string value: ""
+        height: 32
+        radius: Theme.cornerRadius
+        color: Theme.surfaceContainerHigh
+        border.width: activeFocus ? 2 : 1
+        border.color: activeFocus ? Theme.primary : Theme.surfaceVariantText
+        activeFocusOnTab: true
+        Accessible.role: Accessible.Button
+        Accessible.name: root.tokenHistoryLabel() + ": " + value
+        Accessible.description: "Switch between the last 5 hours and the selected history range"
+        Accessible.onPressAction: root.toggleTokenHistory()
+        Keys.onSpacePressed: root.toggleTokenHistory()
+        Keys.onReturnPressed: root.toggleTokenHistory()
+
+        DankIcon {
+            id: tokenSwitchIcon
+            name: "swap_horiz"
+            size: 16
+            color: Theme.primary
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.spacingS
+            anchors.verticalCenter: parent.verticalCenter
+        }
+        StyledText {
+            text: root.tokenHistoryLabel()
+            anchors.left: tokenSwitchIcon.right
+            anchors.leftMargin: Theme.spacingXS
+            anchors.right: tokenValue.left
+            anchors.rightMargin: Theme.spacingS
+            anchors.verticalCenter: parent.verticalCenter
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceVariantText
+            elide: Text.ElideRight
+        }
+        StyledText {
+            id: tokenValue
+            text: tokenRow.value
+            width: Math.min(implicitWidth, parent.width * 0.55)
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.spacingS
+            anchors.verticalCenter: parent.verticalCenter
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceText
+            elide: Text.ElideRight
+            horizontalAlignment: Text.AlignRight
+        }
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.toggleTokenHistory()
         }
     }
 

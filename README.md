@@ -24,9 +24,9 @@ Left/Used and bar controls let you adjust the view while checking your usage.
 
 The scope is deliberately two providers. The Go helper uses the local Codex
 app server and Claude sign-in; it also exposes a JSON summary for terminal use.
-Install that helper alongside the widget, plus `sqlite3` if you want Codex local
-token history. This is not a dependency-free plugin: it avoids an additional
-quota application, rather than eliminating the helper or provider CLIs.
+Install that helper alongside the widget. This is not a dependency-free plugin:
+it avoids an additional quota application, rather than eliminating the helper
+or provider CLIs.
 Token history covers local CLI
 activity, so it is not a complete account activity ledger. Claude prime is an
 optional session-scheduling feature that consumes usage and is off by default.
@@ -81,6 +81,13 @@ limit, regardless of display mode.
 Both bar layouts show only the percentage, without repeating "left" or "used";
 the dropdown retains those labels.
 
+Click a **Local tokens** row to switch all token totals between **5h** (the last
+five hours across local conversations) and the configured history range,
+**7d** by default. The selection is remembered and does not make another
+provider request. This is neither an active-conversation total nor all-time
+history, and neither range is tied to a subscription reset. The rows support
+keyboard activation and show unavailable or partial collection explicitly.
+
 ## Installation
 
 Install the plugin files in
@@ -120,8 +127,8 @@ shell's `PATH` before starting DMS.
 
 - Install and sign in to the CLI for each provider you enable: Codex, Claude
   Code, or both. Disable providers you do not use in plugin settings.
-- Install `sqlite3` for Codex local token history. Subscription percentages
-  come from the provider and do not depend on token-history totals.
+- Token history reads local CLI transcripts directly; `sqlite3` is not required.
+  Subscription percentages come from the provider, independently of those totals.
 - Claude prime is off by default. Enabling it makes small model requests that
   consume usage to start session windows; it is not required to display quotas.
 
@@ -239,12 +246,12 @@ not necessarily that its account is signed in.
   falls back to `extra_usage`, deduplicating both into one monetary quota bar.
   The statusline JSON cached by `dankaiusage claude-statusline` is the
   fallback source.
-- Token history: reads Codex `logs_2.sqlite` and Claude project JSONL
+- Token history: reads Codex session/archived-session JSONL and Claude project JSONL
   transcripts from their normal CLI config locations. Claude token totals are
   local Claude Code history only; usage from claude.ai, mobile, or other online
   surfaces is not written to those transcripts and is not exposed through a
   Claude CLI usage command.
-- CLI availability: reports whether `codex`, `claude`, and `sqlite3` are on
+- CLI availability: reports whether `codex` and `claude` are on
   `PATH`.
 
 For Claude limits the helper reads the Claude Code OAuth token from

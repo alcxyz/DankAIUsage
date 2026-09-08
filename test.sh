@@ -84,6 +84,13 @@ assert 'includeMode === false ? "%"' in component_text
 assert 'allowanceLabel(buckets[i].allowance, false)' in component_text
 assert 'allowanceLabel(compactWeakest.allowance, false)' in component_text
 assert 'return allowanceLabel(bucket.allowance)' in component_text
+assert 'component TokenHistoryRow: StyledRect' in component_text
+assert 'name: "swap_horiz"' in component_text
+assert 'Keys.onSpacePressed: root.toggleTokenHistory()' in component_text
+assert 'return tokenHistorySession ? provider.session : provider.period' in component_text
+assert 'meta.tokenDataAvailable === false' in component_text
+assert 'if (available === 0) return "Unavailable"' in component_text
+assert 'sqlite3' not in plugin["requires"]
 
 schema = plugin["settings_schema"]
 for key in schema:

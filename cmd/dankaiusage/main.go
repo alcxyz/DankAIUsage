@@ -206,7 +206,6 @@ func collect(opts options) Summary {
 		Capabilities: map[string]bool{
 			"codexCli":  hasCommand("codex"),
 			"claudeCli": hasCommand("claude"),
-			"sqlite3":   hasCommand("sqlite3"),
 		},
 	}
 
@@ -250,60 +249,28 @@ func collectCodex(now time.Time, opts options) ProviderUsage {
 		mergeProviderMeta(&provider, meta)
 		setProviderMeta(&provider, "limitError", err.Error())
 	}
+	setProviderMeta(&provider, "tokenDataSource", "local Codex session transcripts")
+	setProviderMeta(&provider, "tokenDataScope", "Codex CLI local history only")
+	setProviderMeta(&provider, "tokenDataIncludesWeb", false)
 
-	if _, err := exec.LookPath("sqlite3"); err != nil {
-		setProviderMeta(&provider, "tokenDataError", "sqlite3 not found")
-		return provider
-	}
-
-	db := filepath.Join(root, "logs_2.sqlite")
-	if _, err := os.Stat(db); err != nil {
-		setProviderMeta(&provider, "tokenDataError", "Codex logs not found")
-		return provider
-	}
-
-	start := now.AddDate(0, 0, -maxInt(opts.PeriodDays, 31)-1).Unix()
-	query := fmt.Sprintf(`select ts, coalesce(thread_id,''), feedback_log_body from logs where target='codex_otel.trace_safe' and feedback_log_body like '%%event.name="codex.sse_event"%%' and feedback_log_body like '%%event.kind=response.completed%%' and ts >= %d order by ts asc;`, start)
-	cmd := exec.Command("sqlite3", "-separator", "\t", db, query)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	data, err := cmd.Output()
-	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		setProviderMeta(&provider, "tokenDataError", msg)
-		return provider
-	}
-
-	var events []tokenEvent
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for scanner.Scan() {
-		parts := strings.SplitN(scanner.Text(), "\t", 3)
-		if len(parts) != 3 {
-			continue
-		}
-		ts, _ := strconv.ParseInt(parts[0], 10, 64)
-		fields := parseLogFields(parts[2])
-		events = append(events, tokenEvent{
-			Provider:  "codex",
-			Timestamp: time.Unix(ts, 0),
-			Session:   firstNonEmpty(fields["conversation.id"], parts[1]),
-			Model:     fields["model"],
-			Input:     intField(fields, "input_token_count"),
-			Output:    intField(fields, "output_token_count"),
-			Cached:    intField(fields, "cached_token_count"),
-			Reasoning: intField(fields, "reasoning_token_count"),
-			Tool:      intField(fields, "tool_token_count"),
-		})
-	}
-	if err := scanner.Err(); err != nil {
-		setProviderMeta(&provider, "tokenDataError", err.Error())
-	}
-
+	cutoff := now.AddDate(0, 0, -maxInt(opts.PeriodDays, 31)-1)
+	events, stats := collectCodexTranscriptEvents(root, cutoff)
 	applyEvents(&provider, events, now, opts)
+	available := stats.UsableRecords > 0
+	setProviderMeta(&provider, "tokenDataAvailable", available)
+	setProviderMeta(&provider, "transcriptFiles", stats.FilesFound)
+	setProviderMeta(&provider, "transcriptFilesScanned", stats.FilesScanned)
+	setProviderMeta(&provider, "usageEventsScanned", stats.UsageRecords)
+	if stats.partial() {
+		setProviderMeta(&provider, "tokenDataError", "Codex token history is incomplete")
+	}
+	if stats.SourcesFound == 0 {
+		setProviderMeta(&provider, "tokenDataNote", "Codex transcripts not found")
+	} else if !available {
+		setProviderMeta(&provider, "tokenDataNote", "No usable local Codex token records")
+	} else if provider.Period.Requests == 0 {
+		setProviderMeta(&provider, "tokenDataNote", "No local Codex events in selected period")
+	}
 	return provider
 }
 
