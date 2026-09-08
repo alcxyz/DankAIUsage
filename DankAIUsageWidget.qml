@@ -1026,24 +1026,16 @@ PluginComponent {
                 spacing: Theme.spacingXS
 
                 QuickToggle {
-                    text: "Simple"
-                    checked: !root.advancedDropdown
-                    onClicked: root.setDropdownMode("simple")
-                }
-                QuickToggle {
-                    text: "Advanced"
+                    text: root.advancedDropdown ? "Advanced" : "Simple"
                     checked: root.advancedDropdown
-                    onClicked: root.setDropdownMode("advanced")
+                    Accessible.name: text + " view; switch to " + (root.advancedDropdown ? "Simple" : "Advanced")
+                    onClicked: root.setDropdownMode(root.advancedDropdown ? "simple" : "advanced")
                 }
                 QuickToggle {
-                    text: "Left"
-                    checked: !root.showUsed
-                    onClicked: root.setQuickSetting("showUsed", false)
-                }
-                QuickToggle {
-                    text: "Used"
+                    text: root.showUsed ? "Used" : "Left"
                     checked: root.showUsed
-                    onClicked: root.setQuickSetting("showUsed", true)
+                    Accessible.name: "Quota " + text + "; switch to " + (root.showUsed ? "Left" : "Used")
+                    onClicked: root.setQuickSetting("showUsed", !root.showUsed)
                 }
                 QuickToggle {
                     text: "Bar controls"

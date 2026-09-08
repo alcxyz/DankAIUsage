@@ -56,7 +56,8 @@ September 2026; check their current documentation for changes.
 
 ## Features
 
-The dropdown has a remembered **Simple / Advanced** switch. Simple focuses on
+The dropdown has a remembered **Simple / Advanced** toggle button. Its label
+shows the current mode; click to switch. Simple focuses on
 provider quota bars, percentages, reset countdowns, and warnings. Advanced adds
 the overall summary, local token history and tracking controls, available reset
 details, reset history, automation controls, and quick top-bar settings.
@@ -83,7 +84,7 @@ one selected quota for each enabled provider rather than hiding a provider.
 The generic plugin icon and provider logos are independently configurable, so
 the bar can show either icon style, both styles, or text only.
 
-Use **Left / Used** in the dropdown to switch all quota percentages and progress
+Click the **Left / Used** toggle in the dropdown to switch all quota percentages and progress
 bars together, including credits. Left is the default: 26% left fills 26% of the
 bar; Used shows 74% used and fills 74%. Credit details show the remaining balance
 or spending against the budget. Warning colors always reflect proximity to the

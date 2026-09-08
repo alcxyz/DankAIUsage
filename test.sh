@@ -194,10 +194,10 @@ for forbidden in ("setQuickSetting", "runTracking", "runCodexReset", "primeClaud
 # Advanced-only detail is explicitly gated, while quota and warning rows remain
 # available in both modes. Reset recovery controls deliberately have a wider gate.
 for expected in (
-    'text: "Simple"',
-    'onClicked: root.setDropdownMode("simple")',
-    'text: "Advanced"',
-    'onClicked: root.setDropdownMode("advanced")',
+    'text: root.advancedDropdown ? "Advanced" : "Simple"',
+    'onClicked: root.setDropdownMode(root.advancedDropdown ? "simple" : "advanced")',
+    'text: root.showUsed ? "Used" : "Left"',
+    'onClicked: root.setQuickSetting("showUsed", !root.showUsed)',
     'visible: root.advancedDropdown && root.quickControlsOpen',
     'visible: root.advancedDropdown && root.tokenHistoryRange === "tracked"',
     'visible: root.advancedDropdown && root.providerResets(modelData).length > 0',
@@ -207,6 +207,8 @@ for expected in (
 ):
     assert expected in component, f"missing dropdown visibility contract: {expected}"
 assert component.count("visible: root.advancedDropdown\n") >= 3
+assert component.count('onClicked: root.setDropdownMode(') == 1
+assert component.count('onClicked: root.setQuickSetting("showUsed",') == 1
 assert 'model: root.providerQuotaBuckets(modelData)' in component
 assert 'visible: root.providerQuotaBuckets(modelData).length === 0' in component
 assert 'visible: text !== ""' in component
