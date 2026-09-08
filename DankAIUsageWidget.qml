@@ -34,6 +34,7 @@ PluginComponent {
     property var grandTotal: ({ total: 0, input: 0, output: 0, cached: 0, requests: 0, sessions: 0 })
     property var capabilities: ({})
     property string _pendingOutput: ""
+    property bool _usageRefreshPending: false
     property string _claudePrimeOutput: ""
     property string _claudePrimeError: ""
     property bool isPrimingClaude: false
@@ -41,6 +42,11 @@ PluginComponent {
     property bool claudePrimeAutomatic: false
     property bool lastClaudeAutoPrimeFailed: false
     property double lastClaudeAutoPrimeAt: 0
+    property var codexResetStatus: ({ armed: false, message: "Checking reset control..." })
+    property bool codexResetReady: false
+    property string _codexResetOutput: ""
+    property string _codexResetAction: ""
+    property bool _codexResetWasArmed: false
 
     function loadSettings() {
         if (!pluginService || !pluginService.loadPluginData) return
@@ -78,6 +84,7 @@ PluginComponent {
         loadSettings()
         loadCache()
         refreshUsage()
+        runCodexReset("status")
     }
 
     Timer {
@@ -94,8 +101,58 @@ PluginComponent {
         onTriggered: root.refreshUsage()
     }
 
+    Timer {
+        interval: 60000
+        running: true
+        repeat: true
+        // The helper owns the one-shot state and serializes multiple widgets.
+        // Hiding Codex pauses automatic consumption, but still updates status.
+        onTriggered: root.runCodexReset(root.showCodex ? "check" : "status")
+    }
+
+    function runCodexReset(action) {
+        if (codexResetProcess.running) return
+        _codexResetOutput = ""
+        _codexResetAction = action
+        _codexResetWasArmed = codexResetStatus.armed === true
+        codexResetProcess.command = ["dankaiusage", "codex-reset", action]
+        codexResetProcess.running = true
+    }
+
+    Process {
+        id: codexResetProcess
+        running: false
+        stdout: SplitParser {
+            onRead: data => { root._codexResetOutput += data + "\n" }
+        }
+        onExited: (exitCode, exitStatus) => {
+            try {
+                var status = JSON.parse(root._codexResetOutput.trim())
+                if (typeof status.armed !== "boolean") throw new Error("Invalid reset status")
+                if (status.stateKnown === false)
+                    status.armed = root.codexResetStatus.armed
+                root.codexResetStatus = status
+                root.codexResetReady = status.stateKnown === true
+            } catch (e) {
+                root.codexResetReady = false
+                // Do not guess the armed state after a failed status request.
+                root.codexResetStatus = {
+                    armed: root.codexResetStatus.armed,
+                    stateKnown: false,
+                    message: "Reset status unavailable. Check the helper version and retry."
+                }
+            }
+            if (root.codexResetReady && root._codexResetAction === "check" && root._codexResetWasArmed
+                    && root.codexResetStatus.armed !== true)
+                root.refreshUsage()
+        }
+    }
+
     function refreshUsage() {
-        if (usageProcess.running) return
+        if (usageProcess.running) {
+            _usageRefreshPending = true
+            return
+        }
         _pendingOutput = ""
         usageProcess.command = [
             "dankaiusage", "summary",
@@ -131,6 +188,10 @@ PluginComponent {
             onRead: data => { root.errorText = data }
         }
         onExited: (exitCode, exitStatus) => {
+            if (root._usageRefreshPending) {
+                root._usageRefreshPending = false
+                Qt.callLater(root.refreshUsage)
+            }
             if (exitCode !== 0) {
                 root.hasError = true
                 root.errorText = root.errorText || "dankaiusage exited with " + exitCode
@@ -374,10 +435,6 @@ PluginComponent {
         return provider.resets
     }
 
-    function providerResetHeight(provider) {
-        return providerResets(provider).length > 0 ? 34 + Theme.spacingS : 0
-    }
-
     function providerResetSummary(provider) {
         var resets = providerResets(provider)
         if (resets.length === 0) return ""
@@ -388,8 +445,25 @@ PluginComponent {
     function providerResetDetail(provider) {
         var resets = providerResets(provider)
         if (resets.length === 0) return ""
-        var expiry = formatShortDateTime(resets[0].expiresAt)
-        return "Use in Codex Settings > Usage" + (expiry !== "" ? " · expires " + expiry : "")
+        var earliest = ""
+        for (var i = 0; i < resets.length; i++) {
+            var at = Date.parse(resets[i].expiresAt || "")
+            if (isFinite(at) && (earliest === "" || at < Date.parse(earliest)))
+                earliest = resets[i].expiresAt
+        }
+        var expiry = formatShortDateTime(earliest)
+        return "Next expiry" + (expiry !== "" ? " · " + expiry : " not reported")
+    }
+
+    function codexResetDetailText() {
+        var message = codexResetStatus.message || "Automatic reset is off"
+        if (codexResetStatus.error)
+            message += "\n" + codexResetStatus.error
+        if (codexResetStatus.armed && codexResetStatus.expiresAt) {
+            message = (codexResetStatus.title || "Usage reset") + " · expires "
+                    + formatShortDateTime(codexResetStatus.expiresAt) + "\n" + message
+        }
+        return message
     }
 
     function providerAllowanceSummary(provider) {
@@ -805,13 +879,15 @@ PluginComponent {
 
                     StyledRect {
                         width: parent.width
-                        height: 96 + root.providerQuotaHeight(modelData) + root.providerResetHeight(modelData) + (root.providerNote(modelData) !== "" ? 40 : 0)
+                        height: providerContent.implicitHeight + 2 * Theme.spacingS
                         radius: Theme.cornerRadius
                         color: Theme.surfaceContainerHigh
 
                         Column {
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingS
+                            id: providerContent
+                            x: Theme.spacingS
+                            y: Theme.spacingS
+                            width: parent.width - 2 * Theme.spacingS
                             spacing: Theme.spacingS
 
                             Item {
@@ -954,6 +1030,36 @@ PluginComponent {
                                         elide: Text.ElideRight
                                         maximumLineCount: 1
                                     }
+                                }
+                            }
+
+                            Column {
+                                width: parent.width
+                                spacing: Theme.spacingXS
+                                visible: modelData.id === "codex"
+
+                                QuickToggle {
+                                    text: codexResetProcess.running ? "Checking reset..." : !root.codexResetReady ? "Cancel auto reset" : "Auto-use one reset"
+                                    checked: root.codexResetStatus.armed === true
+                                    enabled: !codexResetProcess.running && (root.codexResetReady || root.codexResetStatus.stateKnown === false)
+                                    opacity: enabled ? 1 : 0.5
+                                    onClicked: root.runCodexReset(!root.codexResetReady || root.codexResetStatus.armed ? "disarm" : "arm")
+                                }
+
+                                StyledText {
+                                    width: parent.width
+                                    text: root.codexResetDetailText()
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceVariantText
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                StyledText {
+                                    width: parent.width
+                                    text: "Uses one reset at 99% general usage or 10 min before its expiry. Turns off after one attempt; DMS must be running."
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceVariantText
+                                    wrapMode: Text.WordWrap
                                 }
                             }
 

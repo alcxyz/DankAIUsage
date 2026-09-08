@@ -111,7 +111,7 @@ PluginSettings {
     }
 
     StyledText {
-        text: "Codex is queried from the local Codex app server. Claude is cached from Claude Code statusline data."
+        text: "Codex limits come from its local app server. Claude uses its existing sign-in with statusline data as a fallback. Arm or cancel the one-shot Codex reset from the dropdown; it is off by default."
         width: parent.width
         wrapMode: Text.WordWrap
         font.pixelSize: Theme.fontSizeSmall
