@@ -47,7 +47,7 @@ assert f'pluginId: "{plugin_id}"' in component_text
 assert f'pluginId: "{plugin_id}"' in settings_text
 
 readme = pathlib.Path("README.md").read_text(encoding="utf-8")
-for screenshot in ("docs/screenshot.png", "docs/screenshot-bar.png"):
+for screenshot in ("docs/screenshot.png", "docs/screenshot-simple.png", "docs/screenshot-bar.png"):
     assert f"]({screenshot})" in readme, f"README does not reference {screenshot}"
     with pathlib.Path(screenshot).open("rb") as image:
         header = image.read(24)

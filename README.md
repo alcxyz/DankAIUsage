@@ -4,7 +4,9 @@ DankAIUsage is a [DankMaterialShell](https://github.com/AvengeMedia/DankMaterial
 widget for Codex and Claude subscription quotas, extra-usage credits, and local
 token history. A small Go helper collects usage for the widget.
 
-![AI Usage dropdown with Codex and Claude quotas, display toggles, and reset controls](docs/screenshot.png)
+![Advanced dropdown with Codex and Claude quotas, local token history, and reset controls](docs/screenshot.png)
+
+![Simple dropdown focused on Codex and Claude quotas](docs/screenshot-simple.png)
 
 ![AI Usage on the DankBar with provider logos and minimal quota percentages](docs/screenshot-bar.png)
 
