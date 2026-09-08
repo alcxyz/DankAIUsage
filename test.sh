@@ -138,6 +138,178 @@ else
     fail "plugin structure" "manifest or referenced plugin content is inconsistent"
 fi
 
+echo "Dropdown modes"
+if python3 - <<'PY'
+import pathlib
+import re
+
+component = pathlib.Path("DankAIUsageWidget.qml").read_text(encoding="utf-8")
+
+def function_body(name):
+    match = re.search(rf"\bfunction\s+{re.escape(name)}\s*\([^)]*\)\s*\{{", component)
+    assert match, f"missing {name}()"
+    start = match.end()
+    depth = 1
+    quote = None
+    escaped = False
+    for index in range(start, len(component)):
+        char = component[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char in "\"'`":
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return component[start:index]
+    raise AssertionError(f"unterminated {name}()")
+
+assert 'property string dropdownMode: "simple"' in component
+assert 'readonly property bool advancedDropdown: dropdownMode === "advanced"' in component
+
+load_cache = function_body("loadCache")
+resolve_at = load_cache.index("resolveDropdownMode(")
+persist_at = load_cache.index('savePluginState(pluginId, "dropdownMode", dropdownMode)')
+summary_at = load_cache.index("applySummary(cached, false)")
+assert resolve_at < persist_at < summary_at, "dropdown migration must persist before cached summary refresh"
+
+completed = re.search(r"Component\.onCompleted\s*:\s*\{([^}]*)\}", component, re.S)
+assert completed, "missing startup sequence"
+assert completed.group(1).index("loadCache()") < completed.group(1).index("refreshUsage()")
+
+setter = function_body("setDropdownMode")
+assert 'mode !== "simple" && mode !== "advanced"' in setter
+assert 'savePluginState(pluginId, "dropdownMode", mode)' in setter
+assert "clearTrackingConfirm = false" in setter
+for forbidden in ("setQuickSetting", "runTracking", "runCodexReset", "primeClaude", ".running", "barShow", "enableClaudePrime"):
+    assert forbidden not in setter, f"mode setter must not perform backend/setting action: {forbidden}"
+
+# Advanced-only detail is explicitly gated, while quota and warning rows remain
+# available in both modes. Reset recovery controls deliberately have a wider gate.
+for expected in (
+    'text: "Simple"',
+    'onClicked: root.setDropdownMode("simple")',
+    'text: "Advanced"',
+    'onClicked: root.setDropdownMode("advanced")',
+    'visible: root.advancedDropdown && root.quickControlsOpen',
+    'visible: root.advancedDropdown && root.tokenHistoryRange === "tracked"',
+    'visible: root.advancedDropdown && root.providerResets(modelData).length > 0',
+    'visible: modelData.id === "codex" && root.resetControlsVisible()',
+    'visible: root.advancedDropdown && (root.showCodex || root.showClaude)',
+    'visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime',
+):
+    assert expected in component, f"missing dropdown visibility contract: {expected}"
+assert component.count("visible: root.advancedDropdown\n") >= 3
+assert 'model: root.providerQuotaBuckets(modelData)' in component
+assert 'visible: root.providerQuotaBuckets(modelData).length === 0' in component
+assert 'visible: text !== ""' in component
+assert 'visible: root.hasError && root.errorText !== ""' in component
+PY
+then
+    pass "dropdown persistence and visibility contracts"
+else
+    fail "dropdown contracts" "mode persistence or visibility wiring is inconsistent"
+fi
+
+if command -v node >/dev/null 2>&1; then
+    if node <<'JS'
+const fs = require("fs");
+const qml = fs.readFileSync("DankAIUsageWidget.qml", "utf8");
+
+function extractFunction(name) {
+    const marker = new RegExp(`\\bfunction\\s+${name}\\s*\\([^)]*\\)\\s*\\{`, "g");
+    const match = marker.exec(qml);
+    if (!match) throw new Error(`missing ${name}()`);
+    const brace = qml.indexOf("{", match.index);
+    let depth = 0;
+    let quote = null;
+    let escaped = false;
+    for (let i = brace; i < qml.length; i++) {
+        const char = qml[i];
+        if (quote !== null) {
+            if (escaped) escaped = false;
+            else if (char === "\\") escaped = true;
+            else if (char === quote) quote = null;
+            continue;
+        }
+        if (char === '"' || char === "'" || char === "`") quote = char;
+        else if (char === "{") depth++;
+        else if (char === "}" && --depth === 0) return qml.slice(match.index, i + 1);
+    }
+    throw new Error(`unterminated ${name}()`);
+}
+
+function bindQmlFunction(name, scope) {
+    const expression = extractFunction(name).replace(/^function\s+\w+/, "function");
+    return new Function("scope", `with (scope) { return (${expression}); }`)(scope);
+}
+
+function equal(actual, expected, description) {
+    if (actual !== expected)
+        throw new Error(`${description}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+}
+
+const resolve = bindQmlFunction("resolveDropdownMode", {});
+equal(resolve("simple", {providers: []}), "simple", "persisted simple wins");
+equal(resolve("advanced", null), "advanced", "persisted advanced wins");
+equal(resolve("", {providers: []}), "advanced", "existing cached user migrates to advanced");
+equal(resolve("invalid", {providers: {}}), "advanced", "invalid persisted value migrates from cache");
+equal(resolve(undefined, {}), "simple", "new user defaults to simple");
+equal(resolve(null, null), "simple", "missing state defaults to simple");
+
+const saves = [];
+const service = new Proxy({
+    savePluginState(pluginId, key, value) { saves.push([pluginId, key, value]); }
+}, {
+    get(target, property) {
+        if (!(property in target)) throw new Error(`unexpected plugin service action: ${String(property)}`);
+        return target[property];
+    }
+});
+const setterScope = {
+    dropdownMode: "advanced",
+    clearTrackingConfirm: true,
+    pluginId: "dankAIUsage",
+    pluginService: service
+};
+const setMode = bindQmlFunction("setDropdownMode", setterScope);
+setMode("simple");
+equal(setterScope.dropdownMode, "simple", "setter changes mode");
+equal(setterScope.clearTrackingConfirm, false, "setter cancels destructive confirmation");
+equal(JSON.stringify(saves), JSON.stringify([["dankAIUsage", "dropdownMode", "simple"]]), "setter persists only dropdown mode");
+
+setterScope.clearTrackingConfirm = true;
+for (const invalid of ["", "expert", null, undefined]) setMode(invalid);
+equal(setterScope.dropdownMode, "simple", "invalid values do not change mode");
+equal(setterScope.clearTrackingConfirm, true, "invalid values have no side effects");
+equal(saves.length, 1, "invalid values are not persisted");
+
+function resetVisible(advancedDropdown, codexResetStatus) {
+    return bindQmlFunction("resetControlsVisible", {advancedDropdown, codexResetStatus})();
+}
+equal(resetVisible(false, {armed: false, stateKnown: true}), false, "settled reset controls hide in simple mode");
+equal(resetVisible(true, {armed: false, stateKnown: true}), true, "advanced mode shows reset controls");
+equal(resetVisible(false, {armed: true, stateKnown: true}), true, "armed reset remains recoverable");
+equal(resetVisible(false, {armed: false, stateKnown: false}), true, "unknown reset state remains recoverable");
+equal(resetVisible(false, {armed: false, stateKnown: true, error: "failed"}), true, "reset errors remain visible");
+equal(resetVisible(false, {armed: false, stateKnown: true, state: "attempted"}), true, "uncertain reset outcome remains visible");
+JS
+    then
+        pass "dropdown JavaScript behavior"
+    else
+        fail "dropdown JavaScript behavior" "runtime mode behavior is inconsistent"
+    fi
+else
+    pass "dropdown JavaScript behavior (structurally checked; node unavailable)"
+fi
+
 echo "Go helper"
 VERSION="$(python3 -c 'import json; print(json.load(open("plugin.json", encoding="utf-8"))["version"])')"
 BINARY="$TEST_TMP/dankaiusage"

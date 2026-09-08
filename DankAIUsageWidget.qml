@@ -25,6 +25,8 @@ PluginComponent {
     property bool showUsed: false
     property bool quickControlsOpen: false
     property bool historyOpen: false
+    property string dropdownMode: "simple"
+    readonly property bool advancedDropdown: dropdownMode === "advanced"
     // tokenHistorySession is read once in loadCache() to migrate the former
     // two-state selector. New versions persist an explicit range key.
     property string tokenHistoryRange: "7d"
@@ -91,6 +93,11 @@ PluginComponent {
 
     function loadCache() {
         if (!pluginService || !pluginService.loadPluginState) return
+        var cached = pluginService.loadPluginState(pluginId, "lastSummary", null)
+        dropdownMode = resolveDropdownMode(pluginService.loadPluginState(pluginId, "dropdownMode", ""), cached)
+        // Persist before the first summary so a new installation stays Simple.
+        if (pluginService.savePluginState)
+            pluginService.savePluginState(pluginId, "dropdownMode", dropdownMode)
         var savedRange = pluginService.loadPluginState(pluginId, "tokenHistoryRange", "") || ""
         if (isTokenHistoryRange(savedRange)) {
             tokenHistoryRange = savedRange
@@ -101,8 +108,26 @@ PluginComponent {
         }
         lastClaudeAutoPrimeAt = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeAt", 0) || 0
         lastClaudeAutoPrimeFailed = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeFailed", false) === true
-        var cached = pluginService.loadPluginState(pluginId, "lastSummary", null)
         if (cached && cached.providers) applySummary(cached, false)
+    }
+
+    function resolveDropdownMode(savedMode, cachedSummary) {
+        if (savedMode === "simple" || savedMode === "advanced") return savedMode
+        return cachedSummary && cachedSummary.providers ? "advanced" : "simple"
+    }
+
+    function setDropdownMode(mode) {
+        if (mode !== "simple" && mode !== "advanced") return
+        dropdownMode = mode
+        clearTrackingConfirm = false
+        if (pluginService && pluginService.savePluginState)
+            pluginService.savePluginState(pluginId, "dropdownMode", mode)
+    }
+
+    function resetControlsVisible() {
+        return advancedDropdown || codexResetStatus.armed === true
+                || codexResetStatus.stateKnown === false || !!codexResetStatus.error
+                || codexResetStatus.state === "attempted"
     }
 
     Component.onCompleted: {
@@ -861,13 +886,13 @@ PluginComponent {
         if (provider.id === "claude" && claudePrimeText !== "") {
             parts.push(claudePrimeText)
         }
-        if (provider.id === "claude" && provider.meta.tokenDataIncludesWeb === false) {
+        if (advancedDropdown && provider.id === "claude" && provider.meta.tokenDataIncludesWeb === false) {
             parts.push("Claude tokens are local Claude Code only, not web")
         }
         if (provider.id === "claude" && provider.meta.sessionFallbackSource) {
             parts.push("Session timer from Claude prime; account limits unavailable")
         }
-        if (provider.meta.tokenDataNote) {
+        if (advancedDropdown && provider.meta.tokenDataNote) {
             var note = provider.meta.tokenDataNote
             var lastUsage = formatShortDateTime(provider.meta.lastUsageAt)
             if (lastUsage !== "") note += " (last " + lastUsage + ")"
@@ -1001,6 +1026,16 @@ PluginComponent {
                 spacing: Theme.spacingXS
 
                 QuickToggle {
+                    text: "Simple"
+                    checked: !root.advancedDropdown
+                    onClicked: root.setDropdownMode("simple")
+                }
+                QuickToggle {
+                    text: "Advanced"
+                    checked: root.advancedDropdown
+                    onClicked: root.setDropdownMode("advanced")
+                }
+                QuickToggle {
                     text: "Left"
                     checked: !root.showUsed
                     onClicked: root.setQuickSetting("showUsed", false)
@@ -1012,6 +1047,7 @@ PluginComponent {
                 }
                 QuickToggle {
                     text: "Bar controls"
+                    visible: root.advancedDropdown
                     checked: root.quickControlsOpen
                     onClicked: root.quickControlsOpen = !root.quickControlsOpen
                 }
@@ -1020,7 +1056,7 @@ PluginComponent {
             Column {
                 width: parent.width
                 spacing: Theme.spacingXS
-                visible: root.quickControlsOpen
+                visible: root.advancedDropdown && root.quickControlsOpen
 
                 StyledText {
                     text: "Top bar"
@@ -1051,6 +1087,7 @@ PluginComponent {
             StyledRect {
                 width: parent.width
                 height: 92
+                visible: root.advancedDropdown
                 radius: Theme.cornerRadius
                 color: Theme.surfaceContainerHigh
 
@@ -1069,12 +1106,13 @@ PluginComponent {
 
             TokenHistoryRow {
                 width: parent.width
+                visible: root.advancedDropdown
                 value: root.filteredGrandTokenBreakdown()
             }
 
             TrackingPanel {
                 width: parent.width
-                visible: root.tokenHistoryRange === "tracked"
+                visible: root.advancedDropdown && root.tokenHistoryRange === "tracked"
             }
 
             StyledText {
@@ -1158,7 +1196,7 @@ PluginComponent {
                                         iconName: root.isPrimingClaude ? "hourglass_top" : "bolt"
                                         iconColor: root.isPrimingClaude ? Theme.surfaceVariantText : Theme.primary
                                         anchors.verticalCenter: parent.verticalCenter
-                                        visible: modelData.id === "claude" && root.enableClaudePrime
+                                        visible: root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime
                                         enabled: !root.isPrimingClaude
                                         onClicked: root.primeClaude()
                                     }
@@ -1190,13 +1228,14 @@ PluginComponent {
 
                             TokenHistoryRow {
                                 width: parent.width
+                                visible: root.advancedDropdown
                                 value: root.providerTokenBreakdown(modelData)
                             }
 
                             Item {
                                 width: parent.width
                                 height: 34
-                                visible: root.providerResets(modelData).length > 0
+                                visible: root.advancedDropdown && root.providerResets(modelData).length > 0
 
                                 DankIcon {
                                     name: "refresh"
@@ -1237,7 +1276,7 @@ PluginComponent {
                             Column {
                                 width: parent.width
                                 spacing: Theme.spacingXS
-                                visible: modelData.id === "codex"
+                                visible: modelData.id === "codex" && root.resetControlsVisible()
 
                                 DankToggle {
                                     id: codexAutoResetToggle
@@ -1276,10 +1315,20 @@ PluginComponent {
                                 StyledText {
                                     width: parent.width
                                     text: "Uses one reset at 99% general usage or 10 min before its expiry. Turns off after one attempt; DMS must be running."
+                                    visible: root.advancedDropdown
                                     font.pixelSize: Theme.fontSizeSmall
                                     color: Theme.surfaceVariantText
                                     wrapMode: Text.WordWrap
                                 }
+                            }
+
+                            StyledText {
+                                width: parent.width
+                                text: "Claude session scheduling is enabled · manage in Advanced/settings"
+                                visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: Theme.surfaceVariantText
+                                wrapMode: Text.WordWrap
                             }
 
                             StyledText {
@@ -1312,7 +1361,7 @@ PluginComponent {
             Column {
                 width: parent.width
                 spacing: Theme.spacingS
-                visible: root.showCodex || root.showClaude
+                visible: root.advancedDropdown && (root.showCodex || root.showClaude)
 
                 QuickToggle {
                     text: "Reset history" + (root.visibleHistory().length ? " · " + root.visibleHistory().length : "")

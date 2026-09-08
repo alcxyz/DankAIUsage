@@ -56,6 +56,16 @@ September 2026; check their current documentation for changes.
 
 ## Features
 
+The dropdown has a remembered **Simple / Advanced** switch. Simple focuses on
+provider quota bars, percentages, reset countdowns, and warnings. Advanced adds
+the overall summary, local token history and tracking controls, available reset
+details, reset history, automation controls, and quick top-bar settings.
+New installations start in Simple; existing installations with a cached usage
+summary retain Advanced on upgrade. Either choice leaves the topbar layout,
+tracking, and automation settings unchanged. Armed Codex resets remain visible
+and cancellable in Simple, as do reset errors or unknown outcomes. Enabled
+Claude session scheduling is also indicated there.
+
 The main display is a provider-defined list of quota bars rather than a fixed
 session/weekly grid. Codex may expose its general subscription allowance
 as a weekly-only window alongside separate model-scoped limits. Claude exposes five-hour,
