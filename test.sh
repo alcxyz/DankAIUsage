@@ -107,7 +107,10 @@ else
 fi
 
 echo "documentation"
-ADR_COUNT="$(rg --files docs/adr -g 'ADR-*.md' | wc -l | tr -d '[:space:]')"
+shopt -s nullglob
+ADR_FILES=(docs/adr/ADR-*.md)
+shopt -u nullglob
+ADR_COUNT="${#ADR_FILES[@]}"
 if [ "$ADR_COUNT" -ge 10 ]; then
     pass "$ADR_COUNT ADRs present"
 else
