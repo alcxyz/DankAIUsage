@@ -4,6 +4,9 @@
 **Date:** 2026-07-02
 **Applies to:** `cmd/dankaiusage/main.go` (Claude limit collection)
 
+Refresh timing and cache coordination are amended by
+[ADR-0015](ADR-0015-shared-usage-refresh-cooldown.md).
+
 ## Context
 
 The widget originally learned Claude session/weekly limit percentages from the

@@ -34,6 +34,9 @@ assert plugin["type"] == "widget"
 assert "dankbar-widget" in plugin["capabilities"]
 assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", plugin["version"])
 assert {"settings_read", "settings_write", "process"} <= set(plugin["permissions"])
+assert plugin["settings_schema"]["refreshInterval"]["minimum"] == 180
+assert plugin["settings_schema"]["refreshInterval"]["maximum"] == 3600
+assert plugin["settings_schema"]["refreshInterval"]["default"] == 300
 
 component = pathlib.Path(plugin["component"].removeprefix("./"))
 settings = pathlib.Path(plugin["settings"].removeprefix("./"))
@@ -59,9 +62,11 @@ for screenshot in ("docs/screenshot.png", "docs/screenshot-simple.png", "docs/sc
 # Redemption is an explicit helper-owned one-shot, never a default-on setting
 # or an implicit side effect of collecting usage.
 assert 'armed: false' in component_text
-assert '["dankaiusage", "codex-reset", action]' in component_text
+assert '"dankaiusage", "codex-reset", action,' in component_text
+assert component_text.count('"--refresh-interval", "" + root.refreshInterval') == 3
 assert 'runCodexReset("status")' in component_text
-assert 'root.showCodex ? "check" : "status"' in component_text
+assert 'if (showCodex && codexResetStatus.armed === true)' in component_text
+assert 'runCodexReset("check")' in component_text
 assert 'codexResetStatus.armed ? "disarm" : "arm"' in component_text
 assert 'root.codexResetReady = status.stateKnown === true' in component_text
 assert 'Qt.callLater(root.refreshUsage)' in component_text
@@ -120,6 +125,33 @@ assert 'Qt.callLater(root.refreshUsage)' in component_text
 assert 'Some tracked token data is incomplete.' in component_text
 assert 'The initial total may include older retained local history.' in component_text
 assert 'all-time' not in component_text.lower()
+
+# Refresh intervals remain seconds in storage/argv while the setting presents
+# whole minutes with an explicit, clickable default marker.
+assert 'function normalizedRefreshInterval(value)' in component_text
+assert 'Math.max(180, Math.min(3600, Math.round(seconds / 60) * 60))' in component_text
+assert 'interval: root.refreshInterval * 1000' in component_text
+assert component_text.count('interval: root.refreshInterval * 1000') == 1
+assert 'onTriggered: root.refreshCycle()' in component_text
+assert 'onClicked: root.refreshCycle()' in component_text
+assert 'if (codexResetProcess.running)' in component_text
+refresh_cycle_at = component_text.index('function refreshCycle()')
+reset_check_at = component_text.index('runCodexReset("check")', refresh_cycle_at)
+summary_refresh_at = component_text.index('refreshUsage()', refresh_cycle_at)
+assert reset_check_at < summary_refresh_at
+assert 'minimum: 3' in settings_text
+assert 'maximum: 60' in settings_text
+assert 'step: 1' in settings_text
+assert 'text: "Default 5 min"' in settings_text
+assert 'onClicked: refreshIntervalSetting.setMinutes(5)' in settings_text
+assert 'Accessible.onPressAction: if (enabled) refreshIntervalSetting.setMinutes(5)' in settings_text
+assert 'root.saveValue("refreshInterval", seconds)' in settings_text
+assert 'long intervals can delay detection or miss a brief expiry window' in settings_text
+assert 'provider.meta.usageRefreshPending === true' in component_text
+assert 'provider.meta.usageStale === true || provider.meta.usageDataStale === true' in component_text
+assert 'advancedDropdown && provider.meta.usageCached === true' in component_text
+assert 'formatShortDateTime(provider.meta.usageNextRefreshAt)' in component_text
+assert 'provider requests respect the selected interval' in component_text
 
 schema = plugin["settings_schema"]
 for key in schema:
@@ -182,7 +214,7 @@ assert resolve_at < persist_at < summary_at, "dropdown migration must persist be
 
 completed = re.search(r"Component\.onCompleted\s*:\s*\{([^}]*)\}", component, re.S)
 assert completed, "missing startup sequence"
-assert completed.group(1).index("loadCache()") < completed.group(1).index("refreshUsage()")
+assert completed.group(1).index("loadCache()") < completed.group(1).index("refreshCycle()")
 
 setter = function_body("setDropdownMode")
 assert 'mode !== "simple" && mode !== "advanced"' in setter
@@ -224,17 +256,18 @@ if command -v node >/dev/null 2>&1; then
     if node <<'JS'
 const fs = require("fs");
 const qml = fs.readFileSync("DankAIUsageWidget.qml", "utf8");
+const settingsQml = fs.readFileSync("DankAIUsageSettings.qml", "utf8");
 
-function extractFunction(name) {
+function extractFunction(name, source = qml) {
     const marker = new RegExp(`\\bfunction\\s+${name}\\s*\\([^)]*\\)\\s*\\{`, "g");
-    const match = marker.exec(qml);
+    const match = marker.exec(source);
     if (!match) throw new Error(`missing ${name}()`);
-    const brace = qml.indexOf("{", match.index);
+    const brace = source.indexOf("{", match.index);
     let depth = 0;
     let quote = null;
     let escaped = false;
-    for (let i = brace; i < qml.length; i++) {
-        const char = qml[i];
+    for (let i = brace; i < source.length; i++) {
+        const char = source[i];
         if (quote !== null) {
             if (escaped) escaped = false;
             else if (char === "\\") escaped = true;
@@ -243,13 +276,13 @@ function extractFunction(name) {
         }
         if (char === '"' || char === "'" || char === "`") quote = char;
         else if (char === "{") depth++;
-        else if (char === "}" && --depth === 0) return qml.slice(match.index, i + 1);
+        else if (char === "}" && --depth === 0) return source.slice(match.index, i + 1);
     }
     throw new Error(`unterminated ${name}()`);
 }
 
-function bindQmlFunction(name, scope) {
-    const expression = extractFunction(name).replace(/^function\s+\w+/, "function");
+function bindQmlFunction(name, scope, source = qml) {
+    const expression = extractFunction(name, source).replace(/^function\s+\w+/, "function");
     return new Function("scope", `with (scope) { return (${expression}); }`)(scope);
 }
 
@@ -265,6 +298,66 @@ equal(resolve("", {providers: []}), "advanced", "existing cached user migrates t
 equal(resolve("invalid", {providers: {}}), "advanced", "invalid persisted value migrates from cache");
 equal(resolve(undefined, {}), "simple", "new user defaults to simple");
 equal(resolve(null, null), "simple", "missing state defaults to simple");
+
+const normalizeRefresh = bindQmlFunction("normalizedRefreshInterval", {});
+equal(normalizeRefresh(undefined), 300, "missing refresh interval uses default");
+equal(normalizeRefresh(null), 300, "null refresh interval uses default");
+equal(normalizeRefresh(30), 180, "legacy interval clamps to minimum");
+equal(normalizeRefresh(190), 180, "legacy seconds snap to whole minutes");
+equal(normalizeRefresh(210), 240, "half minute snaps to nearest minute");
+equal(normalizeRefresh(900), 900, "valid whole-minute interval is preserved");
+equal(normalizeRefresh(3599), 3600, "interval snaps at upper bound");
+equal(normalizeRefresh(7200), 3600, "interval clamps to maximum");
+
+const primeProvider = { available: true, meta: {} };
+let primeCalls = 0;
+const primeScope = {
+    enableClaudePrime: true, showClaude: true, isPrimingClaude: false,
+    claudePrimeProcess: { running: false }, claudeProvider() { return primeProvider; },
+    claudeSessionIsActive() { return false; }, lastClaudeAutoPrimeFailed: false,
+    lastClaudeAutoPrimeAt: Date.now(), refreshInterval: 300, pluginService: null,
+    primeClaude() { primeCalls++; }
+};
+const autoPrime = bindQmlFunction("maybeAutoPrimeClaude", primeScope);
+autoPrime();
+equal(primeCalls, 0, "cooldown-only prime result cannot cause immediate retry");
+primeScope.lastClaudeAutoPrimeAt = Date.now() - 301000;
+autoPrime();
+equal(primeCalls, 1, "auto-prime may check again after selected interval");
+autoPrime();
+equal(primeCalls, 1, "summary after prime cannot loop immediately");
+primeScope.lastClaudeAutoPrimeAt = 0;
+primeProvider.meta.usageRefreshPending = true;
+autoPrime();
+equal(primeCalls, 1, "pending post-action quotas do not trigger prime");
+
+const normalizeSetting = bindQmlFunction("normalizedSeconds", {}, settingsQml);
+const settingSaves = [];
+const refreshSettingScope = {
+    refreshSeconds: 300,
+    normalizedSeconds: normalizeSetting,
+    root: { saveValue(key, value) { settingSaves.push([key, value]); } }
+};
+const setRefreshMinutes = bindQmlFunction("setMinutes", refreshSettingScope, settingsQml);
+setRefreshMinutes(60);
+equal(refreshSettingScope.refreshSeconds, 3600, "slider reaches 60-minute maximum");
+setRefreshMinutes(5);
+equal(refreshSettingScope.refreshSeconds, 300, "default marker/reset restores five minutes");
+equal(JSON.stringify(settingSaves), JSON.stringify([["refreshInterval", 3600], ["refreshInterval", 300]]), "slider stores seconds");
+
+const migrationSaves = [];
+const migrationScope = {
+    refreshSeconds: 300,
+    normalizedSeconds: normalizeSetting,
+    root: {
+        pluginService: {},
+        loadValue() { return 30; },
+        saveValue(key, value) { migrationSaves.push([key, value]); }
+    }
+};
+bindQmlFunction("loadValue", migrationScope, settingsQml)();
+equal(migrationScope.refreshSeconds, 180, "settings load migrates legacy interval");
+equal(JSON.stringify(migrationSaves), JSON.stringify([["refreshInterval", 180]]), "settings migration persists clamped seconds");
 
 const saves = [];
 const service = new Proxy({

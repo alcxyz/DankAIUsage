@@ -222,6 +222,27 @@ func TestCodexResetArmRejectsMissingCreditDetails(t *testing.T) {
 	}
 }
 
+func TestCodexResetArmReusesHealthyCachedLimits(t *testing.T) {
+	now := mustParseTime(t, "2026-09-08T12:00:00Z")
+	path := t.TempDir() + "/codex-reset.json"
+	deps := resetDeps(path, now, func(context.Context) (codexResetClient, error) {
+		return nil, errors.New("cached arm must not open a provider client")
+	})
+	deps.RefreshPath = path + ".usage"
+	want := triggeringLimits(armedResetState(now, "cached-credit"), now)
+	want.RateLimitResetCredits.AvailableCountKnown = true
+	if _, _, err := collectCachedCodexRateLimits(deps.RefreshPath, now, time.Hour, false, func() (codexRateLimitsResult, error) {
+		return want, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deps.RefreshInterval = time.Hour
+	status, err := runCodexResetAction("arm", deps)
+	if err != nil || !status.Armed || status.CreditID != "cached-credit" {
+		t.Fatalf("status = %+v, err = %v", status, err)
+	}
+}
+
 func TestCodexResetArmDoesNotReplaceExistingArmOnFailure(t *testing.T) {
 	now := mustParseTime(t, "2026-09-08T12:00:00Z")
 	path := t.TempDir() + "/codex-reset.json"
@@ -282,7 +303,49 @@ func TestCodexResetCheckDoesNotUseStaleOrSubstituteCredit(t *testing.T) {
 	}
 }
 
-func TestCodexResetDisarmsBeforeConsumeAndRefreshes(t *testing.T) {
+func TestCodexResetCheckWaitsRatherThanUsingCachedLimits(t *testing.T) {
+	now := mustParseTime(t, "2026-09-08T12:00:00Z")
+	path := t.TempDir() + "/codex-reset.json"
+	state := armedResetState(now, "pinned")
+	if err := withCodexResetLock(path, func() error { return saveCodexResetState(path, state) }); err != nil {
+		t.Fatal(err)
+	}
+	deps := resetDeps(path, now, func(context.Context) (codexResetClient, error) {
+		return nil, errors.New("cooldown check must not open a provider client")
+	})
+	deps.RefreshPath = path + ".usage"
+	if _, _, err := collectCachedCodexRateLimits(deps.RefreshPath, now, time.Hour, false, func() (codexRateLimitsResult, error) {
+		return triggeringLimits(state, now), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deps.RefreshInterval = time.Hour
+	status, err := runCodexResetAction("check", deps)
+	if err != nil || !status.Armed || status.State != "waiting" || !strings.Contains(status.Message, "fresh") {
+		t.Fatalf("status = %+v, err = %v", status, err)
+	}
+}
+
+func TestCodexResetDoesNotConsumeWhenUsageInvalidationFails(t *testing.T) {
+	now := mustParseTime(t, "2026-09-08T12:00:00Z")
+	path := t.TempDir() + "/codex-reset.json"
+	state := armedResetState(now, "pinned")
+	if err := withCodexResetLock(path, func() error { return saveCodexResetState(path, state) }); err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeCodexResetClient{reads: []codexRateLimitsResult{triggeringLimits(state, now)}}
+	deps := resetDeps(path, now, func(context.Context) (codexResetClient, error) { return client, nil })
+	deps.InvalidateUsage = func(string, time.Time, time.Duration) error { return errors.New("disk failure") }
+	status, err := runCodexResetAction("check", deps)
+	if err == nil || status.Armed || status.State != "error" || client.consumeCall != 0 || status.HistoryError != "" {
+		t.Fatalf("status = %+v, err = %v, consumes = %d", status, err, client.consumeCall)
+	}
+	if strings.Contains(status.Error, "disk failure") {
+		t.Fatalf("private invalidation error leaked: %q", status.Error)
+	}
+}
+
+func TestCodexResetDisarmsBeforeConsumeAndDefersRefresh(t *testing.T) {
 	now := mustParseTime(t, "2026-09-08T12:00:00Z")
 	path := t.TempDir() + "/codex-reset.json"
 	state := armedResetState(now, "pinned")
@@ -310,10 +373,10 @@ func TestCodexResetDisarmsBeforeConsumeAndRefreshes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Armed || status.State != "completed" || status.Outcome != "reset" || !status.Refreshed {
+	if status.Armed || status.State != "completed" || status.Outcome != "reset" || status.Refreshed {
 		t.Fatalf("status = %+v", status)
 	}
-	if client.readCount != 2 || client.consumeCall != 1 {
+	if client.readCount != 1 || client.consumeCall != 1 {
 		t.Fatalf("reads = %d, consumes = %d", client.readCount, client.consumeCall)
 	}
 }
@@ -403,14 +466,14 @@ func TestCodexResetProtocolOutcomesAreOneShot(t *testing.T) {
 			if (err != nil) != test.wantErr {
 				t.Fatalf("err = %v, wantErr = %v", err, test.wantErr)
 			}
-			if status.Armed || status.State != "completed" || status.Outcome != test.outcome || !status.Refreshed || client.consumeCall != 1 {
+			if status.Armed || status.State != "completed" || status.Outcome != test.outcome || status.Refreshed || client.consumeCall != 1 {
 				t.Fatalf("status = %+v, consume calls = %d", status, client.consumeCall)
 			}
 		})
 	}
 }
 
-func TestCodexResetRefreshFailureKeepsKnownOutcomeAndStaysOff(t *testing.T) {
+func TestCodexResetKnownOutcomeStaysOffWithDeferredRefresh(t *testing.T) {
 	now := mustParseTime(t, "2026-09-08T12:00:00Z")
 	path := t.TempDir() + "/codex-reset.json"
 	state := armedResetState(now, "pinned")
@@ -424,11 +487,11 @@ func TestCodexResetRefreshFailureKeepsKnownOutcomeAndStaysOff(t *testing.T) {
 	status, err := runCodexResetAction("check", resetDeps(path, now, func(context.Context) (codexResetClient, error) {
 		return client, nil
 	}))
-	if err == nil || status.Armed || status.Outcome != "reset" || status.Refreshed || client.consumeCall != 1 {
+	if err != nil || status.Armed || status.Outcome != "reset" || status.Refreshed || client.consumeCall != 1 || client.readCount != 1 {
 		t.Fatalf("status = %+v, err = %v", status, err)
 	}
-	if strings.Contains(status.Error, "private") || !strings.Contains(status.Error, "refreshed") {
-		t.Fatalf("unsafe or unclear error = %q", status.Error)
+	if status.Error != "" {
+		t.Fatalf("unexpected deferred refresh result = %+v", status)
 	}
 }
 

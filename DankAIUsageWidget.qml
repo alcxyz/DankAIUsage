@@ -71,16 +71,27 @@ PluginComponent {
     property bool claudePrimeAutomatic: false
     property bool lastClaudeAutoPrimeFailed: false
     property double lastClaudeAutoPrimeAt: 0
-    property var codexResetStatus: ({ armed: false, message: "Checking reset control..." })
+    property var codexResetStatus: ({ armed: false, stateKnown: false, message: "Checking reset control..." })
     property bool codexResetReady: false
     property string _codexResetOutput: ""
     property string _codexResetAction: ""
     property bool _codexResetWasArmed: false
+    property bool _refreshAfterCodexReset: false
+    property bool _refreshCyclePending: false
+
+    function normalizedRefreshInterval(value) {
+        var seconds = Number(value)
+        if (!isFinite(seconds) || seconds <= 0) seconds = 300
+        return Math.max(180, Math.min(3600, Math.round(seconds / 60) * 60))
+    }
 
     function loadSettings() {
         if (!pluginService || !pluginService.loadPluginData) return
         var wasEnabled = enableClaudePrime
-        refreshInterval = pluginService.loadPluginData(pluginId, "refreshInterval", 300) || 300
+        var savedRefreshInterval = pluginService.loadPluginData(pluginId, "refreshInterval", 300)
+        refreshInterval = normalizedRefreshInterval(savedRefreshInterval)
+        if (refreshInterval !== Number(savedRefreshInterval) && pluginService.savePluginData)
+            pluginService.savePluginData(pluginId, "refreshInterval", refreshInterval)
         periodDays = pluginService.loadPluginData(pluginId, "periodDays", 7) || 7
         showCodex = pluginService.loadPluginData(pluginId, "showCodex", true) !== false
         showClaude = pluginService.loadPluginData(pluginId, "showClaude", true) !== false
@@ -143,8 +154,7 @@ PluginComponent {
     Component.onCompleted: {
         loadSettings()
         loadCache()
-        refreshUsage()
-        runCodexReset("status")
+        refreshCycle()
     }
 
     Timer {
@@ -158,16 +168,30 @@ PluginComponent {
         interval: root.refreshInterval * 1000
         running: true
         repeat: true
-        onTriggered: root.refreshUsage()
+        onTriggered: root.refreshCycle()
     }
 
-    Timer {
-        interval: 60000
-        running: true
-        repeat: true
-        // The helper owns the one-shot state and serializes multiple widgets.
+    // A due armed reset must check before summary refreshes the shared provider
+    // cache. Otherwise every reset check could arrive inside the cooldown and
+    // never receive the fresh data required to authorize consumption.
+    function refreshCycle() {
+        if (codexResetProcess.running) {
+            _refreshCyclePending = true
+            return
+        }
+        if (codexResetStatus.stateKnown !== true) {
+            _refreshAfterCodexReset = true
+            runCodexReset("status")
+            return
+        }
+        if (showCodex && codexResetStatus.armed === true) {
+            _refreshAfterCodexReset = true
+            runCodexReset("check")
+            return
+        }
+        refreshUsage()
         // Hiding Codex pauses automatic consumption, but still updates status.
-        onTriggered: root.runCodexReset(root.showCodex ? "check" : "status")
+        runCodexReset("status")
     }
 
     function runCodexReset(action) {
@@ -175,7 +199,10 @@ PluginComponent {
         _codexResetOutput = ""
         _codexResetAction = action
         _codexResetWasArmed = codexResetStatus.armed === true
-        codexResetProcess.command = ["dankaiusage", "codex-reset", action]
+        codexResetProcess.command = [
+            "dankaiusage", "codex-reset", action,
+            "--refresh-interval", "" + root.refreshInterval
+        ]
         codexResetProcess.running = true
     }
 
@@ -202,13 +229,29 @@ PluginComponent {
                     message: "Reset status unavailable. Check the helper version and retry."
                 }
             }
-            if (root.codexResetReady && root._codexResetAction === "check" && root._codexResetWasArmed
-                    && root.codexResetStatus.armed !== true)
-                root.refreshUsage()
+            var continueWithResetCheck = root._refreshAfterCodexReset
+                    && root._codexResetAction === "status" && root.codexResetReady
+                    && root.showCodex && root.codexResetStatus.armed === true
+            if (continueWithResetCheck) {
+                Qt.callLater(function() { root.runCodexReset("check") })
+            } else if (root._refreshCyclePending) {
+                root._refreshAfterCodexReset = false
+                root._usageRefreshPending = false
+                root._refreshCyclePending = false
+                Qt.callLater(root.refreshCycle)
+            } else if (root._refreshAfterCodexReset || root._usageRefreshPending) {
+                root._refreshAfterCodexReset = false
+                root._usageRefreshPending = false
+                Qt.callLater(root.refreshUsage)
+            }
         }
     }
 
     function refreshUsage() {
+        if (codexResetProcess.running) {
+            _usageRefreshPending = true
+            return
+        }
         if (historyExplanationProcess.running) {
             _usageRefreshPending = true
             return
@@ -224,7 +267,8 @@ PluginComponent {
         _pendingOutput = ""
         usageProcess.command = [
             "dankaiusage", "summary",
-            "--period-days", "" + root.periodDays
+            "--period-days", "" + root.periodDays,
+            "--refresh-interval", "" + root.refreshInterval
         ]
         usageProcess.running = true
     }
@@ -242,7 +286,10 @@ PluginComponent {
         isPrimingClaude = true
         claudePrimeAutomatic = automatic
         if (!automatic) lastClaudeAutoPrimeFailed = false
-        claudePrimeProcess.command = ["dankaiusage", "claude-prime"]
+        claudePrimeProcess.command = [
+            "dankaiusage", "claude-prime",
+            "--refresh-interval", "" + root.refreshInterval
+        ]
         claudePrimeProcess.running = true
     }
 
@@ -1053,6 +1100,10 @@ PluginComponent {
         if (!enableClaudePrime || !showClaude || isPrimingClaude || claudePrimeProcess.running) return
         var provider = claudeProvider()
         if (!provider || !provider.available || claudeSessionIsActive(provider) || lastClaudeAutoPrimeFailed) return
+        if (provider.meta && provider.meta.usageRefreshPending === true) return
+        // A cooldown-only helper result must not create a prime -> summary ->
+        // prime loop. Manual priming remains an explicit separate action.
+        if (lastClaudeAutoPrimeAt > 0 && Date.now() < lastClaudeAutoPrimeAt + refreshInterval * 1000) return
         lastClaudeAutoPrimeAt = Date.now()
         if (pluginService && pluginService.savePluginState)
             pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeAt", lastClaudeAutoPrimeAt)
@@ -1215,6 +1266,19 @@ PluginComponent {
     function providerNote(provider) {
         if (!provider || !provider.meta) return ""
         var parts = []
+        if (provider.meta.usageRefreshPending === true) {
+            parts.push("Usage refresh pending; waiting for the next eligible refresh")
+        } else if (provider.meta.usageStale === true || provider.meta.usageDataStale === true) {
+            var staleNote = "Usage data is stale; the latest refresh failed"
+            if (provider.meta.usageRefreshError) staleNote += ": " + provider.meta.usageRefreshError
+            parts.push(staleNote)
+        }
+        if (advancedDropdown && provider.meta.usageCached === true) {
+            var cacheNote = "Cached usage"
+            var nextRefresh = formatShortDateTime(provider.meta.usageNextRefreshAt)
+            if (nextRefresh !== "") cacheNote += " · next refresh " + nextRefresh
+            parts.push(cacheNote)
+        }
         if (provider.id === "claude" && claudePrimeText !== "") {
             parts.push(claudePrimeText)
         }
@@ -1347,9 +1411,10 @@ PluginComponent {
                     buttonSize: 28
                     iconName: "refresh"
                     iconColor: Theme.surfaceVariantText
+                    tooltipText: "Refresh usage (provider requests respect the selected interval)"
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    onClicked: root.refreshUsage()
+                    onClicked: root.refreshCycle()
                 }
             }
 

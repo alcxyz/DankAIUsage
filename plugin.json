@@ -17,8 +17,8 @@
     "refreshInterval": {
       "type": "integer",
       "default": 300,
-      "minimum": 30,
-      "maximum": 1800
+      "minimum": 180,
+      "maximum": 3600
     },
     "periodDays": {
       "type": "integer",

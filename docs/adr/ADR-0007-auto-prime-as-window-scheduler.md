@@ -4,6 +4,9 @@
 **Date:** 2026-07-03
 **Applies to:** `cmd/dankaiusage/main.go` (claude-prime guards), `DankAIUsageWidget.qml` (auto-prime)
 
+Usage fetch timing, including the post-prime refresh, is amended by
+[ADR-0015](ADR-0015-shared-usage-refresh-cooldown.md).
+
 ## Context
 
 [ADR-0001](ADR-0001-claude-limits-from-oauth-usage-api.md) removed prime's

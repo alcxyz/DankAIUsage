@@ -16,3 +16,4 @@
 | [ADR-0012](ADR-0012-optional-persistent-token-totals.md) | Optional persistent local token totals | widget + cmd/dankaiusage |
 | [ADR-0013](ADR-0013-dropdown-detail-modes.md) | Simple and Advanced dropdown modes | widget |
 | [ADR-0014](ADR-0014-user-reported-history-explanations.md) | User-reported explanations for quota changes | widget + cmd/dankaiusage |
+| [ADR-0015](ADR-0015-shared-usage-refresh-cooldown.md) | Shared usage refresh cooldown | widget + cmd/dankaiusage |

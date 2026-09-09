@@ -206,7 +206,8 @@ Only the provider decides whether a window is eligible to reset.
 If you are considering a subscription change, see the cautious, anecdotal
 [upgrade timing note](docs/usage-tips.md#timing-a-codex-subscription-upgrade).
 
-Checks run once per minute while DMS is running and Codex is visible. Sleeping,
+Checks follow the selected usage refresh interval while DMS is running and
+Codex is visible. Sleeping,
 closing DMS, hiding Codex, or losing connectivity can miss the expiry; there is
 no separate background service. The timing balances retained allowance against
 a small safety margin, rather than guaranteeing the last possible moment.
@@ -298,8 +299,21 @@ without contacting either provider with `dankaiusage history`.
 
 ## Settings
 
-Plugin settings control the refresh interval (five minutes by default), token
-history period, enabled providers, cached-token totals, and compact mode.
+Plugin settings control the refresh interval, token history period, enabled
+providers, cached-token totals, and compact mode. **Usage refresh interval**
+ranges from three to sixty minutes, with a marked five-minute default and a
+reset-to-default action. Longer intervals reduce regular network requests and
+local history scans, at the cost of less current information.
+
+The helper shares a per-provider cooldown across refresh paths and processes.
+Manual Refresh can reuse cached quotas; it does not bypass the minimum.
+An already scheduled cooldown is not shortened by changing the slider;
+subsequent requests use the new interval. Provider error backoff may extend
+the wait. Three minutes is a conservative
+minimum, not a guarantee against account restrictions. Claude's undocumented
+OAuth usage source has separate policy and compatibility risks regardless of
+polling frequency. Longer intervals also delay automatic reset checks and may
+miss a credit's expiry window; that feature remains best effort.
 The dropdown's **Bar controls** also offers immediate toggles for compact mode,
 provider logos, the plugin icon, and Claude session/weekly/credits selection.
 These controls save the same preferences as the plugin settings menu and do
@@ -393,9 +407,10 @@ account data is unavailable — while the local prime timer is active.
 Otherwise, it sends one small `claude -p` prompt with safe mode, no
 session persistence, tools disabled, a tiny replacement system prompt, `sonnet`
 as the default model, prompt suggestions disabled, and a low budget cap. It
-then refreshes the account usage cache and returns the new window's
-allowances, and records a local five-hour session timer as the fallback
-guard. This spends a small amount of Claude usage by design.
+then obtains account usage subject to the shared cooldown, and records a
+local five-hour session timer as the fallback guard. New account percentages
+may need to wait for the next eligible refresh. This spends a small amount of
+Claude usage by design.
 
 When the "Enable Claude prime" setting is on, the widget automatically runs the
 prime request whenever Claude is visible and no active session timer is known.

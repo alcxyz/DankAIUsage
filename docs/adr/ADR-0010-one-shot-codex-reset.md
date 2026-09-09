@@ -5,6 +5,9 @@
 **Applies to:** `cmd/dankaiusage`, `DankAIUsageWidget.qml`
 **Amends:** ADR-0008's read-only reset decision
 
+Check scheduling and post-consumption usage refresh timing are amended by
+[ADR-0015](ADR-0015-shared-usage-refresh-cooldown.md).
+
 ## Context
 
 Earned Codex resets expire. Users want to use an available reset late enough to
