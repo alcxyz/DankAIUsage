@@ -37,6 +37,10 @@ the plugin, without adding a monitoring service or another dependency.
 - Ignore unknown/stale/fallback-inferred readings for change detection. Missing
   buckets do not mean that usage reset. Idle sliding reset timestamps must not
   produce repetitive reset events.
+- Treat reset-time shifts of at most five seconds in either direction as timing
+  noise, not a schedule change. This conservative local tolerance covers
+  observed one-second fluctuations; it does not suppress an actual allowance
+  increase or a larger timing change. Continue updating the observation baseline.
 - Display the latest eight events in a collapsible history section, following
   provider visibility and the Left/Used presentation preference. Keep history
   out of DMS's persistent summary cache so there is one retained history store.

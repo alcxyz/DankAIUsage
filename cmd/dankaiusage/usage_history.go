@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,13 +20,14 @@ import (
 )
 
 const (
-	usageHistoryLegacyVersion = 1
-	usageHistoryStateVersion  = 2
-	usageHistoryMaxEvents     = 200
-	usageHistoryMaxAge        = 30 * 24 * time.Hour
-	usageHistoryLockTimeout   = 250 * time.Millisecond
-	usageHistoryExplainMax    = 4 * 1024
-	usageHistoryNoteMaxRunes  = 280
+	usageHistoryLegacyVersion   = 1
+	usageHistoryStateVersion    = 2
+	usageHistoryMaxEvents       = 200
+	usageHistoryMaxAge          = 30 * 24 * time.Hour
+	usageHistoryLockTimeout     = 250 * time.Millisecond
+	usageHistoryExplainMax      = 4 * 1024
+	usageHistoryNoteMaxRunes    = 280
+	usageHistoryTimingTolerance = 5 * time.Second
 )
 
 var usageHistoryExplanationReasons = []string{
@@ -67,6 +69,7 @@ type UsageHistoryEvent struct {
 	ExplanationChoices []string                 `json:"explanationChoices"`
 	Explanation        *UsageHistoryExplanation `json:"explanation,omitempty"`
 	ExpiryExplained    bool                     `json:"expiryExplained,omitempty"`
+	TimingNoise        bool                     `json:"timingNoise,omitempty"`
 }
 
 type usageHistoryExplainRequest struct {
@@ -335,6 +338,9 @@ func decorateUsageHistoryEvents(events []UsageHistoryEvent) error {
 	groups := make(map[string][]int)
 	for index := range events {
 		event := &events[index]
+		// Derived presentation metadata, not a rewrite of the original facts or
+		// user explanation. Recompute it when loading older retained events too.
+		event.TimingNoise = usageHistoryTimingNoise(*event)
 		choices := usageHistoryChoices(*event)
 		if len(choices) == 0 {
 			if event.GroupID != "" || event.Explanation != nil {
@@ -393,6 +399,25 @@ func decorateUsageHistoryEvents(events []UsageHistoryEvent) error {
 func usageHistoryGroupID(provider, observedAt string) string {
 	digest := sha256.Sum256([]byte(provider + "\x00" + observedAt))
 	return fmt.Sprintf("%x", digest)
+}
+
+func usageHistoryTimingNoise(event UsageHistoryEvent) bool {
+	if event.Kind != "window_changed_unknown" || event.Before == nil || event.After == nil ||
+		event.Before.UsedPercent == nil || event.After.UsedPercent == nil {
+		return false
+	}
+	before, after := *event.Before.UsedPercent, *event.After.UsedPercent
+	if math.IsNaN(before) || math.IsNaN(after) || math.IsInf(before, 0) || math.IsInf(after, 0) ||
+		after < before-0.001 {
+		return false
+	}
+	previousReset, beforeErr := time.Parse(time.RFC3339Nano, event.Before.ResetAt)
+	currentReset, afterErr := time.Parse(time.RFC3339Nano, event.After.ResetAt)
+	if beforeErr != nil || afterErr != nil {
+		return false
+	}
+	delta := currentReset.Sub(previousReset)
+	return delta != 0 && delta >= -usageHistoryTimingTolerance && delta <= usageHistoryTimingTolerance
 }
 
 func usageHistoryChoices(event UsageHistoryEvent) []string {
@@ -554,12 +579,13 @@ func observeQuotaBucket(state *usageHistoryState, provider string, bucket QuotaB
 	}
 
 	usedDropped := current.UsedPercent < previous.UsedPercent-0.001
-	resetChanged := current.ResetAt != "" && previous.ResetAt != "" && current.ResetAt != previous.ResetAt
+	previousReset, previousResetErr := time.Parse(time.RFC3339, previous.ResetAt)
+	resetDelta := currentReset.Sub(previousReset)
+	resetChanged := previousResetErr == nil && (resetDelta < -usageHistoryTimingTolerance || resetDelta > usageHistoryTimingTolerance)
 	if resetChanged && previous.UsedPercent == 0 && current.UsedPercent == 0 {
 		state.Observations[key] = current
 		return false
 	}
-	previousReset, previousResetErr := time.Parse(time.RFC3339, previous.ResetAt)
 	previousResetDue := previousResetErr == nil && !validationNow.Before(previousReset)
 	redemptionEmitted := false
 	if resetChanged && previousResetDue {

@@ -245,6 +245,12 @@ Each entry includes the observation time, previous sample time where available,
 before/after allowance, and changes to the reset schedule or earned-reset count.
 Left/Used also controls historical allowance percentages.
 
+Reset-time fluctuations of up to five seconds are ignored as timing noise;
+actual allowance increases are still detected. Older noise events remain in
+Advanced history as **Minor reset-time adjustment**, with any notes preserved,
+but do not trigger a question. **Reset time changed** means the expected reset
+time moved, not that allowance was refilled.
+
 - **Scheduled window change:** a rollover consistent with the previous reset
   schedule; inferred from snapshots.
 - **Unexpected replenishment:** allowance increased early. This can suggest a

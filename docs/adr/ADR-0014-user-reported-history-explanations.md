@@ -20,6 +20,13 @@ should be able to supply that context directly in the widget.
 - Offer explanations for ambiguous refills, reset-count changes, reset-schedule
   changes, and inferred external redemptions. Do not prompt for ordinary
   scheduled windows or confirmed plugin actions.
+- Retained schedule-only events with a reset-time shift of at most five seconds
+  and no allowance increase are marked as minor timing noise for presentation.
+  Preserve their original facts, group identifiers and user explanations. Do not
+  prompt for a latest group containing only this noise, and do not reveal an
+  older unanswered prompt in its place. Mixed groups with genuine changes remain
+  eligible. Keep these older events accessible in Advanced history; no destructive
+  migration or automatic dismissal is required.
 - Group related eligible changes observed for the same provider at the same
   time. One response applies to that group; grouping denotes a shared
   observation, not proof of a shared cause.

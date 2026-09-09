@@ -593,6 +593,18 @@ equal(scope.latestExplanationPrompt(now), null, "answering latest does not revea
 scope.usageHistory = [older, {...latest, explanation: {reason: "dismissed", source: "user"}}];
 equal(scope.latestExplanationPrompt(now), null, "dismissing latest does not reveal older unanswered group");
 
+const timingNoise = {...latest, kind: "window_changed_unknown", timingNoise: true};
+scope.usageHistory = [older, timingNoise];
+equal(scope.latestExplanationPrompt(now), null, "legacy timing noise neither prompts nor reveals older unanswered groups");
+equal(scope.historyGroups(scope.usageHistory).length, 2, "timing noise remains in history");
+scope.usageHistory = [timingNoise, {...latest, kind: "credits_changed"}];
+equal(scope.latestExplanationPrompt(now).groupId, "latest", "mixed group with a genuine change still prompts");
+const title = bindQmlFunction("historyEventTitle", scope);
+equal(title(timingNoise), "Minor reset-time adjustment", "legacy noise has an honest history label");
+equal(title({...latest, kind: "window_changed_unknown"}), "Reset time changed", "time adjustment is distinguished from refill");
+scope.historyEventTitle = title;
+equal(bindQmlFunction("historyPromptTitle", scope)(scope.latestExplanationPrompt(now)), "Available resets changed · Weekly", "mixed prompt title describes the genuine change, not timing noise");
+
 scope.usageHistory = [
     older,
     event({kind: "scheduled_window", observedAt: "2026-09-08T11:30:00Z", groupId: "scheduled"}),

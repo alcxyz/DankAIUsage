@@ -420,6 +420,9 @@ PluginComponent {
         // prompt, not a queue that reveals older unanswered observations.
         var latest = groups[0]
         if (hasHistoryExplanation(latest)) return null
+        // Keep legacy jitter in Advanced history without asking the user to
+        // explain it or revealing a queue of older unanswered prompts.
+        if (latest.events.every(function(event) { return event.timingNoise === true })) return null
         var observed = Date.parse(latest.observedAt)
         var age = nowMs - observed
         if (!isFinite(observed) || age < 0 || age > 24 * 60 * 60 * 1000) return null
@@ -471,7 +474,7 @@ PluginComponent {
         if (!group || !group.events) return "Recent quota change"
         for (var i = 0; i < group.events.length; i++) {
             var event = group.events[i]
-            if (historyEventEligible(event))
+            if (historyEventEligible(event) && event.timingNoise !== true)
                 return historyEventTitle(event) + (event.label ? " · " + event.label : "")
         }
         return "Recent quota change"
@@ -766,7 +769,7 @@ PluginComponent {
         case "scheduled_window": return "Scheduled window change"
         case "allowance_increased_unknown": return "Unexpected replenishment"
         case "reset_redeemed_inferred": return "Likely reset redeemed"
-        case "window_changed_unknown": return "Reset schedule changed"
+        case "window_changed_unknown": return event.timingNoise === true ? "Minor reset-time adjustment" : "Reset time changed"
         case "credits_changed": return "Available resets changed"
         case "plugin_reset_reset": return "Plugin reset applied"
         case "plugin_reset_already_redeemed": return "Reset already redeemed"
