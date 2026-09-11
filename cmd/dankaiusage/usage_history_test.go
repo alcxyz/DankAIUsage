@@ -254,6 +254,376 @@ func TestUsageHistoryConcurrentSerialization(t *testing.T) {
 	}
 }
 
+func TestUsageHistoryExplanationGroupingChoicesAndPersistence(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	path := filepath.Join(t.TempDir(), "usage-history.json")
+	beforeUsed, afterUsed := 80.0, 10.0
+	beforeCredits, afterCredits := 2, 1
+	state := defaultUsageHistoryState()
+	state.Events = []UsageHistoryEvent{
+		{
+			ObservedAt: now.Format(time.RFC3339), Provider: "codex", Bucket: "general-weekly", Label: "Weekly",
+			Kind: "allowance_increased_unknown", Source: "quota_observation", Confidence: "inferred",
+			Before: &UsageHistoryValue{UsedPercent: &beforeUsed}, After: &UsageHistoryValue{UsedPercent: &afterUsed}, Message: "original refill",
+		},
+		{
+			ObservedAt: now.Format(time.RFC3339), Provider: "codex", Bucket: "earned-resets", Label: "Earned resets",
+			Kind: "credits_changed", Source: "quota_observation", Confidence: "observed",
+			Before: &UsageHistoryValue{AvailableCredits: &beforeCredits}, After: &UsageHistoryValue{AvailableCredits: &afterCredits}, Message: "original credits",
+		},
+		{
+			ObservedAt: now.Format(time.RFC3339), Provider: "claude", Bucket: "general-weekly", Label: "Weekly",
+			Kind: "window_changed_unknown", Source: "quota_observation", Confidence: "observed", Message: "claude window",
+		},
+		{
+			ObservedAt: now.Add(time.Second).Format(time.RFC3339), Provider: "codex", Kind: "scheduled_window",
+			Source: "quota_observation", Confidence: "inferred", Message: "scheduled",
+		},
+		{
+			ObservedAt: now.Add(2 * time.Second).Format(time.RFC3339), Provider: "codex", Kind: "plugin_reset_reset",
+			Source: "plugin_reset", Confidence: "confirmed", Message: "plugin",
+		},
+	}
+	if err := withUsageHistoryLock(path, func() error { return saveUsageHistoryState(path, state) }); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := readUsageHistory(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[0].GroupID == "" || events[0].GroupID != events[1].GroupID {
+		t.Fatalf("correlated group ids = %q, %q", events[0].GroupID, events[1].GroupID)
+	}
+	if events[2].GroupID == events[0].GroupID {
+		t.Fatal("providers shared an explanation group")
+	}
+	for _, index := range []int{3, 4} {
+		if events[index].Explainable || events[index].GroupID != "" || len(events[index].ExplanationChoices) != 0 {
+			t.Fatalf("ineligible event %d decorated as %+v", index, events[index])
+		}
+	}
+	if !slicesContain(events[0].ExplanationChoices, "provider_bonus") || slicesContain(events[1].ExplanationChoices, "provider_bonus") {
+		t.Fatalf("individual choices = refill %v, drop %v", events[0].ExplanationChoices, events[1].ExplanationChoices)
+	}
+
+	note := "  changed during support call  "
+	request, err := normalizeUsageHistoryExplainRequest(usageHistoryExplainRequest{GroupID: events[0].GroupID, Reason: "provider_bonus", Note: &note})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err = explainUsageHistory(path, now.Add(time.Minute), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range []int{0, 1} {
+		if events[index].Explanation == nil || events[index].Explanation.Reason != "provider_bonus" ||
+			events[index].Explanation.Note != "changed during support call" || events[index].Explanation.Source != "user" {
+			t.Fatalf("group explanation %d = %+v", index, events[index].Explanation)
+		}
+	}
+	if events[0].Kind != "allowance_increased_unknown" || events[0].Confidence != "inferred" || events[0].Message != "original refill" ||
+		*events[0].Before.UsedPercent != 80 || *events[0].After.UsedPercent != 10 {
+		t.Fatalf("original event facts changed: %+v", events[0])
+	}
+
+	events, err = explainUsageHistory(path, now.Add(2*time.Minute), usageHistoryExplainRequest{GroupID: events[0].GroupID, Reason: "dismissed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[0].Explanation.Reason != "dismissed" || events[0].Explanation.Note != "" || events[0].Explanation.Source != "user" {
+		t.Fatalf("edited explanation = %+v", events[0].Explanation)
+	}
+	reloaded, err := readUsageHistory(path)
+	if err != nil || reloaded[0].GroupID != events[0].GroupID || reloaded[0].Explanation.Reason != "dismissed" {
+		t.Fatalf("reloaded events = %+v, err = %v", reloaded, err)
+	}
+}
+
+func TestUsageHistoryExplanationChoiceFilters(t *testing.T) {
+	beforeOne, afterTwo := 1, 2
+	beforeTwo, afterOne := 2, 1
+	creditIncrease := UsageHistoryEvent{Provider: "codex", Kind: "credits_changed", Source: "quota_observation",
+		Before: &UsageHistoryValue{AvailableCredits: &beforeOne}, After: &UsageHistoryValue{AvailableCredits: &afterTwo}}
+	creditDrop := UsageHistoryEvent{Provider: "codex", Kind: "credits_changed", Source: "quota_observation",
+		Before: &UsageHistoryValue{AvailableCredits: &beforeTwo}, After: &UsageHistoryValue{AvailableCredits: &afterOne}}
+	claudeRefill := UsageHistoryEvent{Provider: "claude", Kind: "allowance_increased_unknown", Source: "quota_observation"}
+
+	if slicesContain(usageHistoryChoices(creditIncrease), "external_reset") || !slicesContain(usageHistoryChoices(creditIncrease), "provider_bonus") {
+		t.Fatalf("credit increase choices = %v", usageHistoryChoices(creditIncrease))
+	}
+	if !slicesContain(usageHistoryChoices(creditDrop), "external_reset") || slicesContain(usageHistoryChoices(creditDrop), "provider_bonus") {
+		t.Fatalf("credit drop choices = %v", usageHistoryChoices(creditDrop))
+	}
+	if slicesContain(usageHistoryChoices(claudeRefill), "external_reset") || !slicesContain(usageHistoryChoices(claudeRefill), "provider_bonus") {
+		t.Fatalf("Claude refill choices = %v", usageHistoryChoices(claudeRefill))
+	}
+	for _, event := range []UsageHistoryEvent{
+		{Kind: "scheduled_window", Source: "quota_observation"},
+		{Kind: "plugin_reset_attempt_unknown", Source: "plugin_reset"},
+		{Provider: "codex", Kind: "credits_changed", Source: "quota_observation", ExpiryExplained: true},
+	} {
+		if choices := usageHistoryChoices(event); len(choices) != 0 {
+			t.Fatalf("ineligible choices = %v for %+v", choices, event)
+		}
+	}
+}
+
+func TestUsageHistoryExplanationRejectsStaleUnsupportedAndCorruptWithoutSaving(t *testing.T) {
+	now := mustParseTime(t, "2026-09-08T12:00:00Z")
+	for _, test := range []struct {
+		name    string
+		state   usageHistoryState
+		groupID string
+		reason  string
+	}{
+		{
+			name: "pruned",
+			state: usageHistoryState{Version: usageHistoryStateVersion, Events: []UsageHistoryEvent{{
+				ObservedAt: now.Add(-31 * 24 * time.Hour).Format(time.RFC3339), Provider: "codex", Kind: "allowance_increased_unknown", Source: "quota_observation",
+			}}},
+			groupID: usageHistoryGroupID("codex", now.Add(-31*24*time.Hour).Format(time.RFC3339)), reason: "unknown",
+		},
+		{
+			name: "ineligible",
+			state: usageHistoryState{Version: usageHistoryStateVersion, Events: []UsageHistoryEvent{{
+				ObservedAt: now.Format(time.RFC3339), Provider: "codex", Kind: "scheduled_window", Source: "quota_observation",
+			}}},
+			groupID: usageHistoryGroupID("codex", now.Format(time.RFC3339)), reason: "unknown",
+		},
+		{
+			name: "unsupported reason",
+			state: usageHistoryState{Version: usageHistoryStateVersion, Events: []UsageHistoryEvent{{
+				ObservedAt: now.Format(time.RFC3339), Provider: "codex", Kind: "credits_changed", Source: "quota_observation",
+				Before: &UsageHistoryValue{AvailableCredits: intPointer(2)}, After: &UsageHistoryValue{AvailableCredits: intPointer(1)},
+			}}},
+			groupID: usageHistoryGroupID("codex", now.Format(time.RFC3339)), reason: "provider_bonus",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "usage-history.json")
+			if test.state.Observations == nil {
+				test.state.Observations = map[string]usageHistoryObservation{}
+			}
+			if test.state.Credits == nil {
+				test.state.Credits = map[string]usageHistoryCreditObservation{}
+			}
+			if err := withUsageHistoryLock(path, func() error { return saveUsageHistoryState(path, test.state) }); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := explainUsageHistory(path, now, usageHistoryExplainRequest{GroupID: test.groupID, Reason: test.reason}); err == nil {
+				t.Fatal("expected explanation rejection")
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || string(after) != string(before) {
+				t.Fatalf("state changed on rejection: before %q after %q, err = %v", before, after, err)
+			}
+		})
+	}
+
+	path := filepath.Join(t.TempDir(), "usage-history.json")
+	corrupt := []byte(`{}`)
+	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := explainUsageHistory(path, now, usageHistoryExplainRequest{GroupID: "missing", Reason: "unknown"}); err == nil {
+		t.Fatal("expected corrupt-state rejection")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(corrupt) {
+		t.Fatalf("corrupt state changed: %q, err = %v", got, err)
+	}
+}
+
+func TestUsageHistoryExplanationRequestValidation(t *testing.T) {
+	valid := `{"groupId":"group","reason":"unknown","note":"  hello  "}`
+	request, err := readUsageHistoryExplainRequest(strings.NewReader(valid + "\n"))
+	if err != nil || request.Note == nil || *request.Note != "hello" {
+		t.Fatalf("request = %+v, err = %v", request, err)
+	}
+	withoutNewline, err := readUsageHistoryExplainRequest(strings.NewReader(valid))
+	if err != nil || withoutNewline.GroupID != "group" {
+		t.Fatalf("EOF-framed request = %+v, err = %v", withoutNewline, err)
+	}
+	longNote := strings.Repeat("ø", usageHistoryNoteMaxRunes+1)
+	for name, payload := range map[string]string{
+		"unknown field": `{"groupId":"group","reason":"unknown","note":"private","extra":true}`,
+		"trailing JSON": `{"groupId":"group","reason":"unknown","note":"private"}{"note":"private"}`,
+		"oversize body": strings.Repeat("x", usageHistoryExplainMax+1),
+		"long note":     `{"groupId":"group","reason":"unknown","note":"` + longNote + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := readUsageHistoryExplainRequest(strings.NewReader(payload + "\n"))
+			if err == nil || strings.Contains(err.Error(), "private") {
+				t.Fatalf("unsafe validation error = %v", err)
+			}
+		})
+	}
+}
+
+func TestUsageHistoryKnownCreditExpiryIsNotExplainable(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	path := filepath.Join(t.TempDir(), "usage-history.json")
+	provider := historyProvider("codex", "general-weekly", "Weekly", 20, now.Add(12*time.Hour))
+	remainingExpiry := now.Add(24 * time.Hour)
+	setHistoryCredits(&provider, now.Add(time.Hour), remainingExpiry)
+	if _, err := observeUsageHistory(path, now, []ProviderUsage{provider}); err != nil {
+		t.Fatal(err)
+	}
+	provider = historyProvider("codex", "general-weekly", "Weekly", 25, now.Add(12*time.Hour))
+	setHistoryCredits(&provider, remainingExpiry)
+	events, err := observeUsageHistory(path, now.Add(2*time.Hour), []ProviderUsage{provider})
+	if err != nil || len(events) != 1 || events[0].Kind != "credits_changed" {
+		t.Fatalf("events = %+v, err = %v", events, err)
+	}
+	if !events[0].ExpiryExplained || events[0].Explainable || events[0].GroupID != "" {
+		t.Fatalf("expiry-explained event = %+v", events[0])
+	}
+	reloaded, err := readUsageHistory(path)
+	if err != nil || !reloaded[0].ExpiryExplained || reloaded[0].Explainable {
+		t.Fatalf("reloaded events = %+v, err = %v", reloaded, err)
+	}
+}
+
+func TestUsageHistoryExplanationSurvivesPartialGroupPruning(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	path := filepath.Join(t.TempDir(), "usage-history.json")
+	groupTime := now.Add(-time.Hour).Format(time.RFC3339)
+	explanation := &UsageHistoryExplanation{Reason: "provider_bonus", UpdatedAt: now.Format(time.RFC3339), Source: "user"}
+	state := defaultUsageHistoryState()
+	state.Events = append(state.Events,
+		UsageHistoryEvent{ObservedAt: groupTime, Provider: "codex", Kind: "allowance_increased_unknown", Source: "quota_observation", Explanation: explanation},
+		UsageHistoryEvent{ObservedAt: groupTime, Provider: "codex", Kind: "credits_changed", Source: "quota_observation",
+			Before: &UsageHistoryValue{AvailableCredits: intPointer(2)}, After: &UsageHistoryValue{AvailableCredits: intPointer(1)}, Explanation: explanation},
+	)
+	for index := 0; index < usageHistoryMaxEvents-1; index++ {
+		state.Events = append(state.Events, UsageHistoryEvent{
+			ObservedAt: now.Add(time.Duration(index+1) * time.Second).Format(time.RFC3339),
+			Provider:   "codex", Kind: "scheduled_window", Source: "quota_observation",
+		})
+	}
+	if err := decorateUsageHistoryEvents(state.Events); err != nil {
+		t.Fatal(err)
+	}
+	if err := withUsageHistoryLock(path, func() error { return saveUsageHistoryState(path, state) }); err != nil {
+		t.Fatal(err)
+	}
+	events, err := readUsageHistory(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != usageHistoryMaxEvents {
+		t.Fatalf("pruned history len = %d", len(events))
+	}
+	if events[0].Kind != "credits_changed" || events[0].Explanation == nil || events[0].Explanation.Reason != "provider_bonus" {
+		t.Fatalf("pruned history first = %+v", events[0])
+	}
+	if _, err := readUsageHistory(path); err != nil {
+		t.Fatalf("persisted partial group became unreadable: %v", err)
+	}
+}
+
+func TestUsageHistoryVersionOneMigratesOnWriteAndFutureVersionIsPreserved(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	path := filepath.Join(t.TempDir(), "usage-history.json")
+	legacy := []byte(`{"version":1,"observations":{},"credits":{},"events":[{"observedAt":"` + now.Format(time.RFC3339) + `","provider":"codex","kind":"allowance_increased_unknown","source":"quota_observation","confidence":"inferred","message":"legacy"}]}`)
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	events, err := readUsageHistory(path)
+	if err != nil || len(events) != 1 || !events[0].Explainable || events[0].GroupID == "" {
+		t.Fatalf("legacy events = %+v, err = %v", events, err)
+	}
+	unchanged, err := os.ReadFile(path)
+	if err != nil || string(unchanged) != string(legacy) {
+		t.Fatalf("read-only migration rewrote state: %q, err = %v", unchanged, err)
+	}
+	if _, err := explainUsageHistory(path, now.Add(time.Minute), usageHistoryExplainRequest{GroupID: events[0].GroupID, Reason: "unknown"}); err != nil {
+		t.Fatal(err)
+	}
+	var migrated usageHistoryState
+	data, err := os.ReadFile(path)
+	if err != nil || json.Unmarshal(data, &migrated) != nil || migrated.Version != usageHistoryStateVersion || migrated.Events[0].Explanation == nil {
+		t.Fatalf("migrated state = %+v, err = %v", migrated, err)
+	}
+
+	futurePath := filepath.Join(t.TempDir(), "usage-history.json")
+	future := []byte(`{"version":999,"observations":{},"credits":{},"events":[]}`)
+	if err := os.WriteFile(futurePath, future, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := explainUsageHistory(futurePath, now, usageHistoryExplainRequest{GroupID: "missing", Reason: "unknown"}); err == nil {
+		t.Fatal("expected future-version rejection")
+	}
+	got, err := os.ReadFile(futurePath)
+	if err != nil || string(got) != string(future) {
+		t.Fatalf("future state changed: %q, err = %v", got, err)
+	}
+}
+
+func TestUsageHistoryConcurrentExplanationEditsRemainAtomic(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	path := filepath.Join(t.TempDir(), "usage-history.json")
+	state := defaultUsageHistoryState()
+	state.Events = []UsageHistoryEvent{{
+		ObservedAt: now.Format(time.RFC3339), Provider: "codex", Kind: "allowance_increased_unknown", Source: "quota_observation",
+	}}
+	if err := withUsageHistoryLock(path, func() error { return saveUsageHistoryState(path, state) }); err != nil {
+		t.Fatal(err)
+	}
+	events, err := readUsageHistory(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasons := []string{"subscription_change", "external_reset", "account_change", "provider_bonus", "unknown", "dismissed"}
+	var wg sync.WaitGroup
+	errorsSeen := make(chan error, len(reasons))
+	for index, reason := range reasons {
+		wg.Add(1)
+		go func(index int, reason string) {
+			defer wg.Done()
+			_, err := explainUsageHistory(path, now.Add(time.Duration(index+1)*time.Millisecond), usageHistoryExplainRequest{
+				GroupID: events[0].GroupID,
+				Reason:  reason,
+			})
+			errorsSeen <- err
+		}(index, reason)
+	}
+	wg.Wait()
+	close(errorsSeen)
+	for err := range errorsSeen {
+		if err != nil {
+			t.Fatalf("concurrent edit failed: %v", err)
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved usageHistoryState
+	if err := json.Unmarshal(data, &saved); err != nil || len(saved.Events) != 1 || saved.Events[0].Explanation == nil ||
+		!slicesContain(reasons, saved.Events[0].Explanation.Reason) {
+		t.Fatalf("saved state = %+v, err = %v", saved, err)
+	}
+}
+
+func slicesContain(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func intPointer(value int) *int {
+	return &value
+}
+
 func TestCodexResetHistoryFailureDoesNotChangeOneShotOutcome(t *testing.T) {
 	now := mustParseTime(t, "2026-09-08T12:00:00Z")
 	dir := t.TempDir()
@@ -280,7 +650,7 @@ func TestCodexResetHistoryFailureDoesNotChangeOneShotOutcome(t *testing.T) {
 }
 
 func TestCodexResetHistoryRecordsConfirmedAndUnknownOutcomes(t *testing.T) {
-	now := mustParseTime(t, "2026-09-08T12:00:00Z")
+	now := time.Now().UTC().Truncate(time.Second)
 	for _, test := range []struct {
 		name       string
 		consumeErr error

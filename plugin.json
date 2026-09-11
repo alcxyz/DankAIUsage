@@ -2,7 +2,7 @@
   "id": "dankAIUsage",
   "name": "AI Usage",
   "description": "Monitor Codex and Claude quotas, credits, and token history",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "author": "alcxyz",
   "icon": "monitoring",
   "type": "widget",
@@ -17,8 +17,8 @@
     "refreshInterval": {
       "type": "integer",
       "default": 300,
-      "minimum": 30,
-      "maximum": 1800
+      "minimum": 180,
+      "maximum": 3600
     },
     "periodDays": {
       "type": "integer",

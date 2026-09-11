@@ -74,20 +74,26 @@ type codexResetClient interface {
 }
 
 type codexResetDeps struct {
-	Now         func() time.Time
-	StatePath   string
-	HistoryPath string
-	OpenClient  func(context.Context) (codexResetClient, error)
-	Timeout     time.Duration
+	Now             func() time.Time
+	StatePath       string
+	HistoryPath     string
+	RefreshPath     string
+	RefreshInterval time.Duration
+	InvalidateUsage func(string, time.Time, time.Duration) error
+	OpenClient      func(context.Context) (codexResetClient, error)
+	Timeout         time.Duration
 }
 
 func defaultCodexResetDeps() codexResetDeps {
 	return codexResetDeps{
-		Now:         time.Now,
-		StatePath:   codexResetStatePath(),
-		HistoryPath: usageHistoryPath(),
-		OpenClient:  openCodexResetClient,
-		Timeout:     codexResetCommandTimeout,
+		Now:             time.Now,
+		StatePath:       codexResetStatePath(),
+		HistoryPath:     usageHistoryPath(),
+		RefreshPath:     codexUsageCachePath(),
+		RefreshInterval: usageRefreshDefaultInterval,
+		InvalidateUsage: invalidateCodexUsageCache,
+		OpenClient:      openCodexResetClient,
+		Timeout:         codexResetCommandTimeout,
 	}
 }
 
@@ -95,6 +101,7 @@ func runCodexResetCommand(args []string) {
 	fs := flag.NewFlagSet("codex-reset", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	pretty := fs.Bool("pretty", false, "pretty-print JSON")
+	refreshInterval := fs.Int("refresh-interval", int(usageRefreshDefaultInterval/time.Second), "provider usage refresh interval in seconds")
 	action := "status"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		action = args[0]
@@ -109,7 +116,9 @@ func runCodexResetCommand(args []string) {
 		return
 	}
 
-	status, err := runCodexResetAction(action, defaultCodexResetDeps())
+	deps := defaultCodexResetDeps()
+	deps.RefreshInterval = usageRefreshIntervalSeconds(*refreshInterval)
+	status, err := runCodexResetAction(action, deps)
 	writeCodexResetStatus(status, err == nil, *pretty)
 }
 
@@ -145,6 +154,17 @@ func runCodexResetAction(action string, deps codexResetDeps) (codexResetStatus, 
 		} else {
 			deps.HistoryPath = usageHistoryPath()
 		}
+	}
+	if deps.RefreshPath == "" {
+		if deps.StatePath != codexResetStatePath() {
+			deps.RefreshPath = filepath.Join(filepath.Dir(deps.StatePath), "codex-usage.json")
+		} else {
+			deps.RefreshPath = codexUsageCachePath()
+		}
+	}
+	deps.RefreshInterval = normalizeUsageRefreshInterval(deps.RefreshInterval)
+	if deps.InvalidateUsage == nil {
+		deps.InvalidateUsage = invalidateCodexUsageCache
 	}
 	if deps.OpenClient == nil {
 		deps.OpenClient = openCodexResetClient
@@ -228,16 +248,15 @@ func armCodexReset(state *codexResetState, deps codexResetDeps) error {
 	if state.Armed {
 		return errors.New("automatic Codex reset is already armed")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), deps.Timeout)
-	defer cancel()
-	client, err := deps.OpenClient(ctx)
-	if err != nil {
-		return errors.New(codexResetProtocolFailure)
+	limits, refresh, client, err := readCodexLimitsForReset(deps, false)
+	if client != nil {
+		defer client.Close()
 	}
-	defer client.Close()
-	limits, err := client.ReadRateLimits()
 	if err != nil {
-		return errors.New(safeCodexResetError(err))
+		return err
+	}
+	if refresh.Stale {
+		return errors.New("Codex limits are stale; wait for the next usage refresh before arming")
 	}
 	now := deps.Now()
 	credit, ok := selectCodexResetCredit(limits.RateLimitResetCredits, now)
@@ -287,9 +306,17 @@ func checkCodexReset(state *codexResetState, deps codexResetDeps) (*codexResetHi
 		return nil, errors.New("armed reset credit expired")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), deps.Timeout)
-	defer cancel()
-	client, err := deps.OpenClient(ctx)
+	limits, _, client, err := readCodexLimitsForReset(deps, true)
+	if errors.Is(err, errUsageRefreshCoolingDown) {
+		candidate := *state
+		candidate.State = "waiting"
+		candidate.Message = "Waiting for the next fresh Codex usage check"
+		if saveErr := saveCodexResetState(deps.StatePath, candidate); saveErr != nil {
+			return nil, codexResetSaveError("could not save Codex reset state", saveErr)
+		}
+		*state = candidate
+		return nil, nil
+	}
 	if err != nil {
 		candidate := *state
 		candidate.State = "error"
@@ -297,19 +324,9 @@ func checkCodexReset(state *codexResetState, deps codexResetDeps) (*codexResetHi
 		if saveCodexResetState(deps.StatePath, candidate) == nil {
 			*state = candidate
 		}
-		return nil, errors.New(codexResetProtocolFailure)
+		return nil, err
 	}
 	defer client.Close()
-	limits, err := client.ReadRateLimits()
-	if err != nil {
-		candidate := *state
-		candidate.State = "error"
-		candidate.Message = "Could not refresh Codex limits; the reset remains armed"
-		if saveCodexResetState(deps.StatePath, candidate) == nil {
-			*state = candidate
-		}
-		return nil, errors.New(safeCodexResetError(err))
-	}
 	// The app-server read can take long enough to cross a reset or credit
 	// expiry boundary. All eligibility decisions use a clock sample taken
 	// after that fresh response arrives.
@@ -352,6 +369,15 @@ func checkCodexReset(state *codexResetState, deps codexResetDeps) (*codexResetHi
 	}
 	*state = candidate
 	historyRecord := &codexResetHistoryRecord{ObservedAt: now, BeforeObservedAt: now, Before: limits}
+	if err := deps.InvalidateUsage(deps.RefreshPath, now, deps.RefreshInterval); err != nil {
+		candidate = *state
+		candidate.State = "error"
+		candidate.Message = "Automatic reset stopped before redemption because the usage cache could not be invalidated"
+		if saveCodexResetState(deps.StatePath, candidate) == nil {
+			*state = candidate
+		}
+		return nil, errors.New("automatic reset stopped because the Codex usage cache could not be invalidated")
+	}
 
 	outcome, consumeErr := client.ConsumeReset(state.CreditID, state.IdempotencyKey)
 	if consumeErr != nil {
@@ -396,28 +422,46 @@ func checkCodexReset(state *codexResetState, deps codexResetDeps) (*codexResetHi
 	}
 	*state = candidate
 
-	refreshedLimits, err := client.ReadRateLimits()
-	if err != nil {
-		historyRecord.ObservedAt = deps.Now()
-		candidate = *state
-		candidate.Message += "; refreshed limits are unavailable"
-		if saveCodexResetState(deps.StatePath, candidate) == nil {
-			*state = candidate
-		}
-		return historyRecord, errors.New("reset outcome received, but refreshed Codex limits are unavailable")
-	}
-	historyRecord.After = &refreshedLimits
 	historyRecord.ObservedAt = deps.Now()
-	candidate = *state
-	candidate.Refreshed = true
-	if err := saveCodexResetState(deps.StatePath, candidate); err != nil {
-		return historyRecord, codexResetSaveError("could not save refreshed reset status", err)
-	}
-	*state = candidate
 	if outcome == "nothingToReset" || outcome == "noCredit" {
 		return historyRecord, errors.New("Codex did not apply the earned reset")
 	}
 	return historyRecord, nil
+}
+
+func readCodexLimitsForReset(deps codexResetDeps, requireFresh bool) (codexRateLimitsResult, usageRefreshInfo, codexResetClient, error) {
+	var client codexResetClient
+	limits, refresh, err := collectCachedCodexRateLimits(deps.RefreshPath, deps.Now(), deps.RefreshInterval, requireFresh, func() (codexRateLimitsResult, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), deps.Timeout)
+		opened, openErr := deps.OpenClient(ctx)
+		if openErr != nil {
+			cancel()
+			return codexRateLimitsResult{}, errors.New(codexResetProtocolFailure)
+		}
+		client = &cancelingCodexResetClient{codexResetClient: opened, cancel: cancel}
+		read, readErr := client.ReadRateLimits()
+		if readErr != nil {
+			client.Close()
+			client = nil
+			return codexRateLimitsResult{}, errors.New(safeCodexResetError(readErr))
+		}
+		return read, nil
+	})
+	if err != nil && client != nil {
+		client.Close()
+		client = nil
+	}
+	return limits, refresh, client, err
+}
+
+type cancelingCodexResetClient struct {
+	codexResetClient
+	cancel context.CancelFunc
+}
+
+func (client *cancelingCodexResetClient) Close() {
+	client.codexResetClient.Close()
+	client.cancel()
 }
 
 func selectCodexResetCredit(credits codexRateLimitResetCredits, now time.Time) (codexRateLimitResetCredit, bool) {

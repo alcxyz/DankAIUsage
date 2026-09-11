@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -380,7 +381,7 @@ func TestCollectClaudeSubscriptionLimitsUsesOAuthCache(t *testing.T) {
 	}
 	saveClaudeOAuthUsageCache(claudeOAuthUsageCachePath(), cache)
 
-	session, weekly, _, _, meta, err := collectClaudeSubscriptionLimits(now)
+	session, weekly, _, _, meta, _, err := collectClaudeSubscriptionLimits(now, usageRefreshDefaultInterval)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,9 +410,8 @@ func TestCollectClaudeOAuthLimitsBacksOffWithoutCredentials(t *testing.T) {
 	if saved.NextAttemptAt == "" || saved.LastError == "" {
 		t.Fatalf("expected backoff marker, got %+v", saved)
 	}
-	if _, _, _, _, _, err := collectClaudeOAuthLimits(now.Add(30 * time.Second)); err == nil ||
-		!strings.Contains(err.Error(), "backing off") {
-		t.Fatalf("expected backoff error, got %v", err)
+	if _, _, _, _, _, err := collectClaudeOAuthLimits(now.Add(30 * time.Second)); !errors.Is(err, errUsageRefreshCoolingDown) {
+		t.Fatalf("expected durable refresh cooldown, got %v", err)
 	}
 }
 
