@@ -577,6 +577,7 @@ for (const name of [
     "historyProviderVisible",
     "hasHistoryExplanation",
     "latestExplanationPrompt",
+    "historyEventNeedsNoPrompt",
     "historyNoteRuneLength",
     "truncateHistoryNote",
 ]) scope[name] = bindQmlFunction(name, scope);
@@ -590,7 +591,7 @@ scope.historyExplanationError = "stale error";
 scope.beginHistoryExplanation = bindQmlFunction("beginHistoryExplanation", scope);
 
 function event({
-    kind = "allowance_increased_unknown",
+    kind = "window_changed_unknown",
     provider = "codex",
     observedAt = "2026-09-08T10:00:00Z",
     groupId = "group-a",
@@ -640,6 +641,19 @@ const older = event({observedAt: "2026-09-08T10:00:00Z", groupId: "older"});
 const latest = event({observedAt: "2026-09-08T11:00:00Z", groupId: "latest"});
 scope.usageHistory = [older, latest];
 equal(scope.latestExplanationPrompt(now).groupId, "latest", "newest visible eligible group prompts");
+
+const clearRefill = {...latest, kind: "allowance_increased_unknown", before: {usedPercent: 58}, after: {usedPercent: 0}};
+scope.usageHistory = [older, clearRefill];
+equal(scope.latestExplanationPrompt(now), null, "clear refill is quiet without exposing older prompts");
+const likelyRedemption = {...clearRefill, kind: "reset_redeemed_inferred", before: {usedPercent: 58, availableCredits: 2}, after: {usedPercent: 0, availableCredits: 1}};
+scope.usageHistory = [older, likelyRedemption];
+equal(scope.latestExplanationPrompt(now), null, "inferred redemption with matching evidence is quiet");
+scope.usageHistory = [clearRefill, {...latest, kind: "credits_changed"}];
+equal(scope.latestExplanationPrompt(now).groupId, "latest", "unexplained companion event still prompts");
+scope.usageHistory = [{...clearRefill, before: {usedPercent: null}}];
+equal(scope.latestExplanationPrompt(now).groupId, "latest", "missing refill evidence remains ambiguous");
+scope.usageHistory = [{...likelyRedemption, after: {usedPercent: 0, availableCredits: 2}}];
+equal(scope.latestExplanationPrompt(now).groupId, "latest", "contradictory redemption evidence still prompts");
 
 scope.usageHistory = [older, {...latest, explanation: {reason: "external_reset", source: "user"}}];
 equal(scope.latestExplanationPrompt(now), null, "answering latest does not reveal older unanswered group");

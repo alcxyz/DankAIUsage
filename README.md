@@ -272,6 +272,11 @@ account identifiers, prompts, or opaque reset-credit IDs.
 
 #### Explain an unexpected change
 
+Clear early refills and redemptions supported by a simultaneous drop in available
+resets are recorded quietly, without asking you to supply a cause. Optional
+explanations remain available in Advanced history. Missing or contradictory
+evidence, or unexplained companion changes, can still warrant a question.
+
 Both Simple and Advanced can show a compact **What changed?** prompt for the
 latest unexplained change observed within the last 24 hours. Related changes
 sampled together for one provider share a response. Ordinary scheduled resets,

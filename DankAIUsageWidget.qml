@@ -425,11 +425,31 @@ PluginComponent {
         if (hasHistoryExplanation(latest)) return null
         // Keep legacy jitter in Advanced history without asking the user to
         // explain it or revealing a queue of older unanswered prompts.
-        if (latest.events.every(function(event) { return event.timingNoise === true })) return null
+        if (latest.events.every(historyEventNeedsNoPrompt)) return null
         var observed = Date.parse(latest.observedAt)
         var age = nowMs - observed
         if (!isFinite(observed) || age < 0 || age > 24 * 60 * 60 * 1000) return null
         return latest
+    }
+
+    function historyEventNeedsNoPrompt(event) {
+        if (event.timingNoise === true) return true
+        var before = event.before || {}
+        var after = event.after || {}
+        var clearRefill = typeof before.usedPercent === "number" && isFinite(before.usedPercent)
+                && typeof after.usedPercent === "number" && isFinite(after.usedPercent)
+                && before.usedPercent >= 0 && before.usedPercent <= 100
+                && after.usedPercent >= 0 && after.usedPercent <= 100
+                && after.usedPercent < before.usedPercent - 0.001
+        // A clear observation does not require knowing its ultimate cause.
+        // Keep optional explanations in history without claiming a bonus.
+        if (event.kind === "allowance_increased_unknown") return clearRefill
+        if (event.kind === "reset_redeemed_inferred")
+            return clearRefill && typeof before.availableCredits === "number"
+                    && typeof after.availableCredits === "number"
+                    && Number.isInteger(before.availableCredits) && Number.isInteger(after.availableCredits)
+                    && after.availableCredits >= 0 && before.availableCredits > after.availableCredits
+        return false
     }
 
     function visibleHistoryGroups() {
