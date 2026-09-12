@@ -19,3 +19,4 @@
 | [ADR-0015](ADR-0015-shared-usage-refresh-cooldown.md) | Shared usage refresh cooldown | widget + cmd/dankaiusage |
 | [ADR-0016](ADR-0016-private-local-diagnostics.md) | Allowlisted local diagnostics | helper + widget + packaging |
 | [ADR-0017](ADR-0017-public-reset-announcements.md) | Opt-in public reset announcements | helper + widget + settings |
+| [ADR-0018](ADR-0018-dropdown-hierarchy-and-semantic-colors.md) | Dropdown information hierarchy and semantic status colors | widget |
