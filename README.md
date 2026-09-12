@@ -270,6 +270,29 @@ offset a redemption. Sleep, unavailable data, caching, and gaps between polls
 can hide intermediate events. Automatic observations do not store credentials,
 account identifiers, prompts, or opaque reset-credit IDs.
 
+#### Local diagnostics
+
+Open **Advanced → Diagnostics** to preview recent failures and recoveries.
+**Refresh report** reads local state only; it does not request provider usage.
+**Copy report** copies exactly the preview for you to review and share in an
+issue. Nothing is uploaded automatically. The same local report is available
+with `dankaiusage diagnostics`.
+
+Diagnostics retain at most 100 events for seven days in
+`$XDG_STATE_HOME/dankaiusage/diagnostics.json`, falling back to
+`~/.local/state/dankaiusage/diagnostics.json`. Files are owner-only and bounded;
+old events are pruned when diagnostics are accessed. Durable quota refresh
+reservations also belong in state, not disposable cache.
+
+Reports contain only event timestamps, provider names, predefined categories,
+HTTP status/cooldown information, and validated build identifiers. They exclude
+raw errors, responses, credentials, account IDs, paths, usage totals, prompts,
+and notes. Report timestamps use UTC (`Z`) for unambiguous issue reports.
+Timestamps can reveal activity times: preview before sharing.
+Build identifiers distinguish development revisions; flake-less Nix packages
+use a public-source fingerprint. Diagnostics start with this version and cannot
+recover failures that were previously overwritten or never recorded.
+
 #### Explain an unexpected change
 
 Clear early refills and redemptions supported by a simultaneous drop in available

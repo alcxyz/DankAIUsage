@@ -26,6 +26,12 @@ PluginComponent {
     property bool showUsed: false
     property bool quickControlsOpen: false
     property bool historyOpen: false
+    property bool diagnosticsOpen: false
+    property string diagnosticReport: ""
+    property string diagnosticStatus: ""
+    property string _diagnosticOutput: ""
+    property bool _diagnosticOverflow: false
+    property bool _diagnosticTimedOut: false
     property string dropdownMode: "simple"
     readonly property bool advancedDropdown: dropdownMode === "advanced"
     // tokenHistorySession is read once in loadCache() to migrate the former
@@ -311,6 +317,7 @@ PluginComponent {
                 Qt.callLater(root.refreshUsage)
             }
             if (exitCode !== 0) {
+                root.recordHelperFailure()
                 root.hasError = true
                 root.errorText = root.errorText || "dankaiusage exited with " + exitCode
                 root.isLoading = false
@@ -329,10 +336,67 @@ PluginComponent {
                     root.pluginService.savePluginState(root.pluginId, "lastSummary", cachedSummary)
                 }
             } catch (e) {
+                root.recordHelperFailure()
                 root.hasError = true
                 root.errorText = "Could not parse usage data"
             }
             root.isLoading = false
+        }
+    }
+
+    function recordHelperFailure() {
+        // Fixed category only: never forward stderr, exception text or payloads.
+        if (!diagnosticFailureProcess.running) diagnosticFailureProcess.running = true
+    }
+
+    Process {
+        id: diagnosticFailureProcess
+        command: ["dankaiusage", "diagnostics", "helper-failed"]
+    }
+
+    function refreshDiagnostics() {
+        if (diagnosticProcess.running) return
+        diagnosticReport = ""
+        diagnosticStatus = "Loading local diagnostics…"
+        _diagnosticOutput = ""
+        _diagnosticOverflow = false
+        _diagnosticTimedOut = false
+        diagnosticProcess.running = true
+    }
+
+    Process {
+        id: diagnosticProcess
+        command: ["dankaiusage", "diagnostics"]
+        stdout: SplitParser {
+            onRead: data => {
+                if (root._diagnosticOutput.length + data.length > 65536) {
+                    root._diagnosticOverflow = true
+                    return
+                }
+                root._diagnosticOutput += data + "\n"
+            }
+        }
+        onExited: (exitCode, exitStatus) => {
+            if (root._diagnosticTimedOut) return
+            root.diagnosticStatus = "Local diagnostics unavailable. Check that the helper is up to date."
+            if (exitCode !== 0 || root._diagnosticOverflow) return
+            try {
+                var result = JSON.parse(root._diagnosticOutput)
+                if (result.available !== true || typeof result.report !== "string") return
+                root.diagnosticReport = result.report
+                root.diagnosticStatus = "Preview before copying. Times are UTC (Z); includes build identifiers. Nothing is uploaded."
+            } catch (e) { /* Never include parser errors or helper output in reports. */ }
+        }
+    }
+
+    Timer {
+        interval: 10000
+        running: diagnosticProcess.running
+        onTriggered: {
+            root._diagnosticTimedOut = true
+            diagnosticProcess.running = false
+            root.diagnosticReport = ""
+            root.diagnosticStatus = "Local diagnostics timed out."
         }
     }
 
@@ -1418,6 +1482,71 @@ PluginComponent {
         Column {
             spacing: Theme.spacingL
 
+            component DiagnosticsPanel: Column {
+                width: parent.width
+                spacing: Theme.spacingS
+                visible: root.advancedDropdown
+                QuickToggle {
+                    text: "Diagnostics"
+                    checked: root.diagnosticsOpen
+                    onClicked: {
+                        root.diagnosticsOpen = !root.diagnosticsOpen
+                        if (root.diagnosticsOpen) root.refreshDiagnostics()
+                    }
+                }
+                Column {
+                    width: parent.width
+                    spacing: Theme.spacingS
+                    visible: root.diagnosticsOpen
+                    StyledText {
+                        width: parent.width
+                        text: root.diagnosticStatus
+                        textFormat: Text.PlainText
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                    }
+                    Flickable {
+                        width: parent.width
+                        height: Math.min(220, diagnosticPreview.contentHeight)
+                        contentHeight: diagnosticPreview.contentHeight
+                        clip: true
+                        TextEdit {
+                            id: diagnosticPreview
+                            width: parent.width
+                            text: root.diagnosticReport
+                            textFormat: TextEdit.PlainText
+                            readOnly: true
+                            selectByMouse: true
+                            activeFocusOnTab: true
+                            wrapMode: TextEdit.Wrap
+                            color: Theme.surfaceText
+                            font.pixelSize: Theme.fontSizeSmall
+                            Accessible.name: "Diagnostic report preview"
+                        }
+                    }
+                    Flow {
+                        width: parent.width
+                        spacing: Theme.spacingXS
+                        CompactAction {
+                            text: "Refresh report"
+                            enabled: !diagnosticProcess.running
+                            onClicked: root.refreshDiagnostics()
+                        }
+                        CompactAction {
+                            text: "Copy report"
+                            enabled: root.diagnosticReport !== "" && !diagnosticProcess.running
+                            onClicked: {
+                                diagnosticPreview.selectAll()
+                                diagnosticPreview.copy()
+                                diagnosticPreview.deselect()
+                                root.diagnosticStatus = "Report copied to clipboard. Nothing was uploaded."
+                            }
+                        }
+                    }
+                }
+            }
+
             Item {
                 width: parent.width
                 height: headerTitle.implicitHeight + headerSubtitle.implicitHeight + 2
@@ -2040,6 +2169,7 @@ PluginComponent {
                 font.pixelSize: Theme.fontSizeMedium
                 visible: root.isLoading
             }
+            DiagnosticsPanel { }
         }
     }
 
@@ -2429,6 +2559,7 @@ PluginComponent {
         Accessible.role: Accessible.CheckBox
         Accessible.name: text
         Accessible.checked: checked
+        Accessible.onToggleAction: clicked()
         Accessible.onPressAction: clicked()
         Keys.onSpacePressed: clicked()
         Keys.onReturnPressed: clicked()

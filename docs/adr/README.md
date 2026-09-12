@@ -17,3 +17,4 @@
 | [ADR-0013](ADR-0013-dropdown-detail-modes.md) | Simple and Advanced dropdown modes | widget |
 | [ADR-0014](ADR-0014-user-reported-history-explanations.md) | User-reported explanations for quota changes | widget + cmd/dankaiusage |
 | [ADR-0015](ADR-0015-shared-usage-refresh-cooldown.md) | Shared usage refresh cooldown | widget + cmd/dankaiusage |
+| [ADR-0016](ADR-0016-private-local-diagnostics.md) | Allowlisted local diagnostics | helper + widget + packaging |

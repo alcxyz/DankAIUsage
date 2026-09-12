@@ -64,6 +64,14 @@ for screenshot in ("docs/screenshot.png", "docs/screenshot-simple.png", "docs/sc
 assert 'armed: false' in component_text
 assert '"dankaiusage", "codex-reset", action,' in component_text
 assert component_text.count('"--refresh-interval", "" + root.refreshInterval') == 3
+assert 'command: ["dankaiusage", "diagnostics"]' in component_text
+assert 'command: ["dankaiusage", "diagnostics", "helper-failed"]' in component_text
+assert 'root._diagnosticOutput.length + data.length > 65536' in component_text
+assert 'result.available !== true || typeof result.report !== "string"' in component_text
+assert 'diagnosticPreview.copy()' in component_text
+assert 'text: root.diagnosticReport' in component_text
+assert 'Accessible.name: "Diagnostic report preview"' in component_text
+assert 'component DiagnosticsPanel: Column' in component_text
 assert 'runCodexReset("status")' in component_text
 assert 'if (showCodex && codexResetStatus.armed === true)' in component_text
 assert 'runCodexReset("check")' in component_text
@@ -718,6 +726,17 @@ fi
 
 if [ -x "$BINARY" ]; then
     assert_eq "helper version matches plugin.json" "$VERSION" "$("$BINARY" version)"
+    if XDG_STATE_HOME="$TEST_TMP/diagnostic-state" "$BINARY" diagnostics | python3 -c '
+import json, sys
+report = json.load(sys.stdin)
+assert report["available"] is True
+assert "No diagnostics have been recorded" in report["report"]
+assert "DankAIUsage diagnostics" in report["report"]
+'; then
+        pass "local-only diagnostic CLI report"
+    else
+        fail "diagnostic CLI report" "safe report unavailable"
+    fi
 fi
 
 if go test ./...; then

@@ -117,11 +117,7 @@ type codexResetHistoryRecord struct {
 }
 
 func usageHistoryPath() string {
-	if value := os.Getenv("XDG_STATE_HOME"); value != "" {
-		return filepath.Join(value, "dankaiusage", "usage-history.json")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "dankaiusage", "usage-history.json")
+	return filepath.Join(pluginStateDir(), "usage-history.json")
 }
 
 func defaultUsageHistoryState() usageHistoryState {

@@ -22,21 +22,27 @@ var errUsageRefreshCoolingDown = errors.New("usage refresh is cooling down")
 var errUsageRefreshState = errors.New("usage refresh state is invalid")
 
 type usageRefreshInfo struct {
-	FetchedAt     time.Time
-	NextAttemptAt time.Time
-	Cached        bool
-	Stale         bool
-	Pending       bool
-	LastError     string
+	FetchedAt                 time.Time
+	NextAttemptAt             time.Time
+	Cached                    bool
+	Stale                     bool
+	Pending                   bool
+	LastError                 string
+	DiagnosticCategory        string
+	DiagnosticHTTPStatus      int
+	DiagnosticCooldownSeconds int64
 }
 
 type codexUsageCache struct {
-	Version       int                    `json:"version"`
-	FetchedAt     string                 `json:"fetchedAt,omitempty"`
-	NextAttemptAt string                 `json:"nextAttemptAt,omitempty"`
-	LastError     string                 `json:"lastError,omitempty"`
-	Invalidated   bool                   `json:"invalidated,omitempty"`
-	Result        *codexRateLimitsResult `json:"result,omitempty"`
+	Version                   int                    `json:"version"`
+	FetchedAt                 string                 `json:"fetchedAt,omitempty"`
+	NextAttemptAt             string                 `json:"nextAttemptAt,omitempty"`
+	LastError                 string                 `json:"lastError,omitempty"`
+	DiagnosticCategory        string                 `json:"diagnosticCategory,omitempty"`
+	DiagnosticHTTPStatus      int                    `json:"diagnosticHttpStatus,omitempty"`
+	DiagnosticCooldownSeconds int64                  `json:"diagnosticCooldownSeconds,omitempty"`
+	Invalidated               bool                   `json:"invalidated,omitempty"`
+	Result                    *codexRateLimitsResult `json:"result,omitempty"`
 }
 
 func normalizeUsageRefreshInterval(interval time.Duration) time.Duration {
@@ -66,11 +72,7 @@ func usageRefreshIntervalSeconds(seconds int) time.Duration {
 }
 
 func codexUsageCachePath() string {
-	if value := os.Getenv("XDG_STATE_HOME"); value != "" {
-		return filepath.Join(value, "dankaiusage", "codex-usage.json")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "dankaiusage", "codex-usage.json")
+	return filepath.Join(pluginStateDir(), "codex-usage.json")
 }
 
 func collectCachedCodexRateLimits(path string, now time.Time, interval time.Duration, requireFresh bool, fetch func() (codexRateLimitsResult, error)) (codexRateLimitsResult, usageRefreshInfo, error) {
@@ -78,6 +80,7 @@ func collectCachedCodexRateLimits(path string, now time.Time, interval time.Dura
 	var result codexRateLimitsResult
 	var info usageRefreshInfo
 	var actionErr error
+	var recovered bool
 	err := withUsageRefreshLock(path, func() error {
 		cache, err := loadCodexUsageCache(path)
 		if err != nil {
@@ -101,6 +104,12 @@ func collectCachedCodexRateLimits(path string, now time.Time, interval time.Dura
 		info.FetchedAt = fetchedAt
 		info.NextAttemptAt = nextAttemptAt
 		info.LastError = cache.LastError
+		info.DiagnosticCategory = cache.DiagnosticCategory
+		info.DiagnosticHTTPStatus = cache.DiagnosticHTTPStatus
+		info.DiagnosticCooldownSeconds = cache.DiagnosticCooldownSeconds
+		if info.DiagnosticCategory == "" && cache.LastError != "" {
+			info.DiagnosticCategory = "provider_unavailable"
+		}
 		if fetchedAt.After(now) || nextAttemptAt.After(now.Add(usageRefreshMaxInterval)) {
 			return fmt.Errorf("%w: future timestamp", errUsageRefreshState)
 		}
@@ -134,6 +143,11 @@ func collectCachedCodexRateLimits(path string, now time.Time, interval time.Dura
 		fresh, fetchErr := fetch()
 		if fetchErr != nil {
 			cache.LastError = "Codex usage refresh failed"
+			cache.DiagnosticCategory, cache.DiagnosticHTTPStatus = classifyDiagnosticError("codex", fetchErr)
+			cache.DiagnosticCooldownSeconds = int64(interval / time.Second)
+			info.DiagnosticCategory = cache.DiagnosticCategory
+			info.DiagnosticHTTPStatus = cache.DiagnosticHTTPStatus
+			info.DiagnosticCooldownSeconds = cache.DiagnosticCooldownSeconds
 			if err := saveCodexUsageCache(path, cache); err != nil {
 				return errors.New("could not save Codex usage refresh failure")
 			}
@@ -150,10 +164,14 @@ func collectCachedCodexRateLimits(path string, now time.Time, interval time.Dura
 			return nil
 		}
 
+		recovered = cache.LastError != "" || cache.DiagnosticCategory != ""
 		cache.Result = &fresh
 		cache.FetchedAt = now.UTC().Format(time.RFC3339Nano)
 		cache.NextAttemptAt = now.Add(interval).UTC().Format(time.RFC3339Nano)
 		cache.LastError = ""
+		cache.DiagnosticCategory = ""
+		cache.DiagnosticHTTPStatus = 0
+		cache.DiagnosticCooldownSeconds = 0
 		cache.Invalidated = false
 		if err := saveCodexUsageCache(path, cache); err != nil {
 			return errors.New("could not save refreshed Codex usage")
@@ -165,8 +183,10 @@ func collectCachedCodexRateLimits(path string, now time.Time, interval time.Dura
 		return nil
 	})
 	if err != nil {
+		emitUsageRefreshDiagnostics("codex", info, err, nil, false)
 		return codexRateLimitsResult{}, usageRefreshInfo{}, err
 	}
+	emitUsageRefreshDiagnostics("codex", info, nil, actionErr, recovered)
 	return result, info, actionErr
 }
 

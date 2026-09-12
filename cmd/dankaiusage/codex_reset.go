@@ -581,11 +581,7 @@ func publicCodexResetStatus(state codexResetState) codexResetStatus {
 }
 
 func codexResetStatePath() string {
-	if value := os.Getenv("XDG_STATE_HOME"); value != "" {
-		return filepath.Join(value, "dankaiusage", "codex-reset.json")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "dankaiusage", "codex-reset.json")
+	return filepath.Join(pluginStateDir(), "codex-reset.json")
 }
 
 func withCodexResetLock(path string, fn func() error) error {
