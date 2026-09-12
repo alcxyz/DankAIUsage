@@ -177,6 +177,10 @@ func main() {
 		runDiagnosticsCommand(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "announcements" {
+		runAnnouncementsCommand(os.Args[2:])
+		return
+	}
 
 	fs := flag.NewFlagSet("summary", flag.ExitOnError)
 	periodDays := fs.Int("period-days", 7, "rolling period length in days")

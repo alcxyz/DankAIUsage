@@ -10,6 +10,10 @@
   "component": "./DankAIUsageWidget.qml",
   "settings": "./DankAIUsageSettings.qml",
   "settings_schema": {
+    "publicResetAnnouncements": {
+      "type": "boolean",
+      "default": false
+    },
     "showUsed": {
       "type": "boolean",
       "default": false

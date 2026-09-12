@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Common
 import qs.Widgets
+import qs.Services
 import qs.Modules.Plugins
 
 PluginComponent {
@@ -26,6 +27,14 @@ PluginComponent {
     property bool showUsed: false
     property bool quickControlsOpen: false
     property bool historyOpen: false
+    property bool publicResetAnnouncements: false
+    property var publicAnnouncements: []
+    property bool announcementsStale: true
+    property string announcementsMessage: ""
+    property string _announcementOutput: ""
+    property bool _announcementInvalid: false
+    property var announcementReceipts: ({})
+    property double announcementClock: Date.now()
     property bool diagnosticsOpen: false
     property string diagnosticReport: ""
     property string diagnosticStatus: ""
@@ -95,6 +104,17 @@ PluginComponent {
     function loadSettings() {
         if (!pluginService || !pluginService.loadPluginData) return
         var wasEnabled = enableClaudePrime
+        var announcementsWereEnabled = publicResetAnnouncements
+        publicResetAnnouncements = pluginService.loadPluginData(pluginId, "publicResetAnnouncements", false) === true
+        if (publicResetAnnouncements && !announcementsWereEnabled) {
+            var savedReceipts = pluginService.loadPluginState(pluginId, "announcementReceipts", {})
+            announcementReceipts = savedReceipts && typeof savedReceipts === "object" && !Array.isArray(savedReceipts) ? savedReceipts : {}
+            Qt.callLater(root.refreshAnnouncements)
+        } else if (!publicResetAnnouncements) {
+            announcementProcess.running = false
+            publicAnnouncements = []
+            announcementsStale = true
+        }
         var savedRefreshInterval = pluginService.loadPluginData(pluginId, "refreshInterval", 300)
         refreshInterval = normalizedRefreshInterval(savedRefreshInterval)
         if (refreshInterval !== Number(savedRefreshInterval) && pluginService.savePluginData)
@@ -347,6 +367,140 @@ PluginComponent {
     function recordHelperFailure() {
         // Fixed category only: never forward stderr, exception text or payloads.
         if (!diagnosticFailureProcess.running) diagnosticFailureProcess.running = true
+    }
+
+    function refreshAnnouncements() {
+        if (!publicResetAnnouncements || announcementProcess.running) return
+        _announcementOutput = ""
+        _announcementInvalid = false
+        announcementProcess.running = true
+    }
+
+    Timer {
+        interval: 900000
+        running: root.publicResetAnnouncements
+        repeat: true
+        onTriggered: root.refreshAnnouncements()
+    }
+
+    Timer {
+        interval: 60000
+        running: root.publicResetAnnouncements
+        repeat: true
+        onTriggered: root.announcementClock = Date.now()
+    }
+
+    Process {
+        id: announcementProcess
+        command: ["dankaiusage", "announcements", "--enabled"]
+        stdout: SplitParser {
+            onRead: data => {
+                if (root._announcementOutput.length + data.length > 524288) {
+                    root._announcementInvalid = true
+                    return
+                }
+                root._announcementOutput += data + "\n"
+            }
+        }
+        onExited: (exitCode, exitStatus) => {
+            if (!root.publicResetAnnouncements) return
+            root.announcementsStale = true
+            root.announcementsMessage = "Public announcements unavailable; quota monitoring is unaffected."
+            if (exitCode !== 0 || root._announcementInvalid) return
+            try {
+                var response = JSON.parse(root._announcementOutput)
+                if (!Array.isArray(response.events)) return
+                root.publicAnnouncements = response.events
+                root.announcementsStale = response.available !== true || response.stale !== false
+                root.announcementsMessage = root.announcementsStale
+                        ? "Public feed is stale or unavailable. No announcement alerts or matching until it recovers."
+                        : "Public reports via TokenResets; account eligibility is not verified."
+                root.announcementClock = Date.now()
+                root.notifyUpcomingAnnouncements()
+            } catch (e) { /* No remote errors enter quota status or diagnostics. */ }
+        }
+    }
+
+    Timer {
+        interval: 12000
+        running: announcementProcess.running
+        onTriggered: {
+            root._announcementInvalid = true
+            announcementProcess.running = false
+            root.announcementsStale = true
+            root.announcementsMessage = "Public feed timed out; quota monitoring is unaffected."
+        }
+    }
+
+    function announcementUpcoming(event, now) {
+        if (typeof event.expectedBy !== "string" || !/T.*(Z|[+-][0-9]{2}:[0-9]{2})$/.test(event.expectedBy)) return false
+        var deadline = Date.parse(event.expectedBy || "")
+        var announced = Date.parse(event.announcedAt || "")
+        return event.kind === "hard_reset" && event.confidence === "verified"
+                && isFinite(deadline) && deadline > now && deadline - now <= 48 * 3600000
+                && isFinite(announced) && announced <= now && now - announced <= 24 * 3600000
+                && !event.effectiveAt && (!event.expiresAt || Date.parse(event.expiresAt) > now)
+    }
+
+    function visibleAnnouncements() {
+        if (!publicResetAnnouncements) return []
+        return publicAnnouncements.filter(function(event) {
+            if (!root.historyProviderVisible(event)) return false
+            if (event.expiresAt && Date.parse(event.expiresAt) <= root.announcementClock) return false
+            return root.advancedDropdown || (!root.announcementsStale && root.announcementUpcoming(event, root.announcementClock))
+        }).slice(0, 4)
+    }
+
+    function announcementSummary(event) {
+        var text = event.summary || ""
+        return text.length > 240 ? text.slice(0, 240) + "…" : text
+    }
+
+    function notifyUpcomingAnnouncements() {
+        if (!publicResetAnnouncements || announcementsStale || !pluginService || !pluginService.savePluginState) return
+        var now = Date.now()
+        var receipts = Object.assign({}, announcementReceipts)
+        var keys = Object.keys(receipts)
+        for (var k = 0; k < keys.length; k++) {
+            if (typeof receipts[keys[k]] !== "number" || now - receipts[keys[k]] > 7 * 86400000) delete receipts[keys[k]]
+        }
+        for (var i = 0; i < publicAnnouncements.length; i++) {
+            var event = publicAnnouncements[i]
+            if (!historyProviderVisible(event) || !announcementUpcoming(event, now)) continue
+            var key = event.id + ":" + event.revision
+            if (receipts[key]) continue
+            if (Object.keys(receipts).length >= 100) break
+            receipts[key] = now
+            announcementReceipts = receipts
+            pluginService.savePluginState(pluginId, "announcementReceipts", receipts)
+            ToastService.showInfo("Public reset announcement",
+                    (event.provider === "codex" ? "Codex" : "Claude") + " reset announced by "
+                    + formatShortDateTime(event.expectedBy) + ". Reported via TokenResets; check eligibility in the dropdown.")
+        }
+        announcementReceipts = receipts
+    }
+
+    function matchingPublicAnnouncement(group) {
+        if (!publicResetAnnouncements || announcementsStale || !group) return null
+        var match = null
+        for (var i = 0; i < group.events.length; i++) {
+            var local = group.events[i]
+            if (!historyProviderVisible(local)) continue
+            if (local.kind !== "allowance_increased_unknown" || !historyEventNeedsNoPrompt(local)) continue
+            var observed = Date.parse(local.observedAt)
+            var previous = Date.parse(local.previousObservedAt)
+            if (!isFinite(previous) || observed <= previous || observed - previous > 3600000) continue
+            for (var j = 0; j < publicAnnouncements.length; j++) {
+                var event = publicAnnouncements[j]
+                var at = Date.parse(event.effectiveAt || event.announcedAt)
+                if (event.provider !== local.provider || event.kind !== "hard_reset" || event.expectedBy
+                        || (event.expiresAt && Date.parse(event.expiresAt) <= announcementClock)
+                        || !isFinite(at) || at < previous - 900000 || at > observed + 900000) continue
+                if (match && match.id !== event.id) return null
+                match = event
+            }
+        }
+        return match
     }
 
     Process {
@@ -2141,6 +2295,27 @@ PluginComponent {
                                     visible: text !== ""
                                 }
 
+                                StyledText {
+                                    width: parent.width
+                                    property var publicContext: root.matchingPublicAnnouncement(historyGroupCard.historyGroup)
+                                    text: publicContext ? (publicContext.confidence === "verified"
+                                            ? "Likely linked to announced reset"
+                                            : "Public reset reported near this observation")
+                                            + " · via TokenResets · account eligibility unverified\n" + root.announcementSummary(publicContext) : ""
+                                    textFormat: Text.PlainText
+                                    color: Theme.surfaceVariantText
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    wrapMode: Text.WordWrap
+                                    visible: publicContext !== null
+                                }
+
+                                CompactAction {
+                                    property var publicContext: root.matchingPublicAnnouncement(historyGroupCard.historyGroup)
+                                    text: "View public context"
+                                    visible: publicContext !== null
+                                    onClicked: if (publicContext) Qt.openUrlExternally(publicContext.url)
+                                }
+
                                 CompactAction {
                                     text: root.hasHistoryExplanation(historyGroupCard.historyGroup)
                                             ? "Edit explanation" : "Explain"
@@ -2170,6 +2345,54 @@ PluginComponent {
                 visible: root.isLoading
             }
             DiagnosticsPanel { }
+            Column {
+                width: parent.width
+                spacing: Theme.spacingS
+                visible: root.publicResetAnnouncements && (root.advancedDropdown || root.visibleAnnouncements().length > 0)
+                StyledText {
+                    text: "Public reset announcements"
+                    color: Theme.surfaceText
+                    font.pixelSize: Theme.fontSizeMedium
+                }
+                StyledText {
+                    width: parent.width
+                    text: root.announcementsMessage
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WordWrap
+                    color: Theme.surfaceVariantText
+                    font.pixelSize: Theme.fontSizeSmall
+                }
+                Repeater {
+                    model: root.visibleAnnouncements()
+                    delegate: Column {
+                        required property var modelData
+                        width: parent.width
+                        spacing: Theme.spacingXS
+                        StyledText {
+                            width: parent.width
+                            text: modelData.title + " · " + modelData.confidence + " by TokenResets"
+                            textFormat: Text.PlainText
+                            wrapMode: Text.WordWrap
+                            color: Theme.primary
+                            font.pixelSize: Theme.fontSizeSmall
+                        }
+                        StyledText {
+                            width: parent.width
+                            text: root.announcementSummary(modelData) + "\nScope: " + modelData.scopeLabel
+                                    + "\nAnnounced " + root.formatShortDateTime(modelData.announcedAt)
+                                    + (modelData.expectedBy ? " · expected by " + root.formatShortDateTime(modelData.expectedBy) : "")
+                            textFormat: Text.PlainText
+                            wrapMode: Text.WordWrap
+                            color: Theme.surfaceVariantText
+                            font.pixelSize: Theme.fontSizeSmall
+                        }
+                        CompactAction {
+                            text: "View source and evidence"
+                            onClicked: Qt.openUrlExternally(modelData.url)
+                        }
+                    }
+                }
+            }
         }
     }
 

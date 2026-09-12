@@ -270,6 +270,32 @@ offset a redemption. Sleep, unavailable data, caching, and gaps between polls
 can hide intermediate events. Automatic observations do not store credentials,
 account identifiers, prompts, or opaque reset-credit IDs.
 
+#### Public reset announcements (optional)
+
+Enable **Public reset announcements** in settings to read the
+[TokenResets public feed](https://tokenresets.com/api/). It is off by default.
+The feed host receives your IP address and ordinary request metadata, but the
+plugin sends no credentials, account data, usage totals, history or notes.
+See the service [privacy notice](https://tokenresets.com/privacy/).
+
+Checks run separately from quota collection every fifteen minutes with shared
+cooldowns and conditional caching. A feed outage cannot make your quotas
+unavailable. Public content uses XDG cache; request reservations and notification
+receipts use durable state. No additional application or login is required.
+
+Explicit upcoming resets marked verified by TokenResets can generate a DMS
+notification and appear in either dropdown mode. Times are displayed locally;
+unknown timing and eligibility stay unknown. Advanced also shows recent reports
+and links to the evidence. Corrections replace the previous snapshot; stale
+feeds cannot trigger alerts or matching. Completed historical reports do not
+generate notifications on installation or restart.
+
+Nearby public reset reports can appear alongside a clear local refill in
+Advanced history. This is a possible association, not confirmation of why your
+account changed. Original observations and your explanations are preserved.
+Banked-reset grants remain separate from immediate usage refills. There are no
+statistical predictions, rumor alerts, or feed-driven automation changes.
+
 #### Local diagnostics
 
 Open **Advanced → Diagnostics** to preview recent failures and recoveries.

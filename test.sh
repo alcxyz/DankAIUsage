@@ -37,6 +37,7 @@ assert {"settings_read", "settings_write", "process"} <= set(plugin["permissions
 assert plugin["settings_schema"]["refreshInterval"]["minimum"] == 180
 assert plugin["settings_schema"]["refreshInterval"]["maximum"] == 3600
 assert plugin["settings_schema"]["refreshInterval"]["default"] == 300
+assert plugin["settings_schema"]["publicResetAnnouncements"] == {"type": "boolean", "default": False}
 
 component = pathlib.Path(plugin["component"].removeprefix("./"))
 settings = pathlib.Path(plugin["settings"].removeprefix("./"))
@@ -65,6 +66,11 @@ assert 'armed: false' in component_text
 assert '"dankaiusage", "codex-reset", action,' in component_text
 assert component_text.count('"--refresh-interval", "" + root.refreshInterval') == 3
 assert 'command: ["dankaiusage", "diagnostics"]' in component_text
+assert 'command: ["dankaiusage", "announcements", "--enabled"]' in component_text
+assert 'if (!publicResetAnnouncements || announcementProcess.running) return' in component_text
+assert 'interval: 900000' in component_text
+assert 'root._announcementOutput.length + data.length > 524288' in component_text
+assert 'The feed host sees your IP address' in settings_text
 assert 'command: ["dankaiusage", "diagnostics", "helper-failed"]' in component_text
 assert 'root._diagnosticOutput.length + data.length > 65536' in component_text
 assert 'result.available !== true || typeof result.report !== "string"' in component_text
@@ -716,6 +722,13 @@ else
 fi
 
 echo "Go helper"
+if command -v node >/dev/null 2>&1; then
+    if node --test tests/announcements-ui.test.cjs; then
+        pass "public announcement selection and notification behavior"
+    else
+        fail "public announcements" "selection or notification behavior failed"
+    fi
+fi
 VERSION="$(python3 -c 'import json; print(json.load(open("plugin.json", encoding="utf-8"))["version"])')"
 BINARY="$TEST_TMP/dankaiusage"
 if go build -ldflags "-X main.version=$VERSION" -o "$BINARY" ./cmd/dankaiusage; then

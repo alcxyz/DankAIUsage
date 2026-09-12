@@ -9,6 +9,13 @@ PluginSettings {
     pluginId: "dankAIUsage"
 
     ToggleSetting {
+        settingKey: "publicResetAnnouncements"
+        label: "Public reset announcements"
+        description: "Opt in to TokenResets public reports for Codex and Claude. The feed host sees your IP address and ordinary request metadata; no account data is sent. Checks every 15 minutes. Announcements are not guarantees for your account."
+        defaultValue: false
+    }
+
+    ToggleSetting {
         settingKey: "showUsed"
         label: "Show used allowance"
         description: "Show used percentages and bar fill instead of remaining allowance. Also available as Left / Used in the dropdown."
