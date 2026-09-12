@@ -728,6 +728,11 @@ if command -v node >/dev/null 2>&1; then
     else
         fail "public announcements" "selection or notification behavior failed"
     fi
+    if node --test tests/reset-time-ui.test.cjs; then
+        pass "reset countdown and progress behavior"
+    else
+        fail "reset countdowns" "countdown or progress behavior failed"
+    fi
 fi
 VERSION="$(python3 -c 'import json; print(json.load(open("plugin.json", encoding="utf-8"))["version"])')"
 BINARY="$TEST_TMP/dankaiusage"

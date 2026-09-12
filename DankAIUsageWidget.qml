@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls as Controls
 import QtQuick.Shapes
 import Quickshell
 import Quickshell.Io
@@ -13,6 +14,14 @@ PluginComponent {
     pluginId: "dankAIUsage"
 
     property int refreshInterval: 300
+    property double resetClock: Date.now()
+
+    Timer {
+        interval: 60000
+        running: true
+        repeat: true
+        onTriggered: root.resetClock = Date.now()
+    }
     property int periodDays: 7
     property bool showCodex: true
     property bool showClaude: true
@@ -966,6 +975,7 @@ PluginComponent {
     }
 
     function applySummary(summary, allowAutoPrime) {
+        resetClock = Date.now()
         capabilities = summary.capabilities || {}
         providers = summary.providers || []
         usageHistory = summary.history || []
@@ -1132,8 +1142,53 @@ PluginComponent {
     }
 
     function providerQuotaHeight(provider) {
-        var count = providerQuotaBuckets(provider).length
-        return count > 0 ? count * 48 + (count - 1) * Theme.spacingXS : 28
+        var buckets = providerQuotaBuckets(provider)
+        var height = 0
+        for (var i = 0; i < buckets.length; i++) height += quotaRowHeight(buckets[i])
+        return buckets.length > 0 ? height + (buckets.length - 1) * Theme.spacingXS : 28
+    }
+
+    function quotaRowHeight(bucket) {
+        return advancedDropdown && bucket && bucket.kind !== "credits"
+                && resetTimeProgress(bucket.allowance, resetClock, showUsed) >= 0 ? 56 : 48
+    }
+
+    function resetTiming(allowance, now) {
+        if (!allowance || !allowance.resetAt || !isFinite(now)) return null
+        var end = new Date(allowance.resetAt).getTime()
+        if (!isFinite(end)) return null
+        var minutes = allowance.windowMinutes
+        var duration = typeof minutes === "number" && isFinite(minutes) && minutes > 0
+                ? minutes * 60000 : 0
+        var remaining = end - now
+        return { remainingMs: remaining, durationMs: duration,
+            progressKnown: isFinite(duration) && duration > 0 && remaining > 0 && remaining <= duration }
+    }
+
+    function resetDuration(ms) {
+        if (ms < 60000) return "<1m"
+        var minutes = Math.ceil(ms / 60000)
+        var days = Math.floor(minutes / 1440)
+        var hours = Math.floor((minutes % 1440) / 60)
+        if (days > 0) return days + "d" + (hours ? " " + hours + "h" : "")
+        if (hours > 0) return hours + "h" + (minutes % 60 ? " " + (minutes % 60) + "m" : "")
+        return minutes + "m"
+    }
+
+    function resetCountdown(allowance, now, used) {
+        var timing = resetTiming(allowance, now)
+        if (!timing) return ""
+        if (timing.remainingMs <= 0) return "Reset due · awaiting update"
+        if (used && timing.progressKnown)
+            return "Window elapsed: " + resetDuration(timing.durationMs - timing.remainingMs)
+        return "Resets in " + resetDuration(timing.remainingMs)
+    }
+
+    function resetTimeProgress(allowance, now, used) {
+        var timing = resetTiming(allowance, now)
+        if (!timing || !timing.progressKnown) return -1
+        var left = Math.max(0, Math.min(1, timing.remainingMs / timing.durationMs))
+        return used ? 1 - left : left
     }
 
     function quotaValue(bucket) {
@@ -1148,8 +1203,8 @@ PluginComponent {
             if (!showUsed && bucket.detail) return bucket.detail
         }
         if (bucket.detail) return bucket.detail
-        var reset = formatReset(bucket.allowance)
-        return reset === "--" ? allowanceDetail(bucket.allowance) : "Resets " + reset
+        var countdown = resetCountdown(bucket.allowance, resetClock, showUsed)
+        return countdown || allowanceDetail(bucket.allowance)
     }
 
     function quotaProgress(bucket) {
@@ -2801,8 +2856,35 @@ PluginComponent {
     }
 
     component QuotaBar: Item {
+        id: quotaBar
         property var bucket: null
-        height: 48
+        property real timeProgress: bucket && bucket.kind !== "credits"
+                ? root.resetTimeProgress(bucket.allowance, root.resetClock, root.showUsed) : -1
+        height: root.quotaRowHeight(bucket)
+
+        HoverHandler { id: resetHover }
+        Controls.ToolTip {
+            id: resetTooltip
+            visible: resetHover.hovered && !!root.resetTiming(bucket ? bucket.allowance : null, root.resetClock)
+            delay: 400
+            text: bucket && bucket.allowance
+                    ? "Reset: " + new Date(bucket.allowance.resetAt).toLocaleString()
+                        + (root.advancedDropdown && quotaBar.timeProgress >= 0
+                           ? "\nThin bar: window time " + (root.showUsed ? "elapsed" : "remaining")
+                             + " (not quota usage)" : "") : ""
+            contentItem: StyledText {
+                text: resetTooltip.text
+                textFormat: Text.PlainText
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.surfaceText
+            }
+            background: StyledRect {
+                color: Theme.surfaceContainerHigh
+                radius: Theme.cornerRadius
+                border.color: Theme.surfaceVariantText
+                border.width: 1
+            }
+        }
 
         StyledText {
             text: bucket ? bucket.label : "Quota"
@@ -2852,10 +2934,28 @@ PluginComponent {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
+            anchors.bottomMargin: root.advancedDropdown && quotaBar.timeProgress >= 0 ? 8 : 0
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceVariantText
             elide: Text.ElideRight
             maximumLineCount: 1
+        }
+
+        StyledRect {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: 2
+            radius: 1
+            visible: root.advancedDropdown && quotaBar.timeProgress >= 0
+            color: Qt.rgba(Theme.surfaceVariantText.r, Theme.surfaceVariantText.g, Theme.surfaceVariantText.b, 0.12)
+            StyledRect {
+                width: parent.width * Math.max(0, quotaBar.timeProgress)
+                height: parent.height
+                radius: parent.radius
+                color: Theme.surfaceVariantText
+                opacity: 0.6
+            }
         }
     }
 

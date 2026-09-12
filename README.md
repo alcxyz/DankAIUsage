@@ -296,6 +296,15 @@ account changed. Original observations and your explanations are preserved.
 Banked-reset grants remain separate from immediate usage refills. There are no
 statistical predictions, rumor alerts, or feed-driven automation changes.
 
+#### Reset countdowns
+
+Quota reset labels show a locally updated countdown; hover a quota row for the
+exact reset date and local time. Advanced mode also shows a thin, muted time
+progress bar when the window duration is known. Left shows time remaining;
+Used shows elapsed window time. This is separate from the colored quota bar.
+Unknown durations omit time progress, and overdue resets say “Reset due ·
+awaiting update” until fresh data arrives. These updates make no provider requests.
+
 #### Local diagnostics
 
 Open **Advanced → Diagnostics** to preview recent failures and recoveries.
