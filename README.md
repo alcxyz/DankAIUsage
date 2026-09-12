@@ -58,11 +58,18 @@ September 2026; check their current documentation for changes.
 
 ## Features
 
-The dropdown has a remembered **Simple / Advanced** toggle button. Its label
-shows the current mode; click to switch. Simple focuses on
-provider quota bars, percentages, reset countdowns, and warnings. Advanced adds
-the overall summary, local token history and tracking controls, available reset
-details, reset history, automation controls, and quick top-bar settings.
+The dropdown has a remembered **Simple / Advanced** segmented switch under the
+header; both labels are visible and the active one is highlighted. Simple
+focuses on provider quota bars, percentages, reset countdowns, and warnings.
+Advanced adds the overall summary with an allowance ring, local token history
+and tracking controls, available reset details, and a set of collapsible
+sections at the bottom: reset history, public reset announcements, bar
+controls, and diagnostics. The header line shows when usage was last updated,
+whether it is stale, and (in Advanced) the next scheduled refresh. Failures
+and prompts that need a decision appear above the provider cards; routine
+information such as cached usage or local-history caveats uses neutral
+styling, while sign-in or refresh failures use warning and error colors.
+The dropdown scrolls when it would otherwise exceed the screen.
 New installations start in Simple; existing installations with a cached usage
 summary retain Advanced on upgrade. Either choice leaves the topbar layout,
 tracking, and automation settings unchanged. Armed Codex resets remain visible
@@ -86,7 +93,7 @@ one selected quota for each enabled provider rather than hiding a provider.
 The generic plugin icon and provider logos are independently configurable, so
 the bar can show either icon style, both styles, or text only.
 
-Click the **Left / Used** toggle in the dropdown to switch all quota percentages and progress
+Use the **Left / Used** segmented switch in the dropdown to switch all quota percentages and progress
 bars together, including credits. Left is the default: 26% left fills 26% of the
 bar; Used shows 74% used and fills 74%. Credit details show the remaining balance
 or spending against the budget. Warning colors always reflect proximity to the
@@ -236,7 +243,7 @@ stops reporting it; identical percentages alone do not make two windows duplicat
 
 ### Reset history
 
-Open **Reset history** in the Advanced dropdown to see the latest eight observed events
+Expand **Reset history** at the bottom of the Advanced dropdown to see the latest eight observed events
 for your enabled providers. The helper keeps at most 200 events for 30 days,
 locally, without a separate service or database. History starts with the first
 observation; it cannot reconstruct earlier resets.
@@ -298,16 +305,18 @@ statistical predictions, rumor alerts, or feed-driven automation changes.
 
 #### Reset countdowns
 
-Quota reset labels show a locally updated countdown; hover a quota row for the
-exact reset date and local time. Advanced mode also shows a thin, muted time
-progress bar when the window duration is known. Left shows time remaining;
+Each quota row shows a locally updated countdown inline after its label; hover
+the row for the exact reset date and local time. Advanced mode also shows a
+thin, muted time progress bar under the quota bar when the window duration is
+known. Left shows time remaining;
 Used shows elapsed window time. This is separate from the colored quota bar.
 Unknown durations omit time progress, and overdue resets say “Reset due ·
 awaiting update” until fresh data arrives. These updates make no provider requests.
 
 #### Local diagnostics
 
-Open **Advanced → Diagnostics** to preview recent failures and recoveries.
+Expand **Advanced → Diagnostics** at the bottom of the dropdown to preview
+recent failures and recoveries.
 **Refresh report** reads local state only; it does not request provider usage.
 **Copy report** copies exactly the preview for you to review and share in an
 issue. Nothing is uploaded automatically. The same local report is available
@@ -385,7 +394,7 @@ minimum, not a guarantee against account restrictions. Claude's undocumented
 OAuth usage source has separate policy and compatibility risks regardless of
 polling frequency. Longer intervals also delay automatic reset checks and may
 miss a credit's expiry window; that feature remains best effort.
-The dropdown's **Bar controls** also offers immediate toggles for compact mode,
+The dropdown's **Bar controls** section (Advanced, at the bottom) also offers immediate toggles for compact mode,
 provider logos, the plugin icon, and Claude session/weekly/credits selection.
 These controls save the same preferences as the plugin settings menu and do
 not need a data refresh. The Left / Used choice is saved as well.

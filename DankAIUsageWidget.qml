@@ -36,6 +36,8 @@ PluginComponent {
     property bool showUsed: false
     property bool quickControlsOpen: false
     property bool historyOpen: false
+    property bool announcementsOpen: false
+    property int popoutMaxHeight: 720
     property bool publicResetAnnouncements: false
     property var publicAnnouncements: []
     property bool announcementsStale: true
@@ -1128,12 +1130,21 @@ PluginComponent {
         return formatTokens((showUsed ? allowance.used : allowance.remaining) || 0) + (showUsed ? " used of " : " left of ") + formatTokens(allowance.limit || 0)
     }
 
-    function allowanceColor(allowance) {
-        if (!knownAllowance(allowance)) return Theme.surfaceVariantText
+    function allowanceSeverity(allowance) {
+        if (!knownAllowance(allowance)) return "unknown"
         var pct = allowance.percentRemaining || 0
-        if (pct <= 10) return "#ff6b6b"
-        if (pct <= 25) return "#ffaa00"
-        return Theme.primary
+        if (pct <= 10) return "critical"
+        if (pct <= 25) return "low"
+        return "ok"
+    }
+
+    function allowanceColor(allowance) {
+        switch (allowanceSeverity(allowance)) {
+        case "critical": return Theme.error
+        case "low": return Theme.warning
+        case "ok": return Theme.primary
+        default: return Theme.surfaceVariantText
+        }
     }
 
     function providerQuotaBuckets(provider) {
@@ -1145,12 +1156,15 @@ PluginComponent {
         var buckets = providerQuotaBuckets(provider)
         var height = 0
         for (var i = 0; i < buckets.length; i++) height += quotaRowHeight(buckets[i])
-        return buckets.length > 0 ? height + (buckets.length - 1) * Theme.spacingXS : 28
+        // Empty state holds a two-line notice.
+        return buckets.length > 0 ? height + (buckets.length - 1) * Theme.spacingS : 40
     }
 
+    // Label + inline countdown (18px), allowance bar (6px) and, in Advanced,
+    // a thin window-time bar below it.
     function quotaRowHeight(bucket) {
         return advancedDropdown && bucket && bucket.kind !== "credits"
-                && resetTimeProgress(bucket.allowance, resetClock, showUsed) >= 0 ? 56 : 48
+                && resetTimeProgress(bucket.allowance, resetClock, showUsed) >= 0 ? 34 : 28
     }
 
     function resetTiming(allowance, now) {
@@ -1374,6 +1388,7 @@ PluginComponent {
                 if (compactWeakest) {
                     segments.push({
                         provider: list[i],
+                        allowance: compactWeakest.allowance,
                         text: (barShowProviderLogos ? "" : list[i].name + " ") + quotaShortLabel(compactWeakest) + " " + allowanceLabel(compactWeakest.allowance, false)
                     })
                 }
@@ -1383,8 +1398,18 @@ PluginComponent {
 
         for (var k = 0; k < list.length; k++) {
             var text = providerTopBarText(list[k])
-            if (text !== "") segments.push({
+            if (text === "") continue
+            // Color the segment by its most constrained shown quota.
+            var shown = providerTopBarBuckets(list[k])
+            var weakestShown = null
+            for (var m = 0; m < shown.length; m++) {
+                if (!knownAllowance(shown[m].allowance)) continue
+                if (!weakestShown || (shown[m].allowance.percentRemaining || 0) < (weakestShown.allowance.percentRemaining || 0))
+                    weakestShown = shown[m]
+            }
+            segments.push({
                 provider: list[k],
+                allowance: weakestShown ? weakestShown.allowance : null,
                 text: (barShowProviderLogos ? "" : list[k].name + " ") + text
             })
         }
@@ -1571,54 +1596,132 @@ PluginComponent {
                     : (provider.meta && provider.meta.tokenDataError ? " (partial)" : ""))
     }
 
+
     function providerLogoColor(provider) {
-        if (!provider || !provider.available || provider.error) return "#ff6b6b"
+        if (!provider || !provider.available || provider.error) return Theme.error
         return Theme.primary
     }
 
     function providerColor(provider) {
-        if (!provider.available || provider.error) return "#ff6b6b"
-        return provider.id === "codex" ? Theme.primary : "#8bc34a"
+        if (!provider || !provider.available || provider.error) return Theme.error
+        var weakest = weakestProviderQuota(provider)
+        return weakest ? allowanceColor(weakest.allowance) : Theme.surfaceVariantText
     }
 
-    function providerNote(provider) {
-        if (!provider || !provider.meta) return ""
-        var parts = []
+    function barSegmentColor(allowance) {
+        if (hasError) return Theme.error
+        var severity = allowanceSeverity(allowance)
+        if (severity === "critical") return Theme.error
+        if (severity === "low") return Theme.warning
+        return Theme.surfaceText
+    }
+
+    function noticeColor(level) {
+        if (level === "error") return Theme.error
+        if (level === "warning") return Theme.warning
+        return Theme.surfaceVariantText
+    }
+
+    function noticeIcon(level) {
+        if (level === "error") return "error"
+        if (level === "warning") return "warning"
+        return "info"
+    }
+
+    // Routine information stays neutral; only actionable failures use warning
+    // or error styling, so a signed-out account is noticeable at a glance.
+    function providerNotices(provider) {
+        if (!provider || !provider.meta) return []
+        var notices = []
+        function add(text, level) {
+            if (text) notices.push({ text: text, level: level })
+        }
+        if (provider.error) add(provider.error, "error")
         if (provider.meta.usageRefreshPending === true) {
-            parts.push("Usage refresh pending; waiting for the next eligible refresh")
+            add("Usage refresh pending; waiting for the next eligible refresh", "info")
         } else if (provider.meta.usageStale === true || provider.meta.usageDataStale === true) {
             var staleNote = "Usage data is stale; the latest refresh failed"
             if (provider.meta.usageRefreshError) staleNote += ": " + provider.meta.usageRefreshError
-            parts.push(staleNote)
+            add(staleNote, "warning")
         }
         if (advancedDropdown && provider.meta.usageCached === true) {
             var cacheNote = "Cached usage"
             var nextRefresh = formatShortDateTime(provider.meta.usageNextRefreshAt)
             if (nextRefresh !== "") cacheNote += " · next refresh " + nextRefresh
-            parts.push(cacheNote)
+            add(cacheNote, "info")
         }
-        if (provider.id === "claude" && claudePrimeText !== "") {
-            parts.push(claudePrimeText)
-        }
-        if (advancedDropdown && provider.id === "claude" && provider.meta.tokenDataIncludesWeb === false) {
-            parts.push("Claude tokens are local Claude Code only, not web")
-        }
-        if (provider.id === "claude" && provider.meta.sessionFallbackSource) {
-            parts.push("Session timer from Claude prime; account limits unavailable")
-        }
+        if (provider.id === "claude" && claudePrimeText !== "") add(claudePrimeText, "info")
+        if (advancedDropdown && provider.id === "claude" && provider.meta.tokenDataIncludesWeb === false)
+            add("Claude tokens are local Claude Code only, not web", "info")
+        if (provider.id === "claude" && provider.meta.sessionFallbackSource)
+            add("Session timer from Claude prime; account limits unavailable", "warning")
         if (advancedDropdown && provider.meta.tokenDataNote) {
             var note = provider.meta.tokenDataNote
             var lastUsage = formatShortDateTime(provider.meta.lastUsageAt)
             if (lastUsage !== "") note += " (last " + lastUsage + ")"
-            parts.push(note)
+            add(note, "info")
         }
         if (provider.meta.limitError) {
-            if (provider.id === "claude" && provider.meta.oauthUsageError) parts.push(provider.meta.oauthUsageError)
-            else if (provider.id === "claude" && provider.meta.statuslineNextStep) parts.push(provider.meta.statuslineNextStep)
-            else parts.push(provider.meta.limitError)
+            if (provider.id === "claude" && provider.meta.oauthUsageError) add(provider.meta.oauthUsageError, "error")
+            else if (provider.id === "claude" && provider.meta.statuslineNextStep) add(provider.meta.statuslineNextStep, "error")
+            else add(provider.meta.limitError, "error")
         }
-        else if (provider.meta.tokenDataError) parts.push(provider.meta.tokenDataError)
+        else if (provider.meta.tokenDataError) add(provider.meta.tokenDataError, "warning")
+        return notices
+    }
+
+    function providerNote(provider) {
+        var notices = providerNotices(provider)
+        var parts = []
+        for (var i = 0; i < notices.length; i++) parts.push(notices[i].text)
         return parts.join(" | ")
+    }
+
+    function anyUsageStale() {
+        var list = visibleProviders()
+        for (var i = 0; i < list.length; i++) {
+            var meta = list[i].meta || {}
+            if (meta.usageStale === true || meta.usageDataStale === true) return true
+        }
+        return false
+    }
+
+    function nextRefreshLabel() {
+        var list = visibleProviders()
+        var earliest = ""
+        for (var i = 0; i < list.length; i++) {
+            var meta = list[i].meta || {}
+            if (!meta.usageNextRefreshAt) continue
+            var at = Date.parse(meta.usageNextRefreshAt)
+            if (isFinite(at) && (earliest === "" || at < Date.parse(earliest))) earliest = meta.usageNextRefreshAt
+        }
+        return formatShortDateTime(earliest)
+    }
+
+    function usageStatusText() {
+        if (isLoading && providers.length === 0) return "Loading usage…"
+        if (usageProcess.running) return "Refreshing…"
+        var parts = []
+        parts.push(lastUpdated ? "Updated " + lastUpdated : "Waiting for the first update")
+        if (anyUsageStale()) parts.push("stale")
+        var next = nextRefreshLabel()
+        if (advancedDropdown && next !== "") parts.push("next refresh " + next)
+        return parts.join(" · ")
+    }
+
+    function overviewCountdown() {
+        var entry = weakestQuotaEntry()
+        if (!entry) return ""
+        if (entry.bucket.kind === "credits") return entry.bucket.detail || ""
+        return resetCountdown(entry.bucket.allowance, resetClock, showUsed)
+    }
+
+    function nextUpcomingAnnouncement() {
+        var list = visibleAnnouncements()
+        for (var i = 0; i < list.length; i++) {
+            if (!announcementsStale && announcementUpcoming(list[i], announcementClock)) return list[i]
+        }
+        return null
     }
 
     horizontalBarPill: Component {
@@ -1628,7 +1731,7 @@ PluginComponent {
             DankIcon {
                 name: "monitoring"
                 size: Theme.fontSizeLarge
-                color: root.hasError ? "#ff6b6b" : Theme.primary
+                color: root.hasError ? Theme.error : Theme.primary
                 visible: root.barShowPluginIcon
                 anchors.verticalCenter: parent.verticalCenter
             }
@@ -1649,7 +1752,7 @@ PluginComponent {
                     StyledText {
                         text: modelData.text
                         font.pixelSize: Theme.fontSizeMedium
-                        color: root.hasError ? "#ff6b6b" : Theme.surfaceText
+                        color: root.barSegmentColor(modelData.allowance)
                         anchors.verticalCenter: parent.verticalCenter
                         elide: Text.ElideRight
                         maximumLineCount: 1
@@ -1661,7 +1764,7 @@ PluginComponent {
                 text: root.isLoading && root.providers.length === 0 ? "..." : "--"
                 visible: root.topBarSegments().length === 0
                 font.pixelSize: Theme.fontSizeMedium
-                color: root.hasError ? "#ff6b6b" : Theme.surfaceText
+                color: root.hasError ? Theme.error : Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
             }
         }
@@ -1674,778 +1777,933 @@ PluginComponent {
             DankIcon {
                 name: "monitoring"
                 size: Theme.fontSizeLarge
-                color: root.hasError ? "#ff6b6b" : Theme.primary
+                color: root.hasError ? Theme.error : Theme.primary
                 anchors.horizontalCenter: parent.horizontalCenter
             }
 
             StyledText {
-                text: root.formatTokens(root.filteredGrandTotal())
+                property var entry: root.weakestQuotaEntry()
+                text: entry ? root.allowanceLabel(entry.bucket.allowance, false)
+                        : (root.isLoading && root.providers.length === 0 ? "..." : "--")
                 font.pixelSize: Theme.fontSizeSmall
-                color: root.hasError ? "#ff6b6b" : Theme.surfaceText
+                color: entry ? root.barSegmentColor(entry.bucket.allowance) : Theme.surfaceText
                 anchors.horizontalCenter: parent.horizontalCenter
             }
         }
     }
 
     popoutContent: Component {
-        Column {
-            spacing: Theme.spacingL
+        Item {
+            id: popoutRoot
+            implicitHeight: Math.min(popoutColumn.implicitHeight, root.popoutMaxHeight)
 
-            component DiagnosticsPanel: Column {
-                width: parent.width
-                spacing: Theme.spacingS
-                visible: root.advancedDropdown
-                QuickToggle {
-                    text: "Diagnostics"
-                    checked: root.diagnosticsOpen
-                    onClicked: {
-                        root.diagnosticsOpen = !root.diagnosticsOpen
-                        if (root.diagnosticsOpen) root.refreshDiagnostics()
-                    }
-                }
-                Column {
-                    width: parent.width
-                    spacing: Theme.spacingS
-                    visible: root.diagnosticsOpen
-                    StyledText {
-                        width: parent.width
-                        text: root.diagnosticStatus
-                        textFormat: Text.PlainText
-                        wrapMode: Text.WordWrap
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.surfaceVariantText
-                    }
-                    Flickable {
-                        width: parent.width
-                        height: Math.min(220, diagnosticPreview.contentHeight)
-                        contentHeight: diagnosticPreview.contentHeight
-                        clip: true
-                        TextEdit {
-                            id: diagnosticPreview
-                            width: parent.width
-                            text: root.diagnosticReport
-                            textFormat: TextEdit.PlainText
-                            readOnly: true
-                            selectByMouse: true
-                            activeFocusOnTab: true
-                            wrapMode: TextEdit.Wrap
-                            color: Theme.surfaceText
-                            font.pixelSize: Theme.fontSizeSmall
-                            Accessible.name: "Diagnostic report preview"
-                        }
-                    }
-                    Flow {
-                        width: parent.width
-                        spacing: Theme.spacingXS
-                        CompactAction {
-                            text: "Refresh report"
-                            enabled: !diagnosticProcess.running
-                            onClicked: root.refreshDiagnostics()
-                        }
-                        CompactAction {
-                            text: "Copy report"
-                            enabled: root.diagnosticReport !== "" && !diagnosticProcess.running
-                            onClicked: {
-                                diagnosticPreview.selectAll()
-                                diagnosticPreview.copy()
-                                diagnosticPreview.deselect()
-                                root.diagnosticStatus = "Report copied to clipboard. Nothing was uploaded."
-                            }
-                        }
-                    }
-                }
-            }
-
-            Item {
-                width: parent.width
-                height: headerTitle.implicitHeight + headerSubtitle.implicitHeight + 2
+            DankFlickable {
+                anchors.fill: parent
+                contentWidth: width
+                contentHeight: popoutColumn.implicitHeight
+                clip: true
 
                 Column {
-                    anchors.left: parent.left
-                    anchors.right: refreshButton.left
-                    anchors.rightMargin: Theme.spacingS
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 2
+                    id: popoutColumn
+                    width: popoutRoot.width
+                    spacing: Theme.spacingM
 
-                    StyledText {
-                        id: headerTitle
+                    // Header: title, freshness, refresh.
+                    Item {
                         width: parent.width
-                        text: "AI Usage"
-                        font.pixelSize: Theme.fontSizeLarge
-                        font.weight: Font.Bold
-                        color: Theme.surfaceText
-                        elide: Text.ElideRight
-                        maximumLineCount: 1
-                    }
-
-                    StyledText {
-                        id: headerSubtitle
-                        width: parent.width
-                        text: root.quotaBucketCount() + " limits" + (root.lastUpdated ? " - " + root.lastUpdated : "")
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.surfaceVariantText
-                        elide: Text.ElideRight
-                        maximumLineCount: 1
-                    }
-                }
-
-                DankActionButton {
-                    id: refreshButton
-                    buttonSize: 28
-                    iconName: "refresh"
-                    iconColor: Theme.surfaceVariantText
-                    tooltipText: "Refresh usage (provider requests respect the selected interval)"
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    onClicked: root.refreshCycle()
-                }
-            }
-
-            Flow {
-                width: parent.width
-                spacing: Theme.spacingXS
-
-                QuickToggle {
-                    text: root.advancedDropdown ? "Advanced" : "Simple"
-                    checked: root.advancedDropdown
-                    Accessible.name: text + " view; switch to " + (root.advancedDropdown ? "Simple" : "Advanced")
-                    onClicked: root.setDropdownMode(root.advancedDropdown ? "simple" : "advanced")
-                }
-                QuickToggle {
-                    text: root.showUsed ? "Used" : "Left"
-                    checked: root.showUsed
-                    Accessible.name: "Quota " + text + "; switch to " + (root.showUsed ? "Left" : "Used")
-                    onClicked: root.setQuickSetting("showUsed", !root.showUsed)
-                }
-                QuickToggle {
-                    text: "Bar controls"
-                    visible: root.advancedDropdown
-                    checked: root.quickControlsOpen
-                    onClicked: root.quickControlsOpen = !root.quickControlsOpen
-                }
-            }
-
-            Column {
-                width: parent.width
-                spacing: Theme.spacingXS
-                visible: root.advancedDropdown && root.quickControlsOpen
-
-                StyledText {
-                    text: "Top bar"
-                    color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
-                }
-                Flow {
-                    width: parent.width
-                    spacing: Theme.spacingXS
-                    QuickToggle { text: "Compact"; checked: root.compactPill; onClicked: root.setQuickSetting("compactPill", !root.compactPill) }
-                    QuickToggle { text: "Logos"; checked: root.barShowProviderLogos; onClicked: root.setQuickSetting("barShowProviderLogos", !root.barShowProviderLogos) }
-                    QuickToggle { text: "Plugin icon"; checked: root.barShowPluginIcon; onClicked: root.setQuickSetting("barShowPluginIcon", !root.barShowPluginIcon) }
-                }
-                StyledText {
-                    text: "Claude in the top bar"
-                    color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
-                }
-                Flow {
-                    width: parent.width
-                    spacing: Theme.spacingXS
-                    QuickToggle { text: "Session"; checked: root.barShowClaudeSession; onClicked: root.setQuickSetting("barShowClaudeSession", !root.barShowClaudeSession) }
-                    Repeater {
-                        model: root.claudeWeeklyBarChoices()
-                        delegate: QuickToggle {
-                            required property var modelData
-                            text: modelData.id === "general-weekly" ? "Weekly (all models)" : modelData.label
-                            checked: root.claudeBucketShownInBar(modelData)
-                            onClicked: root.setClaudeWeeklyBarBucket(modelData, !checked)
-                        }
-                    }
-                    QuickToggle { text: "Credits"; checked: root.barShowClaudeCredits; onClicked: root.setQuickSetting("barShowClaudeCredits", !root.barShowClaudeCredits) }
-                }
-            }
-
-            StyledRect {
-                width: parent.width
-                height: 92
-                visible: root.advancedDropdown
-                radius: Theme.cornerRadius
-                color: Theme.surfaceContainerHigh
-
-                Item {
-                    anchors.fill: parent
-                    anchors.margins: Theme.spacingM
-
-                    LimitBucket {
-                        anchors.fill: parent
-                        title: root.overallQuotaTitle()
-                        allowance: root.overallQuotaAllowance()
-                        detail: root.overallQuotaDetail()
-                    }
-                }
-            }
-
-            TokenHistoryRow {
-                width: parent.width
-                visible: root.advancedDropdown
-                value: root.filteredGrandTokenBreakdown()
-            }
-
-            TrackingPanel {
-                width: parent.width
-                visible: root.advancedDropdown && root.tokenHistoryRange === "tracked"
-            }
-
-            StyledText {
-                text: root.errorText
-                width: parent.width
-                color: "#ff6b6b"
-                font.pixelSize: Theme.fontSizeSmall
-                wrapMode: Text.WordWrap
-                visible: root.hasError && root.errorText !== ""
-            }
-
-            StyledRect {
-                id: historyPrompt
-                property var group: root.historyExplanationLocation === "prompt" && root.historyExplanationGroup
-                        ? root.historyExplanationGroup : root.latestExplanationPrompt(Date.now())
-                width: parent.width
-                height: historyPromptContent.implicitHeight + 2 * Theme.spacingS
-                visible: group !== null
-                radius: Theme.cornerRadius
-                color: Theme.surfaceContainerHigh
-                border.width: 1
-                border.color: Theme.primary
-
-                Column {
-                    id: historyPromptContent
-                    x: Theme.spacingS
-                    y: Theme.spacingS
-                    width: parent.width - 2 * Theme.spacingS
-                    spacing: Theme.spacingXS
-
-                    StyledText {
-                        width: parent.width
-                        text: root.historyPromptTitle(historyPrompt.group)
-                        textFormat: Text.PlainText
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.weight: Font.Medium
-                        color: Theme.surfaceText
-                    }
-
-                    StyledText {
-                        width: parent.width
-                        text: root.historyGroupSummary(historyPrompt.group)
-                        textFormat: Text.PlainText
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.surfaceVariantText
-                        wrapMode: Text.WordWrap
-                    }
-
-                    Flow {
-                        width: parent.width
-                        spacing: Theme.spacingXS
-
-                        CompactAction {
-                            text: "What changed?"
-                            visible: !(root.historyExplanationLocation === "prompt"
-                                    && root.historyExplanationExpanded)
-                            enabled: !historyExplanationProcess.running
-                                    && !usageProcess.running && historyPrompt.group !== null
-                                    && (!root.historyExplanationGroup
-                                        || root.historyExplanationLocation === "prompt")
-                            onClicked: root.beginHistoryExplanation(historyPrompt.group, "prompt", true)
-                        }
-
-                        CompactAction {
-                            text: historyExplanationProcess.running
-                                    && root.historyExplanationReason === "unknown" ? "Saving..." : "Not sure"
-                            visible: historyPrompt.group !== null
-                                    && root.historyExplanationChoiceAllowed(historyPrompt.group, "unknown")
-                                    && !(root.historyExplanationLocation === "prompt"
-                                        && root.historyExplanationExpanded)
-                            enabled: !historyExplanationProcess.running && !usageProcess.running
-                                    && (!root.historyExplanationGroup
-                                        || root.historyExplanationLocation === "prompt")
-                            onClicked: root.answerHistoryPrompt(historyPrompt.group, "unknown")
-                        }
-
-                        CompactAction {
-                            text: historyExplanationProcess.running
-                                    && root.historyExplanationReason === "dismissed" ? "Saving..." : "Dismiss"
-                            visible: historyPrompt.group !== null
-                                    && root.historyExplanationChoiceAllowed(historyPrompt.group, "dismissed")
-                                    && !(root.historyExplanationLocation === "prompt"
-                                        && root.historyExplanationExpanded)
-                            enabled: !historyExplanationProcess.running && !usageProcess.running
-                                    && (!root.historyExplanationGroup
-                                        || root.historyExplanationLocation === "prompt")
-                            onClicked: root.answerHistoryPrompt(historyPrompt.group, "dismissed")
-                        }
-                    }
-
-                    StyledText {
-                        width: parent.width
-                        text: root.historyExplanationError
-                        textFormat: Text.PlainText
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: "#ff6b6b"
-                        wrapMode: Text.WordWrap
-                        visible: root.historyExplanationLocation === "prompt"
-                                && !root.historyExplanationExpanded && text !== ""
-                    }
-
-                    HistoryExplanationEditor {
-                        width: parent.width
-                        visible: root.historyExplanationLocation === "prompt"
-                                && root.historyExplanationExpanded
-                    }
-                }
-            }
-
-            Column {
-                width: parent.width
-                spacing: Theme.spacingS
-                visible: root.visibleProviders().length > 0
-
-                Repeater {
-                    model: root.visibleProviders()
-
-                    StyledRect {
-                        width: parent.width
-                        height: providerContent.implicitHeight + 2 * Theme.spacingS
-                        radius: Theme.cornerRadius
-                        color: Theme.surfaceContainerHigh
+                        height: headerTitle.implicitHeight + headerSubtitle.implicitHeight + 2
 
                         Column {
-                            id: providerContent
-                            x: Theme.spacingS
-                            y: Theme.spacingS
-                            width: parent.width - 2 * Theme.spacingS
-                            spacing: Theme.spacingS
+                            anchors.left: parent.left
+                            anchors.right: refreshButton.left
+                            anchors.rightMargin: Theme.spacingS
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 2
 
-                            Item {
+                            StyledText {
+                                id: headerTitle
                                 width: parent.width
-                                height: 26
-
-                                Row {
-                                    anchors.left: parent.left
-                                    anchors.right: providerActions.left
-                                    anchors.rightMargin: Theme.spacingS
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    spacing: Theme.spacingS
-
-                                    ProviderLogo {
-                                        provider: modelData
-                                        size: Theme.fontSizeMedium
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-
-                                    StyledText {
-                                        text: modelData.name
-                                        width: parent.width - Theme.fontSizeMedium - Theme.spacingS
-                                        font.pixelSize: Theme.fontSizeMedium
-                                        font.weight: Font.Medium
-                                        color: Theme.surfaceText
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        elide: Text.ElideRight
-                                        maximumLineCount: 1
-                                    }
-                                }
-
-                                Row {
-                                    id: providerActions
-                                    anchors.right: parent.right
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    spacing: Theme.spacingXS
-
-                                    StyledText {
-                                        text: root.providerAllowanceSummary(modelData)
-                                        width: Math.min(150, implicitWidth)
-                                        font.pixelSize: Theme.fontSizeMedium
-                                        font.weight: Font.Bold
-                                        color: root.providerColor(modelData)
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        elide: Text.ElideRight
-                                        maximumLineCount: 1
-                                    }
-
-                                    DankActionButton {
-                                        buttonSize: 24
-                                        iconName: root.isPrimingClaude ? "hourglass_top" : "bolt"
-                                        iconColor: root.isPrimingClaude ? Theme.surfaceVariantText : Theme.primary
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        visible: root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime
-                                        enabled: !root.isPrimingClaude
-                                        onClicked: root.primeClaude()
-                                    }
-                                }
+                                text: "AI Usage"
+                                font.pixelSize: Theme.fontSizeLarge
+                                font.weight: Font.Bold
+                                color: Theme.surfaceText
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
                             }
 
-                            Column {
+                            StyledText {
+                                id: headerSubtitle
                                 width: parent.width
-                                height: root.providerQuotaHeight(modelData)
+                                text: root.usageStatusText()
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: root.anyUsageStale() ? Theme.warning : Theme.surfaceVariantText
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
+                            }
+                        }
+
+                        DankActionButton {
+                            id: refreshButton
+                            buttonSize: 28
+                            iconName: "refresh"
+                            iconColor: usageProcess.running ? Theme.primary : Theme.surfaceVariantText
+                            tooltipText: "Refresh usage (provider requests respect the selected interval)"
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            onClicked: root.refreshCycle()
+                        }
+                    }
+
+                    // View controls: detail level and allowance direction.
+                    Item {
+                        width: parent.width
+                        height: 30
+
+                        SegmentSwitch {
+                            anchors.left: parent.left
+                            offLabel: "Simple"
+                            onLabel: "Advanced"
+                            text: root.advancedDropdown ? "Advanced" : "Simple"
+                            checked: root.advancedDropdown
+                            Accessible.name: text + " view; switch to " + (root.advancedDropdown ? "Simple" : "Advanced")
+                            onClicked: root.setDropdownMode(root.advancedDropdown ? "simple" : "advanced")
+                        }
+
+                        SegmentSwitch {
+                            anchors.right: parent.right
+                            offLabel: "Left"
+                            onLabel: "Used"
+                            text: root.showUsed ? "Used" : "Left"
+                            checked: root.showUsed
+                            Accessible.name: "Quota " + text + "; switch to " + (root.showUsed ? "Left" : "Used")
+                            onClicked: root.setQuickSetting("showUsed", !root.showUsed)
+                        }
+                    }
+
+                    // Attention: failures and prompts that need a decision.
+                    NoticeCard {
+                        width: parent.width
+                        level: "error"
+                        text: root.errorText
+                        visible: root.hasError && root.errorText !== ""
+                    }
+
+                    StyledRect {
+                        id: historyPrompt
+                        property var group: root.historyExplanationLocation === "prompt" && root.historyExplanationGroup
+                                ? root.historyExplanationGroup : root.latestExplanationPrompt(Date.now())
+                        width: parent.width
+                        height: historyPromptContent.implicitHeight + 2 * Theme.spacingM
+                        visible: group !== null
+                        radius: Theme.cornerRadius
+                        color: Theme.surfaceContainerHigh
+                        border.width: 1
+                        border.color: Theme.primary
+
+                        Column {
+                            id: historyPromptContent
+                            x: Theme.spacingM
+                            y: Theme.spacingM
+                            width: parent.width - 2 * Theme.spacingM
+                            spacing: Theme.spacingXS
+
+                            Row {
+                                width: parent.width
                                 spacing: Theme.spacingXS
-
-                                Repeater {
-                                    model: root.providerQuotaBuckets(modelData)
-
-                                    QuotaBar {
-                                        width: parent.width
-                                        bucket: modelData
-                                    }
-                                }
-
-                                StyledText {
-                                    width: parent.width
-                                    text: "Quota data unavailable"
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                    visible: root.providerQuotaBuckets(modelData).length === 0
-                                }
-                            }
-
-                            TokenHistoryRow {
-                                width: parent.width
-                                visible: root.advancedDropdown
-                                value: root.providerTokenBreakdown(modelData)
-                            }
-
-                            Item {
-                                width: parent.width
-                                height: 34
-                                visible: root.advancedDropdown && root.providerResets(modelData).length > 0
 
                                 DankIcon {
-                                    name: "refresh"
+                                    name: "help"
                                     size: Theme.fontSizeMedium
                                     color: Theme.primary
-                                    anchors.left: parent.left
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
-                                Column {
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: Theme.fontSizeMedium + Theme.spacingS
-                                    anchors.right: parent.right
+                                StyledText {
+                                    width: parent.width - Theme.fontSizeMedium - Theme.spacingXS
+                                    text: root.historyPromptTitle(historyPrompt.group)
+                                    textFormat: Text.PlainText
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.weight: Font.Medium
+                                    color: Theme.surfaceText
                                     anchors.verticalCenter: parent.verticalCenter
-                                    spacing: 1
-
-                                    StyledText {
-                                        width: parent.width
-                                        text: root.providerResetSummary(modelData)
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        font.weight: Font.Medium
-                                        color: Theme.primary
-                                        elide: Text.ElideRight
-                                        maximumLineCount: 1
-                                    }
-
-                                    StyledText {
-                                        width: parent.width
-                                        text: root.providerResetDetail(modelData)
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        elide: Text.ElideRight
-                                        maximumLineCount: 1
-                                    }
-                                }
-                            }
-
-                            Column {
-                                width: parent.width
-                                spacing: Theme.spacingXS
-                                visible: modelData.id === "codex" && root.resetControlsVisible()
-
-                                DankToggle {
-                                    id: codexAutoResetToggle
-                                    width: parent.width
-                                    text: codexResetProcess.running ? "Checking reset..." : !root.codexResetReady ? "Cancel auto reset" : "Auto-use one reset"
-                                    checked: root.codexResetStatus.armed === true
-                                    toggling: codexResetProcess.running
-                                    enabled: !codexResetProcess.running && (root.codexResetReady || root.codexResetStatus.stateKnown === false)
-                                    onClicked: root.runCodexReset(!root.codexResetReady || root.codexResetStatus.armed ? "disarm" : "arm")
-                                    activeFocusOnTab: true
-                                    Accessible.role: Accessible.CheckBox
-                                    Accessible.name: text
-                                    Accessible.checked: checked
-                                    Accessible.onPressAction: handleClick()
-                                    Accessible.onToggleAction: handleClick()
-                                    Keys.onSpacePressed: handleClick()
-                                    Keys.onReturnPressed: handleClick()
-
-                                    Rectangle {
-                                        anchors.fill: parent
-                                        color: "transparent"
-                                        radius: Theme.cornerRadius
-                                        border.width: codexAutoResetToggle.activeFocus ? 2 : 0
-                                        border.color: Theme.primary
-                                    }
-                                }
-
-                                StyledText {
-                                    width: parent.width
-                                    text: root.codexResetDetailText()
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                    wrapMode: Text.WordWrap
-                                }
-
-                                StyledText {
-                                    width: parent.width
-                                    text: "Uses one reset at 99% general usage or 10 min before its expiry. Turns off after one attempt; DMS must be running."
-                                    visible: root.advancedDropdown
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                    wrapMode: Text.WordWrap
+                                    elide: Text.ElideRight
                                 }
                             }
 
                             StyledText {
                                 width: parent.width
-                                text: "Claude session scheduling is enabled · manage in Advanced/settings"
-                                visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime
+                                text: root.historyGroupSummary(historyPrompt.group)
+                                textFormat: Text.PlainText
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
                                 wrapMode: Text.WordWrap
                             }
 
+                            Flow {
+                                width: parent.width
+                                spacing: Theme.spacingXS
+
+                                CompactAction {
+                                    text: "What changed?"
+                                    visible: !(root.historyExplanationLocation === "prompt"
+                                            && root.historyExplanationExpanded)
+                                    enabled: !historyExplanationProcess.running
+                                            && !usageProcess.running && historyPrompt.group !== null
+                                            && (!root.historyExplanationGroup
+                                                || root.historyExplanationLocation === "prompt")
+                                    onClicked: root.beginHistoryExplanation(historyPrompt.group, "prompt", true)
+                                }
+
+                                CompactAction {
+                                    text: historyExplanationProcess.running
+                                            && root.historyExplanationReason === "unknown" ? "Saving..." : "Not sure"
+                                    visible: historyPrompt.group !== null
+                                            && root.historyExplanationChoiceAllowed(historyPrompt.group, "unknown")
+                                            && !(root.historyExplanationLocation === "prompt"
+                                                && root.historyExplanationExpanded)
+                                    enabled: !historyExplanationProcess.running && !usageProcess.running
+                                            && (!root.historyExplanationGroup
+                                                || root.historyExplanationLocation === "prompt")
+                                    onClicked: root.answerHistoryPrompt(historyPrompt.group, "unknown")
+                                }
+
+                                CompactAction {
+                                    text: historyExplanationProcess.running
+                                            && root.historyExplanationReason === "dismissed" ? "Saving..." : "Dismiss"
+                                    visible: historyPrompt.group !== null
+                                            && root.historyExplanationChoiceAllowed(historyPrompt.group, "dismissed")
+                                            && !(root.historyExplanationLocation === "prompt"
+                                                && root.historyExplanationExpanded)
+                                    enabled: !historyExplanationProcess.running && !usageProcess.running
+                                            && (!root.historyExplanationGroup
+                                                || root.historyExplanationLocation === "prompt")
+                                    onClicked: root.answerHistoryPrompt(historyPrompt.group, "dismissed")
+                                }
+                            }
+
                             StyledText {
                                 width: parent.width
-                                text: root.providerNote(modelData)
+                                text: root.historyExplanationError
+                                textFormat: Text.PlainText
                                 font.pixelSize: Theme.fontSizeSmall
-                                color: "#ffaa00"
-                                elide: Text.ElideRight
-                                maximumLineCount: 2
+                                color: Theme.error
                                 wrapMode: Text.WordWrap
-                                visible: text !== ""
+                                visible: root.historyExplanationLocation === "prompt"
+                                        && !root.historyExplanationExpanded && text !== ""
+                            }
+
+                            HistoryExplanationEditor {
+                                width: parent.width
+                                visible: root.historyExplanationLocation === "prompt"
+                                        && root.historyExplanationExpanded
                             }
                         }
                     }
-                }
-            }
 
-            Column {
-                width: parent.width
-                spacing: Theme.spacingS
-                visible: root.visibleProviders().length === 0 && !root.isLoading
-
-                StyledText {
-                    text: "No providers enabled."
-                    color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeMedium
-                }
-            }
-
-            Column {
-                width: parent.width
-                spacing: Theme.spacingS
-                visible: (root.advancedDropdown && (root.showCodex || root.showClaude))
-                        || (root.historyExplanationGroup !== null
-                            && root.historyExplanationLocation !== "prompt")
-
-                QuickToggle {
-                    text: "Reset history" + (root.visibleHistory().length ? " · " + root.visibleHistory().length : "")
-                    checked: root.historyOpen || (root.historyExplanationGroup !== null
-                            && root.historyExplanationLocation !== "prompt")
-                    onClicked: {
-                        if (root.historyExplanationGroup && root.historyExplanationLocation !== "prompt")
-                            root.historyOpen = true
-                        else root.historyOpen = !root.historyOpen
-                    }
-                }
-
-                StyledText {
-                    width: parent.width
-                    text: root.historyError
-                    textFormat: Text.PlainText
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceVariantText
-                    wrapMode: Text.WordWrap
-                    visible: root.historyError !== ""
-                }
-
-                Column {
-                    width: parent.width
-                    spacing: Theme.spacingS
-                    visible: root.historyOpen || (root.historyExplanationGroup !== null
-                            && root.historyExplanationLocation !== "prompt")
-
-                    StyledText {
+                    StyledRect {
+                        id: upcomingAnnouncementCard
+                        property var event: root.nextUpcomingAnnouncement()
                         width: parent.width
-                        text: root.visibleHistory().length === 0
-                                ? "No reset changes recorded yet. History starts with observed usage; it cannot reconstruct earlier resets."
-                                : "Latest 8 events · up to 30 days retained. Times show when changes were observed, not necessarily when they happened."
-                        textFormat: Text.PlainText
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.surfaceVariantText
-                        wrapMode: Text.WordWrap
-                    }
+                        height: upcomingAnnouncementContent.implicitHeight + 2 * Theme.spacingM
+                        visible: event !== null
+                        radius: Theme.cornerRadius
+                        color: Theme.surfaceContainerHigh
+                        border.width: 1
+                        border.color: Theme.outlineVariant
 
-                    Repeater {
-                        model: root.historyGroupsForDisplay()
+                        Column {
+                            id: upcomingAnnouncementContent
+                            x: Theme.spacingM
+                            y: Theme.spacingM
+                            width: parent.width - 2 * Theme.spacingM
+                            spacing: Theme.spacingXS
 
-                        StyledRect {
-                            id: historyGroupCard
-                            property var historyGroup: modelData
-                            width: parent.width
-                            height: historyContent.implicitHeight + 2 * Theme.spacingS
-                            color: Theme.surfaceContainerHigh
-                            radius: Theme.cornerRadius
-
-                            Column {
-                                id: historyContent
-                                x: Theme.spacingS
-                                y: Theme.spacingS
-                                width: parent.width - 2 * Theme.spacingS
+                            Row {
+                                width: parent.width
                                 spacing: Theme.spacingXS
 
-                                Repeater {
-                                    model: historyGroupCard.historyGroup.events
+                                DankIcon {
+                                    name: "campaign"
+                                    size: Theme.fontSizeMedium
+                                    color: Theme.primary
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                StyledText {
+                                    width: parent.width - Theme.fontSizeMedium - Theme.spacingXS
+                                    text: upcomingAnnouncementCard.event
+                                            ? "Announced reset · " + root.historyProviderName(upcomingAnnouncementCard.event.provider)
+                                              + (upcomingAnnouncementCard.event.expectedBy
+                                                 ? " · by " + root.formatShortDateTime(upcomingAnnouncementCard.event.expectedBy) : "")
+                                            : ""
+                                    textFormat: Text.PlainText
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.weight: Font.Medium
+                                    color: Theme.surfaceText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            StyledText {
+                                width: parent.width
+                                text: upcomingAnnouncementCard.event
+                                        ? root.announcementSummary(upcomingAnnouncementCard.event)
+                                          + "\nVerified by TokenResets · account eligibility unverified" : ""
+                                textFormat: Text.PlainText
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: Theme.surfaceVariantText
+                                wrapMode: Text.WordWrap
+                            }
+
+                            CompactAction {
+                                text: "View source and evidence"
+                                onClicked: if (upcomingAnnouncementCard.event) Qt.openUrlExternally(upcomingAnnouncementCard.event.url)
+                            }
+                        }
+                    }
+
+                    // Overview (Advanced): the single most constrained limit and local token totals.
+                    StyledRect {
+                        width: parent.width
+                        height: overviewContent.implicitHeight + 2 * Theme.spacingM
+                        visible: root.advancedDropdown
+                        radius: Theme.cornerRadius
+                        color: Theme.surfaceContainerHigh
+
+                        Item {
+                            id: overviewContent
+                            x: Theme.spacingM
+                            y: Theme.spacingM
+                            width: parent.width - 2 * Theme.spacingM
+                            implicitHeight: Math.max(overviewText.implicitHeight, overviewRing.height)
+
+                            LimitBucket {
+                                id: overviewText
+                                anchors.left: parent.left
+                                anchors.right: overviewRing.left
+                                anchors.rightMargin: Theme.spacingM
+                                anchors.verticalCenter: parent.verticalCenter
+                                title: root.overallQuotaTitle()
+                                allowance: root.overallQuotaAllowance()
+                                detail: root.overviewCountdown()
+                            }
+
+                            AllowanceRing {
+                                id: overviewRing
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                allowance: root.overallQuotaAllowance()
+                            }
+                        }
+                    }
+
+                    TokenHistoryRow {
+                        width: parent.width
+                        visible: root.advancedDropdown
+                        value: root.filteredGrandTokenBreakdown()
+                    }
+
+                    TrackingPanel {
+                        width: parent.width
+                        visible: root.advancedDropdown && root.tokenHistoryRange === "tracked"
+                    }
+
+                    // Providers.
+                    Column {
+                        width: parent.width
+                        spacing: Theme.spacingS
+                        visible: root.visibleProviders().length > 0
+
+                        Repeater {
+                            model: root.visibleProviders()
+
+                            StyledRect {
+                                width: parent.width
+                                height: providerContent.implicitHeight + 2 * Theme.spacingM
+                                radius: Theme.cornerRadius
+                                color: Theme.surfaceContainerHigh
+
+                                Column {
+                                    id: providerContent
+                                    x: Theme.spacingM
+                                    y: Theme.spacingM
+                                    width: parent.width - 2 * Theme.spacingM
+                                    spacing: Theme.spacingS
+
+                                    Item {
+                                        width: parent.width
+                                        height: 26
+
+                                        Row {
+                                            anchors.left: parent.left
+                                            anchors.right: providerActions.left
+                                            anchors.rightMargin: Theme.spacingS
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            spacing: Theme.spacingS
+
+                                            ProviderLogo {
+                                                provider: modelData
+                                                size: Theme.fontSizeLarge
+                                                anchors.verticalCenter: parent.verticalCenter
+                                            }
+
+                                            StyledText {
+                                                text: modelData.name
+                                                width: parent.width - Theme.fontSizeLarge - Theme.spacingS
+                                                font.pixelSize: Theme.fontSizeMedium
+                                                font.weight: Font.Medium
+                                                color: Theme.surfaceText
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                elide: Text.ElideRight
+                                                maximumLineCount: 1
+                                            }
+                                        }
+
+                                        Row {
+                                            id: providerActions
+                                            anchors.right: parent.right
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            spacing: Theme.spacingXS
+
+                                            StyledText {
+                                                text: root.providerAllowanceSummary(modelData)
+                                                width: Math.min(160, implicitWidth)
+                                                font.pixelSize: Theme.fontSizeMedium
+                                                font.weight: Font.Bold
+                                                color: root.providerColor(modelData)
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                elide: Text.ElideRight
+                                                maximumLineCount: 1
+                                            }
+
+                                            DankActionButton {
+                                                buttonSize: 24
+                                                iconName: root.isPrimingClaude ? "hourglass_top" : "bolt"
+                                                iconColor: root.isPrimingClaude ? Theme.surfaceVariantText : Theme.primary
+                                                tooltipText: root.isPrimingClaude ? "Starting a Claude session window..." : "Start a Claude session window now"
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                visible: root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime
+                                                enabled: !root.isPrimingClaude
+                                                onClicked: root.primeClaude()
+                                            }
+                                        }
+                                    }
 
                                     Column {
                                         width: parent.width
-                                        spacing: 2
+                                        height: root.providerQuotaHeight(modelData)
+                                        spacing: Theme.spacingS
 
-                                        StyledText {
+                                        Repeater {
+                                            model: root.providerQuotaBuckets(modelData)
+
+                                            QuotaBar {
+                                                width: parent.width
+                                                bucket: modelData
+                                            }
+                                        }
+
+                                        NoticeRow {
                                             width: parent.width
-                                            text: root.historyEventTitle(modelData)
-                                            textFormat: Text.PlainText
-                                            font.pixelSize: Theme.fontSizeSmall
-                                            font.weight: Font.Medium
-                                            color: Theme.surfaceText
-                                            wrapMode: Text.WordWrap
+                                            level: modelData.available && !modelData.error ? "info" : "error"
+                                            text: modelData.available && !modelData.error
+                                                    ? "Quota data unavailable"
+                                                    : "Not signed in or CLI unavailable · sign in with the provider CLI, then Refresh"
+                                            visible: root.providerQuotaBuckets(modelData).length === 0
+                                        }
+                                    }
+
+                                    TokenHistoryRow {
+                                        width: parent.width
+                                        visible: root.advancedDropdown
+                                        value: root.providerTokenBreakdown(modelData)
+                                    }
+
+                                    Item {
+                                        width: parent.width
+                                        height: 34
+                                        visible: root.advancedDropdown && root.providerResets(modelData).length > 0
+
+                                        DankIcon {
+                                            name: "redeem"
+                                            size: Theme.fontSizeMedium
+                                            color: Theme.primary
+                                            anchors.left: parent.left
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+
+                                        Column {
+                                            anchors.left: parent.left
+                                            anchors.leftMargin: Theme.fontSizeMedium + Theme.spacingS
+                                            anchors.right: parent.right
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            spacing: 1
+
+                                            StyledText {
+                                                width: parent.width
+                                                text: root.providerResetSummary(modelData)
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                font.weight: Font.Medium
+                                                color: Theme.primary
+                                                elide: Text.ElideRight
+                                                maximumLineCount: 1
+                                            }
+
+                                            StyledText {
+                                                width: parent.width
+                                                text: root.providerResetDetail(modelData)
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                color: Theme.surfaceVariantText
+                                                elide: Text.ElideRight
+                                                maximumLineCount: 1
+                                            }
+                                        }
+                                    }
+
+                                    Column {
+                                        width: parent.width
+                                        spacing: Theme.spacingXS
+                                        visible: modelData.id === "codex" && root.resetControlsVisible()
+
+                                        DankToggle {
+                                            id: codexAutoResetToggle
+                                            width: parent.width
+                                            text: codexResetProcess.running ? "Checking reset..." : !root.codexResetReady ? "Cancel auto reset" : "Auto-use one reset"
+                                            checked: root.codexResetStatus.armed === true
+                                            toggling: codexResetProcess.running
+                                            enabled: !codexResetProcess.running && (root.codexResetReady || root.codexResetStatus.stateKnown === false)
+                                            onClicked: root.runCodexReset(!root.codexResetReady || root.codexResetStatus.armed ? "disarm" : "arm")
+                                            activeFocusOnTab: true
+                                            Accessible.role: Accessible.CheckBox
+                                            Accessible.name: text
+                                            Accessible.checked: checked
+                                            Accessible.onPressAction: handleClick()
+                                            Accessible.onToggleAction: handleClick()
+                                            Keys.onSpacePressed: handleClick()
+                                            Keys.onReturnPressed: handleClick()
+
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                color: "transparent"
+                                                radius: Theme.cornerRadius
+                                                border.width: codexAutoResetToggle.activeFocus ? 2 : 0
+                                                border.color: Theme.primary
+                                            }
+                                        }
+
+                                        NoticeRow {
+                                            width: parent.width
+                                            level: root.codexResetStatus.error ? "error"
+                                                    : root.codexResetStatus.armed === true ? "warning" : "info"
+                                            text: root.codexResetDetailText()
                                         }
 
                                         StyledText {
                                             width: parent.width
-                                            text: root.historyEventDetail(modelData)
-                                            textFormat: Text.PlainText
+                                            text: "Uses one reset at 99% general usage or 10 min before its expiry. Turns off after one attempt; DMS must be running."
+                                            visible: root.advancedDropdown
                                             font.pixelSize: Theme.fontSizeSmall
                                             color: Theme.surfaceVariantText
                                             wrapMode: Text.WordWrap
                                         }
                                     }
-                                }
 
-                                StyledText {
-                                    width: parent.width
-                                    text: "User reported · "
-                                            + root.historyExplanationText(historyGroupCard.historyGroup.explanation)
-                                    textFormat: Text.PlainText
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.weight: Font.Medium
-                                    color: Theme.primary
-                                    wrapMode: Text.WordWrap
-                                    visible: root.hasHistoryExplanation(historyGroupCard.historyGroup)
-                                }
+                                    NoticeRow {
+                                        width: parent.width
+                                        level: "info"
+                                        text: "Claude session scheduling is enabled · manage in Advanced or settings"
+                                        visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime
+                                    }
 
-                                StyledText {
-                                    width: parent.width
-                                    text: historyGroupCard.historyGroup.explanation
-                                            ? historyGroupCard.historyGroup.explanation.note || "" : ""
-                                    textFormat: Text.PlainText
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceText
-                                    wrapMode: Text.WordWrap
-                                    visible: text !== ""
-                                }
+                                    Repeater {
+                                        model: root.providerNotices(modelData)
 
-                                StyledText {
-                                    width: parent.width
-                                    property var publicContext: root.matchingPublicAnnouncement(historyGroupCard.historyGroup)
-                                    text: publicContext ? (publicContext.confidence === "verified"
-                                            ? "Likely linked to announced reset"
-                                            : "Public reset reported near this observation")
-                                            + " · via TokenResets · account eligibility unverified\n" + root.announcementSummary(publicContext) : ""
-                                    textFormat: Text.PlainText
-                                    color: Theme.surfaceVariantText
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    wrapMode: Text.WordWrap
-                                    visible: publicContext !== null
-                                }
-
-                                CompactAction {
-                                    property var publicContext: root.matchingPublicAnnouncement(historyGroupCard.historyGroup)
-                                    text: "View public context"
-                                    visible: publicContext !== null
-                                    onClicked: if (publicContext) Qt.openUrlExternally(publicContext.url)
-                                }
-
-                                CompactAction {
-                                    text: root.hasHistoryExplanation(historyGroupCard.historyGroup)
-                                            ? "Edit explanation" : "Explain"
-                                    visible: historyGroupCard.historyGroup.explainable
-                                            && root.historyExplanationLocation !== historyGroupCard.historyGroup.key
-                                    enabled: !historyExplanationProcess.running && !usageProcess.running
-                                            && root.historyExplanationGroup === null
-                                    onClicked: root.beginHistoryExplanation(historyGroupCard.historyGroup,
-                                            historyGroupCard.historyGroup.key, true)
-                                }
-
-                                HistoryExplanationEditor {
-                                    width: parent.width
-                                    visible: root.historyExplanationGroup !== null
-                                            && root.historyExplanationLocation === historyGroupCard.historyGroup.key
+                                        NoticeRow {
+                                            width: parent.width
+                                            level: modelData.level
+                                            text: modelData.text
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            }
 
-            StyledText {
-                text: "Loading..."
-                color: Theme.surfaceVariantText
-                font.pixelSize: Theme.fontSizeMedium
-                visible: root.isLoading
-            }
-            DiagnosticsPanel { }
-            Column {
-                width: parent.width
-                spacing: Theme.spacingS
-                visible: root.publicResetAnnouncements && (root.advancedDropdown || root.visibleAnnouncements().length > 0)
-                StyledText {
-                    text: "Public reset announcements"
-                    color: Theme.surfaceText
-                    font.pixelSize: Theme.fontSizeMedium
-                }
-                StyledText {
-                    width: parent.width
-                    text: root.announcementsMessage
-                    textFormat: Text.PlainText
-                    wrapMode: Text.WordWrap
-                    color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
-                }
-                Repeater {
-                    model: root.visibleAnnouncements()
-                    delegate: Column {
-                        required property var modelData
+                    NoticeRow {
+                        width: parent.width
+                        level: "info"
+                        text: "No providers enabled. Turn on Codex or Claude in plugin settings."
+                        visible: root.visibleProviders().length === 0 && !root.isLoading
+                    }
+
+                    NoticeRow {
+                        width: parent.width
+                        level: "info"
+                        text: "Loading usage..."
+                        visible: root.isLoading && root.providers.length === 0
+                    }
+
+                    // More (Advanced): secondary sections as consistent disclosure rows.
+                    Column {
                         width: parent.width
                         spacing: Theme.spacingXS
-                        StyledText {
+                        visible: (root.advancedDropdown && (root.showCodex || root.showClaude))
+                                || (root.historyExplanationGroup !== null
+                                    && root.historyExplanationLocation !== "prompt")
+
+                        SectionHeader {
                             width: parent.width
-                            text: modelData.title + " · " + modelData.confidence + " by TokenResets"
-                            textFormat: Text.PlainText
-                            wrapMode: Text.WordWrap
-                            color: Theme.primary
-                            font.pixelSize: Theme.fontSizeSmall
+                            title: "Reset history"
+                            badge: root.visibleHistory().length ? "" + root.visibleHistory().length : ""
+                            expanded: root.historyOpen || (root.historyExplanationGroup !== null
+                                    && root.historyExplanationLocation !== "prompt")
+                            onClicked: {
+                                if (root.historyExplanationGroup && root.historyExplanationLocation !== "prompt")
+                                    root.historyOpen = true
+                                else root.historyOpen = !root.historyOpen
+                            }
                         }
-                        StyledText {
+
+                        Column {
                             width: parent.width
-                            text: root.announcementSummary(modelData) + "\nScope: " + modelData.scopeLabel
-                                    + "\nAnnounced " + root.formatShortDateTime(modelData.announcedAt)
-                                    + (modelData.expectedBy ? " · expected by " + root.formatShortDateTime(modelData.expectedBy) : "")
-                            textFormat: Text.PlainText
-                            wrapMode: Text.WordWrap
-                            color: Theme.surfaceVariantText
-                            font.pixelSize: Theme.fontSizeSmall
+                            spacing: Theme.spacingS
+                            visible: root.historyOpen || (root.historyExplanationGroup !== null
+                                    && root.historyExplanationLocation !== "prompt")
+
+                            NoticeRow {
+                                width: parent.width
+                                level: "warning"
+                                text: root.historyError
+                                visible: root.historyError !== ""
+                            }
+
+                            StyledText {
+                                width: parent.width
+                                text: root.visibleHistory().length === 0
+                                        ? "No reset changes recorded yet. History starts with observed usage; it cannot reconstruct earlier resets."
+                                        : "Latest 8 events · up to 30 days retained. Times show when changes were observed, not necessarily when they happened."
+                                textFormat: Text.PlainText
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: Theme.surfaceVariantText
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Repeater {
+                                model: root.historyGroupsForDisplay()
+
+                                StyledRect {
+                                    id: historyGroupCard
+                                    property var historyGroup: modelData
+                                    width: parent.width
+                                    height: historyContent.implicitHeight + 2 * Theme.spacingM
+                                    color: Theme.surfaceContainerHigh
+                                    radius: Theme.cornerRadius
+
+                                    Column {
+                                        id: historyContent
+                                        x: Theme.spacingM
+                                        y: Theme.spacingM
+                                        width: parent.width - 2 * Theme.spacingM
+                                        spacing: Theme.spacingXS
+
+                                        Repeater {
+                                            model: historyGroupCard.historyGroup.events
+
+                                            Column {
+                                                width: parent.width
+                                                spacing: 2
+
+                                                StyledText {
+                                                    width: parent.width
+                                                    text: root.historyEventTitle(modelData)
+                                                    textFormat: Text.PlainText
+                                                    font.pixelSize: Theme.fontSizeSmall
+                                                    font.weight: Font.Medium
+                                                    color: Theme.surfaceText
+                                                    wrapMode: Text.WordWrap
+                                                }
+
+                                                StyledText {
+                                                    width: parent.width
+                                                    text: root.historyEventDetail(modelData)
+                                                    textFormat: Text.PlainText
+                                                    font.pixelSize: Theme.fontSizeSmall
+                                                    color: Theme.surfaceVariantText
+                                                    wrapMode: Text.WordWrap
+                                                }
+                                            }
+                                        }
+
+                                        StyledText {
+                                            width: parent.width
+                                            text: "User reported · "
+                                                    + root.historyExplanationText(historyGroupCard.historyGroup.explanation)
+                                            textFormat: Text.PlainText
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.weight: Font.Medium
+                                            color: Theme.primary
+                                            wrapMode: Text.WordWrap
+                                            visible: root.hasHistoryExplanation(historyGroupCard.historyGroup)
+                                        }
+
+                                        StyledText {
+                                            width: parent.width
+                                            text: historyGroupCard.historyGroup.explanation
+                                                    ? historyGroupCard.historyGroup.explanation.note || "" : ""
+                                            textFormat: Text.PlainText
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            color: Theme.surfaceText
+                                            wrapMode: Text.WordWrap
+                                            visible: text !== ""
+                                        }
+
+                                        StyledText {
+                                            width: parent.width
+                                            property var publicContext: root.matchingPublicAnnouncement(historyGroupCard.historyGroup)
+                                            text: publicContext ? (publicContext.confidence === "verified"
+                                                    ? "Likely linked to announced reset"
+                                                    : "Public reset reported near this observation")
+                                                    + " · via TokenResets · account eligibility unverified\n" + root.announcementSummary(publicContext) : ""
+                                            textFormat: Text.PlainText
+                                            color: Theme.surfaceVariantText
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            wrapMode: Text.WordWrap
+                                            visible: publicContext !== null
+                                        }
+
+                                        Flow {
+                                            width: parent.width
+                                            spacing: Theme.spacingXS
+
+                                            CompactAction {
+                                                property var publicContext: root.matchingPublicAnnouncement(historyGroupCard.historyGroup)
+                                                text: "View public context"
+                                                visible: publicContext !== null
+                                                onClicked: if (publicContext) Qt.openUrlExternally(publicContext.url)
+                                            }
+
+                                            CompactAction {
+                                                text: root.hasHistoryExplanation(historyGroupCard.historyGroup)
+                                                        ? "Edit explanation" : "Explain"
+                                                visible: historyGroupCard.historyGroup.explainable
+                                                        && root.historyExplanationLocation !== historyGroupCard.historyGroup.key
+                                                enabled: !historyExplanationProcess.running && !usageProcess.running
+                                                        && root.historyExplanationGroup === null
+                                                onClicked: root.beginHistoryExplanation(historyGroupCard.historyGroup,
+                                                        historyGroupCard.historyGroup.key, true)
+                                            }
+                                        }
+
+                                        HistoryExplanationEditor {
+                                            width: parent.width
+                                            visible: root.historyExplanationGroup !== null
+                                                    && root.historyExplanationLocation === historyGroupCard.historyGroup.key
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        CompactAction {
-                            text: "View source and evidence"
-                            onClicked: Qt.openUrlExternally(modelData.url)
+
+                        SectionHeader {
+                            width: parent.width
+                            title: "Public reset announcements"
+                            badge: root.visibleAnnouncements().length ? "" + root.visibleAnnouncements().length : ""
+                            expanded: root.announcementsOpen
+                            visible: root.advancedDropdown && root.publicResetAnnouncements
+                            onClicked: root.announcementsOpen = !root.announcementsOpen
+                        }
+
+                        Column {
+                            width: parent.width
+                            spacing: Theme.spacingS
+                            visible: root.advancedDropdown && root.publicResetAnnouncements && root.announcementsOpen
+
+                            StyledText {
+                                width: parent.width
+                                text: root.announcementsMessage
+                                textFormat: Text.PlainText
+                                wrapMode: Text.WordWrap
+                                color: Theme.surfaceVariantText
+                                font.pixelSize: Theme.fontSizeSmall
+                                visible: text !== ""
+                            }
+
+                            Repeater {
+                                model: root.visibleAnnouncements()
+                                delegate: StyledRect {
+                                    required property var modelData
+                                    width: parent.width
+                                    height: announcementContent.implicitHeight + 2 * Theme.spacingM
+                                    radius: Theme.cornerRadius
+                                    color: Theme.surfaceContainerHigh
+
+                                    Column {
+                                        id: announcementContent
+                                        x: Theme.spacingM
+                                        y: Theme.spacingM
+                                        width: parent.width - 2 * Theme.spacingM
+                                        spacing: Theme.spacingXS
+
+                                        StyledText {
+                                            width: parent.width
+                                            text: modelData.title + " · " + modelData.confidence + " by TokenResets"
+                                            textFormat: Text.PlainText
+                                            wrapMode: Text.WordWrap
+                                            color: Theme.primary
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.weight: Font.Medium
+                                        }
+
+                                        StyledText {
+                                            width: parent.width
+                                            text: root.announcementSummary(modelData) + "\nScope: " + modelData.scopeLabel
+                                                    + "\nAnnounced " + root.formatShortDateTime(modelData.announcedAt)
+                                                    + (modelData.expectedBy ? " · expected by " + root.formatShortDateTime(modelData.expectedBy) : "")
+                                            textFormat: Text.PlainText
+                                            wrapMode: Text.WordWrap
+                                            color: Theme.surfaceVariantText
+                                            font.pixelSize: Theme.fontSizeSmall
+                                        }
+
+                                        CompactAction {
+                                            text: "View source and evidence"
+                                            onClicked: Qt.openUrlExternally(modelData.url)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        SectionHeader {
+                            width: parent.width
+                            title: "Bar controls"
+                            expanded: root.quickControlsOpen
+                            visible: root.advancedDropdown
+                            onClicked: root.quickControlsOpen = !root.quickControlsOpen
+                        }
+
+                        Column {
+                            width: parent.width
+                            spacing: Theme.spacingXS
+                            visible: root.advancedDropdown && root.quickControlsOpen
+
+                            StyledText {
+                                text: "Top bar"
+                                color: Theme.surfaceVariantText
+                                font.pixelSize: Theme.fontSizeSmall
+                            }
+                            Flow {
+                                width: parent.width
+                                spacing: Theme.spacingXS
+                                QuickToggle { text: "Compact"; checked: root.compactPill; onClicked: root.setQuickSetting("compactPill", !root.compactPill) }
+                                QuickToggle { text: "Logos"; checked: root.barShowProviderLogos; onClicked: root.setQuickSetting("barShowProviderLogos", !root.barShowProviderLogos) }
+                                QuickToggle { text: "Plugin icon"; checked: root.barShowPluginIcon; onClicked: root.setQuickSetting("barShowPluginIcon", !root.barShowPluginIcon) }
+                            }
+                            StyledText {
+                                text: "Claude in the top bar"
+                                color: Theme.surfaceVariantText
+                                font.pixelSize: Theme.fontSizeSmall
+                            }
+                            Flow {
+                                width: parent.width
+                                spacing: Theme.spacingXS
+                                QuickToggle { text: "Session"; checked: root.barShowClaudeSession; onClicked: root.setQuickSetting("barShowClaudeSession", !root.barShowClaudeSession) }
+                                Repeater {
+                                    model: root.claudeWeeklyBarChoices()
+                                    delegate: QuickToggle {
+                                        required property var modelData
+                                        text: modelData.id === "general-weekly" ? "Weekly (all models)" : modelData.label
+                                        checked: root.claudeBucketShownInBar(modelData)
+                                        onClicked: root.setClaudeWeeklyBarBucket(modelData, !checked)
+                                    }
+                                }
+                                QuickToggle { text: "Credits"; checked: root.barShowClaudeCredits; onClicked: root.setQuickSetting("barShowClaudeCredits", !root.barShowClaudeCredits) }
+                            }
+                        }
+
+                        SectionHeader {
+                            width: parent.width
+                            title: "Diagnostics"
+                            expanded: root.diagnosticsOpen
+                            visible: root.advancedDropdown
+                            onClicked: {
+                                root.diagnosticsOpen = !root.diagnosticsOpen
+                                if (root.diagnosticsOpen) root.refreshDiagnostics()
+                            }
+                        }
+
+                        DiagnosticsPanel {
+                            width: parent.width
+                            visible: root.advancedDropdown && root.diagnosticsOpen
                         }
                     }
+                }
+            }
+        }
+    }
+
+    component DiagnosticsPanel: Column {
+        spacing: Theme.spacingS
+
+        StyledText {
+            width: parent.width
+            text: root.diagnosticStatus
+            textFormat: Text.PlainText
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceVariantText
+            visible: text !== ""
+        }
+
+        StyledRect {
+            width: parent.width
+            height: Math.min(220, diagnosticPreview.contentHeight) + 2 * Theme.spacingS
+            radius: Theme.cornerRadius
+            color: Theme.surfaceContainerHigh
+            visible: root.diagnosticReport !== ""
+
+            Flickable {
+                x: Theme.spacingS
+                y: Theme.spacingS
+                width: parent.width - 2 * Theme.spacingS
+                height: Math.min(220, diagnosticPreview.contentHeight)
+                contentHeight: diagnosticPreview.contentHeight
+                clip: true
+
+                TextEdit {
+                    id: diagnosticPreview
+                    width: parent.width
+                    text: root.diagnosticReport
+                    textFormat: TextEdit.PlainText
+                    readOnly: true
+                    selectByMouse: true
+                    activeFocusOnTab: true
+                    wrapMode: TextEdit.Wrap
+                    color: Theme.surfaceText
+                    font.pixelSize: Theme.fontSizeSmall
+                    font.family: "monospace"
+                    Accessible.name: "Diagnostic report preview"
+                }
+            }
+        }
+
+        Flow {
+            width: parent.width
+            spacing: Theme.spacingXS
+            CompactAction {
+                text: "Refresh report"
+                enabled: !diagnosticProcess.running
+                onClicked: root.refreshDiagnostics()
+            }
+            CompactAction {
+                text: "Copy report"
+                enabled: root.diagnosticReport !== "" && !diagnosticProcess.running
+                onClicked: {
+                    diagnosticPreview.selectAll()
+                    diagnosticPreview.copy()
+                    diagnosticPreview.deselect()
+                    root.diagnosticStatus = "Report copied to clipboard. Nothing was uploaded."
                 }
             }
         }
@@ -2457,7 +2715,7 @@ PluginComponent {
         radius: Theme.cornerRadius
         color: "transparent"
         border.width: 1
-        border.color: Theme.surfaceVariantText
+        border.color: Theme.outlineVariant
 
         Column {
             id: explanationEditorContent
@@ -2526,10 +2784,9 @@ PluginComponent {
                 width: parent.width
                 height: Math.max(72, historyNoteInput.contentHeight + 2 * Theme.spacingXS)
                 radius: Theme.cornerRadius
-                color: Qt.rgba(Theme.surfaceVariantText.r, Theme.surfaceVariantText.g,
-                        Theme.surfaceVariantText.b, 0.12)
+                color: Theme.withAlpha(Theme.surfaceVariantText, 0.12)
                 border.width: historyNoteInput.activeFocus ? 2 : 1
-                border.color: historyNoteInput.activeFocus ? Theme.primary : Theme.surfaceVariantText
+                border.color: historyNoteInput.activeFocus ? Theme.primary : Theme.outlineVariant
 
                 TextEdit {
                     id: historyNoteInput
@@ -2582,7 +2839,7 @@ PluginComponent {
                 text: root.historyExplanationError
                 textFormat: Text.PlainText
                 font.pixelSize: Theme.fontSizeSmall
-                color: "#ff6b6b"
+                color: Theme.error
                 wrapMode: Text.WordWrap
                 visible: text !== ""
             }
@@ -2595,6 +2852,7 @@ PluginComponent {
                     text: historyExplanationProcess.running ? "Saving..."
                             : root.hasHistoryExplanation(root.historyExplanationGroup)
                                 ? "Save changes" : "Save explanation"
+                    primary: true
                     enabled: !historyExplanationProcess.running && !usageProcess.running
                             && root.historyExplanationChoiceAllowed(root.historyExplanationGroup,
                                 root.historyExplanationReason)
@@ -2623,9 +2881,9 @@ PluginComponent {
         property bool selectorOpen: false
         height: selectorOpen ? 36 + tokenRangeFlow.implicitHeight + Theme.spacingXS : 32
         radius: Theme.cornerRadius
-        color: Theme.surfaceContainerHigh
+        color: Theme.withAlpha(Theme.surfaceVariant, 0.35)
         border.width: activeFocus ? 2 : 1
-        border.color: activeFocus ? Theme.primary : Theme.surfaceVariantText
+        border.color: activeFocus ? Theme.primary : Theme.outlineVariant
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
         Accessible.name: root.tokenHistoryLabel() + ": " + value
@@ -2643,12 +2901,17 @@ PluginComponent {
 
         DankIcon {
             id: tokenSwitchIcon
-            name: tokenRow.selectorOpen ? "expand_less" : "expand_more"
+            name: "expand_more"
             size: 16
             color: Theme.primary
+            rotation: tokenRow.selectorOpen ? 180 : 0
             anchors.left: parent.left
             anchors.leftMargin: Theme.spacingS
             anchors.verticalCenter: tokenRowHeader.verticalCenter
+
+            Behavior on rotation {
+                NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing }
+            }
         }
         StyledText {
             text: root.tokenHistoryLabel()
@@ -2669,6 +2932,7 @@ PluginComponent {
             anchors.rightMargin: Theme.spacingS
             anchors.verticalCenter: tokenRowHeader.verticalCenter
             font.pixelSize: Theme.fontSizeSmall
+            font.weight: Font.Medium
             color: Theme.surfaceText
             elide: Text.ElideRight
             horizontalAlignment: Text.AlignRight
@@ -2718,15 +2982,15 @@ PluginComponent {
         id: trackingPanel
         readonly property bool controlsReady: root.trackingStatus.known === true
                 && !trackingProcess.running && !usageProcess.running
-        height: trackingPanelContent.implicitHeight + 2 * Theme.spacingS
+        height: trackingPanelContent.implicitHeight + 2 * Theme.spacingM
         radius: Theme.cornerRadius
         color: Theme.surfaceContainerHigh
 
         Column {
             id: trackingPanelContent
-            x: Theme.spacingS
-            y: Theme.spacingS
-            width: parent.width - 2 * Theme.spacingS
+            x: Theme.spacingM
+            y: Theme.spacingM
+            width: parent.width - 2 * Theme.spacingM
             spacing: Theme.spacingXS
 
             StyledText {
@@ -2734,7 +2998,7 @@ PluginComponent {
                 text: trackingProcess.running ? "Updating tracked total..." : root.trackingStateText()
                 font.pixelSize: Theme.fontSizeSmall
                 font.weight: Font.Medium
-                color: root.trackingStatus.known === true ? Theme.surfaceText : "#ff6b6b"
+                color: root.trackingStatus.known === true ? Theme.surfaceText : Theme.error
                 wrapMode: Text.WordWrap
             }
 
@@ -2775,15 +3039,230 @@ PluginComponent {
                 }
             }
 
-            StyledText {
+            NoticeRow {
                 width: parent.width
+                level: "warning"
                 text: "Clear removes tracked totals and disables tracking. Provider transcripts and reset history are unchanged."
-                textFormat: Text.PlainText
-                font.pixelSize: Theme.fontSizeSmall
-                color: "#ffaa00"
-                wrapMode: Text.WordWrap
                 visible: root.clearTrackingConfirm
             }
+        }
+    }
+
+    // A compact, wrapped status line with a semantic icon. Level: info | warning | error.
+    component NoticeRow: Item {
+        id: noticeRow
+        property string text: ""
+        property string level: "info"
+        implicitHeight: Math.max(noticeText.implicitHeight, noticeIcon.height)
+
+        DankIcon {
+            id: noticeIcon
+            name: root.noticeIcon(noticeRow.level)
+            size: Theme.fontSizeMedium
+            color: root.noticeColor(noticeRow.level)
+            anchors.left: parent.left
+            anchors.top: parent.top
+        }
+
+        StyledText {
+            id: noticeText
+            anchors.left: noticeIcon.right
+            anchors.leftMargin: Theme.spacingXS
+            anchors.right: parent.right
+            anchors.top: parent.top
+            text: noticeRow.text
+            textFormat: Text.PlainText
+            font.pixelSize: Theme.fontSizeSmall
+            color: noticeRow.level === "info" ? Theme.surfaceVariantText : root.noticeColor(noticeRow.level)
+            wrapMode: Text.WordWrap
+            maximumLineCount: 4
+            elide: Text.ElideRight
+        }
+    }
+
+    // A bordered card for failures that need attention before the quotas.
+    component NoticeCard: StyledRect {
+        id: noticeCard
+        property string text: ""
+        property string level: "error"
+        height: noticeCardRow.implicitHeight + 2 * Theme.spacingM
+        radius: Theme.cornerRadius
+        color: Theme.withAlpha(root.noticeColor(level), 0.10)
+        border.width: 1
+        border.color: root.noticeColor(level)
+
+        NoticeRow {
+            id: noticeCardRow
+            x: Theme.spacingM
+            y: Theme.spacingM
+            width: parent.width - 2 * Theme.spacingM
+            level: noticeCard.level
+            text: noticeCard.text
+        }
+    }
+
+    // Disclosure row for secondary sections.
+    component SectionHeader: Item {
+        id: sectionHeader
+        property string title: ""
+        property string badge: ""
+        property bool expanded: false
+        signal clicked()
+        height: 36
+        activeFocusOnTab: true
+        Accessible.role: Accessible.Button
+        Accessible.name: title + (badge !== "" ? " (" + badge + ")" : "") + (expanded ? "; expanded" : "; collapsed")
+        Accessible.onPressAction: clicked()
+        Keys.onSpacePressed: clicked()
+        Keys.onReturnPressed: clicked()
+
+        StyledRect {
+            anchors.fill: parent
+            radius: Theme.cornerRadius
+            color: sectionMouse.containsMouse ? Theme.surfaceHover : "transparent"
+            border.width: sectionHeader.activeFocus ? 2 : 0
+            border.color: Theme.primary
+        }
+
+        DankIcon {
+            id: sectionChevron
+            name: "expand_more"
+            size: 18
+            color: Theme.surfaceVariantText
+            rotation: sectionHeader.expanded ? 180 : 0
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.spacingXS
+            anchors.verticalCenter: parent.verticalCenter
+
+            Behavior on rotation {
+                NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing }
+            }
+        }
+
+        StyledText {
+            anchors.left: sectionChevron.right
+            anchors.leftMargin: Theme.spacingXS
+            anchors.right: sectionBadge.left
+            anchors.rightMargin: Theme.spacingS
+            anchors.verticalCenter: parent.verticalCenter
+            text: sectionHeader.title
+            font.pixelSize: Theme.fontSizeMedium
+            font.weight: Font.Medium
+            color: Theme.surfaceText
+            elide: Text.ElideRight
+        }
+
+        StyledRect {
+            id: sectionBadge
+            width: visible ? sectionBadgeText.implicitWidth + Theme.spacingS * 2 : 0
+            height: 20
+            radius: 10
+            color: Theme.withAlpha(Theme.primary, 0.18)
+            visible: sectionHeader.badge !== ""
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.spacingXS
+            anchors.verticalCenter: parent.verticalCenter
+
+            StyledText {
+                id: sectionBadgeText
+                anchors.centerIn: parent
+                text: sectionHeader.badge
+                font.pixelSize: Theme.fontSizeSmall
+                font.weight: Font.Medium
+                color: Theme.primary
+            }
+        }
+
+        MouseArea {
+            id: sectionMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: sectionHeader.clicked()
+        }
+    }
+
+    // Two-state segmented switch. Both labels are always visible; the active
+    // one is highlighted. Clicking the inactive segment emits clicked().
+    component SegmentSwitch: StyledRect {
+        id: segmentSwitch
+        property string text: ""
+        property string offLabel: ""
+        property string onLabel: ""
+        property bool checked: false
+        signal clicked()
+        readonly property int segmentPadding: Theme.spacingM
+        readonly property int offWidth: offMetrics.width + segmentPadding * 2
+        readonly property int onWidth: onMetrics.width + segmentPadding * 2
+        width: offWidth + onWidth + 4
+        height: 30
+        radius: Theme.cornerRadius
+        color: Theme.surfaceContainerHigh
+        activeFocusOnTab: true
+        border.width: activeFocus ? 2 : 0
+        border.color: Theme.primary
+        Accessible.role: Accessible.CheckBox
+        Accessible.name: text
+        Accessible.checked: checked
+        Accessible.onToggleAction: clicked()
+        Accessible.onPressAction: clicked()
+        Keys.onSpacePressed: clicked()
+        Keys.onReturnPressed: clicked()
+
+        TextMetrics { id: offMetrics; text: segmentSwitch.offLabel; font.pixelSize: Theme.fontSizeSmall; font.weight: Font.Medium }
+        TextMetrics { id: onMetrics; text: segmentSwitch.onLabel; font.pixelSize: Theme.fontSizeSmall; font.weight: Font.Medium }
+
+        StyledRect {
+            id: segmentThumb
+            x: segmentSwitch.checked ? 2 + segmentSwitch.offWidth : 2
+            y: 2
+            width: segmentSwitch.checked ? segmentSwitch.onWidth : segmentSwitch.offWidth
+            height: parent.height - 4
+            radius: Math.max(0, Theme.cornerRadius - 2)
+            color: Theme.primary
+
+            Behavior on x { NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
+            Behavior on width { NumberAnimation { duration: Theme.shortDuration; easing.type: Theme.standardEasing } }
+        }
+
+        StyledText {
+            x: 2
+            width: segmentSwitch.offWidth
+            height: parent.height
+            text: segmentSwitch.offLabel
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            font.pixelSize: Theme.fontSizeSmall
+            font.weight: Font.Medium
+            color: segmentSwitch.checked ? Theme.surfaceVariantText : Theme.primaryText
+        }
+
+        StyledText {
+            x: 2 + segmentSwitch.offWidth
+            width: segmentSwitch.onWidth
+            height: parent.height
+            text: segmentSwitch.onLabel
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            font.pixelSize: Theme.fontSizeSmall
+            font.weight: Font.Medium
+            color: segmentSwitch.checked ? Theme.primaryText : Theme.surfaceVariantText
+        }
+
+        MouseArea {
+            x: 0
+            width: 2 + segmentSwitch.offWidth
+            height: parent.height
+            cursorShape: segmentSwitch.checked ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: if (segmentSwitch.checked) segmentSwitch.clicked()
+        }
+
+        MouseArea {
+            x: 2 + segmentSwitch.offWidth
+            width: segmentSwitch.onWidth + 2
+            height: parent.height
+            cursorShape: segmentSwitch.checked ? Qt.ArrowCursor : Qt.PointingHandCursor
+            onClicked: if (!segmentSwitch.checked) segmentSwitch.clicked()
         }
     }
 
@@ -2791,15 +3270,17 @@ PluginComponent {
         id: compactAction
         property string text: ""
         property bool warning: false
+        property bool primary: false
         signal clicked()
         width: compactActionLabel.implicitWidth + Theme.spacingM * 2
         height: 30
         radius: Theme.cornerRadius
-        color: warning ? "#ff6b6b" : Theme.surfaceContainerHigh
+        color: warning ? Theme.withAlpha(Theme.error, 0.16)
+                : primary ? Theme.primary : Theme.surfaceContainerHigh
         opacity: enabled ? 1 : 0.5
         activeFocusOnTab: enabled && visible
         border.width: activeFocus ? 2 : 1
-        border.color: activeFocus ? Theme.primary : Theme.surfaceVariantText
+        border.color: activeFocus ? Theme.primary : warning ? Theme.error : primary ? "transparent" : Theme.outlineVariant
         Accessible.role: Accessible.Button
         Accessible.name: text
         Accessible.onPressAction: if (enabled) clicked()
@@ -2810,8 +3291,9 @@ PluginComponent {
             id: compactActionLabel
             anchors.centerIn: parent
             text: compactAction.text
-            color: compactAction.warning ? "white" : Theme.surfaceText
+            color: compactAction.warning ? Theme.error : compactAction.primary ? Theme.primaryText : Theme.surfaceText
             font.pixelSize: Theme.fontSizeSmall
+            font.weight: compactAction.primary || compactAction.warning ? Font.Medium : Font.Normal
         }
 
         MouseArea {
@@ -2832,8 +3314,8 @@ PluginComponent {
         radius: Theme.cornerRadius
         color: checked ? Theme.primary : Theme.surfaceContainerHigh
         activeFocusOnTab: true
-        border.width: activeFocus ? 2 : 0
-        border.color: Theme.surfaceText
+        border.width: activeFocus ? 2 : checked ? 0 : 1
+        border.color: activeFocus ? Theme.surfaceText : Theme.outlineVariant
         Accessible.role: Accessible.CheckBox
         Accessible.name: text
         Accessible.checked: checked
@@ -2847,6 +3329,7 @@ PluginComponent {
             text: quickToggle.text
             color: quickToggle.checked ? Theme.primaryText : Theme.surfaceText
             font.pixelSize: Theme.fontSizeSmall
+            font.weight: quickToggle.checked ? Font.Medium : Font.Normal
         }
         MouseArea {
             anchors.fill: parent
@@ -2855,11 +3338,15 @@ PluginComponent {
         }
     }
 
+    // One quota: label with an inline countdown, a severity-colored value,
+    // the allowance bar, and (Advanced) a thin window-time bar beneath it.
     component QuotaBar: Item {
         id: quotaBar
         property var bucket: null
         property real timeProgress: bucket && bucket.kind !== "credits"
                 ? root.resetTimeProgress(bucket.allowance, root.resetClock, root.showUsed) : -1
+        readonly property bool showTime: root.advancedDropdown && timeProgress >= 0
+        readonly property color severityColor: root.allowanceColor(bucket ? bucket.allowance : null)
         height: root.quotaRowHeight(bucket)
 
         HoverHandler { id: resetHover }
@@ -2869,7 +3356,7 @@ PluginComponent {
             delay: 400
             text: bucket && bucket.allowance
                     ? "Reset: " + new Date(bucket.allowance.resetAt).toLocaleString()
-                        + (root.advancedDropdown && quotaBar.timeProgress >= 0
+                        + (quotaBar.showTime
                            ? "\nThin bar: window time " + (root.showUsed ? "elapsed" : "remaining")
                              + " (not quota usage)" : "") : ""
             contentItem: StyledText {
@@ -2881,17 +3368,17 @@ PluginComponent {
             background: StyledRect {
                 color: Theme.surfaceContainerHigh
                 radius: Theme.cornerRadius
-                border.color: Theme.surfaceVariantText
+                border.color: Theme.outlineVariant
                 border.width: 1
             }
         }
 
         StyledText {
+            id: quotaBarLabel
             text: bucket ? bucket.label : "Quota"
             anchors.left: parent.left
-            anchors.right: quotaBarValue.left
-            anchors.rightMargin: Theme.spacingS
             anchors.top: parent.top
+            width: Math.min(implicitWidth, Math.max(80, (parent.width - quotaBarValue.width - Theme.spacingS) * 0.6))
             font.pixelSize: Theme.fontSizeSmall
             font.weight: Font.Medium
             color: Theme.surfaceText
@@ -2900,13 +3387,28 @@ PluginComponent {
         }
 
         StyledText {
+            id: quotaBarDetail
+            text: root.quotaDetail(bucket)
+            anchors.left: quotaBarLabel.right
+            anchors.leftMargin: Theme.spacingXS
+            anchors.right: quotaBarValue.left
+            anchors.rightMargin: Theme.spacingS
+            anchors.baseline: quotaBarLabel.baseline
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceVariantText
+            elide: Text.ElideRight
+            maximumLineCount: 1
+            visible: text !== "" && width > 24
+        }
+
+        StyledText {
             id: quotaBarValue
             text: root.quotaValue(bucket)
             anchors.right: parent.right
             anchors.top: parent.top
             font.pixelSize: Theme.fontSizeSmall
-            font.weight: Font.Medium
-            color: root.allowanceColor(bucket ? bucket.allowance : null)
+            font.weight: Font.Bold
+            color: quotaBar.severityColor
             elide: Text.ElideRight
             maximumLineCount: 1
         }
@@ -2916,39 +3418,32 @@ PluginComponent {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            anchors.topMargin: 21
+            anchors.topMargin: 20
             height: 6
             radius: 3
-            color: Qt.rgba(Theme.surfaceVariantText.r, Theme.surfaceVariantText.g, Theme.surfaceVariantText.b, 0.18)
+            color: Theme.withAlpha(Theme.surfaceVariantText, 0.18)
 
             StyledRect {
                 width: parent.width * root.quotaProgress(bucket) / 100
                 height: parent.height
                 radius: parent.radius
-                color: root.allowanceColor(bucket ? bucket.allowance : null)
-            }
-        }
+                color: quotaBar.severityColor
 
-        StyledText {
-            text: root.quotaDetail(bucket)
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: root.advancedDropdown && quotaBar.timeProgress >= 0 ? 8 : 0
-            font.pixelSize: Theme.fontSizeSmall
-            color: Theme.surfaceVariantText
-            elide: Text.ElideRight
-            maximumLineCount: 1
+                Behavior on width {
+                    NumberAnimation { duration: Theme.mediumDuration; easing.type: Theme.standardEasing }
+                }
+            }
         }
 
         StyledRect {
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.bottom: parent.bottom
+            anchors.top: quotaTrack.bottom
+            anchors.topMargin: 3
             height: 2
             radius: 1
-            visible: root.advancedDropdown && quotaBar.timeProgress >= 0
-            color: Qt.rgba(Theme.surfaceVariantText.r, Theme.surfaceVariantText.g, Theme.surfaceVariantText.b, 0.12)
+            visible: quotaBar.showTime
+            color: Theme.withAlpha(Theme.surfaceVariantText, 0.12)
             StyledRect {
                 width: parent.width * Math.max(0, quotaBar.timeProgress)
                 height: parent.height
@@ -2991,44 +3486,86 @@ PluginComponent {
         }
     }
 
+    // Circular allowance indicator for the overview card.
+    component AllowanceRing: Item {
+        id: allowanceRing
+        property var allowance: null
+        property int size: 52
+        readonly property real fraction: root.displayPercent(allowance) / 100
+        width: size
+        height: size
+
+        Shape {
+            anchors.fill: parent
+            antialiasing: true
+            preferredRendererType: Shape.CurveRenderer
+
+            ShapePath {
+                strokeColor: Theme.withAlpha(Theme.surfaceVariantText, 0.18)
+                strokeWidth: 5
+                fillColor: "transparent"
+                capStyle: ShapePath.RoundCap
+                PathAngleArc {
+                    centerX: allowanceRing.size / 2
+                    centerY: allowanceRing.size / 2
+                    radiusX: allowanceRing.size / 2 - 3
+                    radiusY: allowanceRing.size / 2 - 3
+                    startAngle: -90
+                    sweepAngle: 360
+                }
+            }
+
+            ShapePath {
+                strokeColor: root.allowanceColor(allowanceRing.allowance)
+                strokeWidth: 5
+                fillColor: "transparent"
+                capStyle: ShapePath.RoundCap
+                PathAngleArc {
+                    centerX: allowanceRing.size / 2
+                    centerY: allowanceRing.size / 2
+                    radiusX: allowanceRing.size / 2 - 3
+                    radiusY: allowanceRing.size / 2 - 3
+                    startAngle: -90
+                    sweepAngle: 360 * Math.max(0, Math.min(1, allowanceRing.fraction))
+                }
+            }
+        }
+
+        StyledText {
+            anchors.centerIn: parent
+            text: root.allowanceLabel(allowanceRing.allowance, false)
+            font.pixelSize: Theme.fontSizeSmall
+            font.weight: Font.Bold
+            color: root.allowanceColor(allowanceRing.allowance)
+        }
+    }
+
     component LimitBucket: Item {
         property string title: ""
         property var allowance: null
         property string detail: ""
 
-        height: parent ? parent.height : 64
+        implicitHeight: limitBucketColumn.implicitHeight
 
         Column {
-            anchors.fill: parent
+            id: limitBucketColumn
+            width: parent.width
             spacing: 2
 
-            Row {
+            StyledText {
                 width: parent.width
-                spacing: Theme.spacingXS
-
-                DankIcon {
-                    name: "monitoring"
-                    size: Theme.fontSizeSmall
-                    color: root.allowanceColor(allowance)
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-
-                StyledText {
-                    width: parent.width - Theme.fontSizeSmall - Theme.spacingXS
-                    text: title
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.weight: Font.Medium
-                    color: Theme.surfaceVariantText
-                    anchors.verticalCenter: parent.verticalCenter
-                    elide: Text.ElideRight
-                    maximumLineCount: 1
-                }
+                text: title
+                font.pixelSize: Theme.fontSizeSmall
+                font.weight: Font.Medium
+                color: Theme.surfaceVariantText
+                elide: Text.ElideRight
+                maximumLineCount: 1
             }
 
             StyledText {
                 width: parent.width
                 text: root.allowanceLabel(allowance)
-                font.pixelSize: Theme.fontSizeLarge
+                font.pixelSize: Theme.fontSizeXLarge
                 font.weight: Font.Bold
                 color: root.allowanceColor(allowance)
                 elide: Text.ElideRight
@@ -3044,7 +3581,6 @@ PluginComponent {
                 maximumLineCount: 1
             }
         }
-
     }
 
     popoutWidth: 420
