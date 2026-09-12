@@ -249,3 +249,29 @@ func TestDiagnosticLockRejectsSymlink(t *testing.T) {
 		t.Fatalf("symlink target was modified: mode=%v error=%v", info.Mode().Perm(), statErr)
 	}
 }
+
+func TestLocalRefreshDiagnosticsUseTypedSafeCategories(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"lock", fmt.Errorf("private detail: %w", errUsageRefreshLockTimeout), "local_lock_timeout"},
+		{"timestamp", fmt.Errorf("%w: %w", errUsageRefreshState, errUsageRefreshTimestamp), "local_timestamp"},
+		{"cache", fmt.Errorf("private detail: %w", errUsageRefreshState), "local_cache_invalid"},
+		{"unknown", errors.New("private detail: future timestamp lock timeout"), "local_state"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			emitUsageRefreshDiagnostics("codex", usageRefreshInfo{}, test.err, nil, false)
+			store, err := loadDiagnosticStore(diagnosticsPath(), time.Now(), true)
+			if err != nil || len(store.Events) != 1 || store.Events[0].Category != test.want {
+				t.Fatalf("events=%+v error=%v", store.Events, err)
+			}
+			report, err := renderDiagnostics(diagnosticsPath(), time.Now())
+			if err != nil || strings.Contains(report, "private detail") {
+				t.Fatalf("unsafe report=%q error=%v", report, err)
+			}
+		})
+	}
+}

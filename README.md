@@ -315,6 +315,8 @@ HTTP status/cooldown information, and validated build identifiers. They exclude
 raw errors, responses, credentials, account IDs, paths, usage totals, prompts,
 and notes. Report timestamps use UTC (`Z`) for unambiguous issue reports.
 Timestamps can reveal activity times: preview before sharing.
+Local failures distinguish refresh-lock timeouts, invalid timestamps, invalid
+caches, and other state failures without including raw error details.
 Build identifiers distinguish development revisions; flake-less Nix packages
 use a public-source fingerprint. Diagnostics start with this version and cannot
 recover failures that were previously overwritten or never recorded.

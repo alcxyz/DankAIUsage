@@ -51,6 +51,9 @@ var diagnosticCategories = map[string]string{
 	"helper_failed":        "Widget helper process failed",
 	"invalid_response":     "Provider response was invalid",
 	"local_state":          "Local refresh state failed",
+	"local_lock_timeout":   "Timed out waiting for the shared refresh lock",
+	"local_timestamp":      "Local refresh timestamp is invalid",
+	"local_cache_invalid":  "Local refresh cache is invalid",
 	"network":              "Provider could not be reached",
 	"provider_unavailable": "Provider usage is unavailable",
 	"rate_limited":         "Provider rate limit was reached",
@@ -222,7 +225,7 @@ func diagnosticTransitionAlreadyRecorded(events []diagnosticEvent, event diagnos
 
 func emitUsageRefreshDiagnostics(provider string, info usageRefreshInfo, operationErr, actionErr error, recovered bool) {
 	if operationErr != nil {
-		_ = recordDiagnostic(diagnosticEvent{Provider: provider, Category: "local_state"})
+		_ = recordDiagnostic(diagnosticEvent{Provider: provider, Category: classifyLocalRefreshError(operationErr)})
 		return
 	}
 	if recovered {
@@ -258,9 +261,22 @@ func diagnosticProviderFailureActive(provider string) bool {
 	return false
 }
 
+func classifyLocalRefreshError(err error) string {
+	switch {
+	case errors.Is(err, errUsageRefreshLockTimeout):
+		return "local_lock_timeout"
+	case errors.Is(err, errUsageRefreshTimestamp):
+		return "local_timestamp"
+	case errors.Is(err, errUsageRefreshState):
+		return "local_cache_invalid"
+	default:
+		return "local_state"
+	}
+}
+
 func classifyDiagnosticError(provider string, err error) (string, int) {
 	if errors.Is(err, errUsageRefreshState) {
-		return "local_state", 0
+		return classifyLocalRefreshError(err), 0
 	}
 	message := err.Error()
 	if provider == "claude" {

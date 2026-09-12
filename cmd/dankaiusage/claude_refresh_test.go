@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -133,6 +134,28 @@ func TestClaudeRefreshConcurrentCallersShareRequest(t *testing.T) {
 	group.Wait()
 	if transport.calls.Load() != 1 {
 		t.Fatalf("requests=%d, want one", transport.calls.Load())
+	}
+}
+
+func TestClaudeRefreshUsesTimeSampledAfterLock(t *testing.T) {
+	transport, startedAt := setupClaudeRefreshTest(t)
+	lockedAt := startedAt.Add(time.Millisecond)
+	path := claudeOAuthUsageCachePath()
+	if err := saveClaudeOAuthUsageCache(path, claudeOAuthUsageCache{
+		FetchedAt: lockedAt.UTC().Format(time.RFC3339Nano),
+		Body:      json.RawMessage(`{"five_hour":{"utilization":10,"resets_at":"2026-09-09T18:00:00Z"},"seven_day":{"utilization":20,"resets_at":"2026-09-15T00:00:00Z"}}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	session, _, _, _, _, info, err := collectClaudeOAuthLimitsWithClock(clockAssertedUnderUsageRefreshLock(t, path, lockedAt), 5*time.Minute, false)
+	if err != nil || !session.Known || !info.Cached || transport.calls.Load() != 0 {
+		t.Fatalf("collect: known=%v info=%+v error=%v calls=%d", session.Known, info, err, transport.calls.Load())
+	}
+
+	_, _, _, _, _, _, err = collectClaudeOAuthLimitsWithClock(fixedUsageRefreshClock(startedAt), 5*time.Minute, false)
+	if !errors.Is(err, errUsageRefreshTimestamp) || !errors.Is(err, errUsageRefreshState) {
+		t.Fatalf("genuinely future cache error = %v, want timestamp and state sentinels", err)
 	}
 }
 
