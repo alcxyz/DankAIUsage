@@ -217,8 +217,8 @@ PluginSettings {
 
     ToggleSetting {
         settingKey: "barShowClaudeWeekly"
-        label: "Claude weekly limit"
-        description: "Include Claude's weekly window in the top-bar overview"
+        label: "Claude weekly limits by default"
+        description: "Default for weekly limits without an individual choice. Choose each reported weekly limit independently under Advanced → Bar controls in the dropdown; individual choices take precedence."
         defaultValue: true
     }
 

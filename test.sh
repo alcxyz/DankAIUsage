@@ -156,6 +156,14 @@ assert 'provider requests respect the selected interval' in component_text
 schema = plugin["settings_schema"]
 for key in schema:
     assert f'"{key}"' in component_text, f"component does not load {key}"
+    if key == "barClaudeWeeklyOverrides":
+        # Dynamic provider-defined choices live in the dropdown, not a fixed
+        # settings form. The settings menu explains where to customize them.
+        assert schema[key] == {"type": "object", "default": {}}
+        assert 'model: root.claudeWeeklyBarChoices()' in component_text
+        assert 'root.setClaudeWeeklyBarBucket(modelData, !checked)' in component_text
+        assert 'individual choices take precedence' in settings_text
+        continue
     assert f'settingKey: "{key}"' in settings_text, f"settings UI does not expose {key}"
 
 for icon in (pathlib.Path("assets/openai.svg"), pathlib.Path("assets/claude.svg")):
@@ -292,6 +300,51 @@ function equal(actual, expected, description) {
 }
 
 const resolve = bindQmlFunction("resolveDropdownMode", {});
+const weeklyScope = {
+    barShowClaudeSession: true, barShowClaudeWeekly: true,
+    barShowClaudeCredits: false, barClaudeWeeklyOverrides: {},
+};
+const weeklyAll = {id: "general-weekly", allowance: {window: "weekly"}};
+const weeklyFable = {id: "fable-weekly", allowance: {window: "weekly"}};
+const weeklyFuture = {id: "future-weekly", allowance: {window: "weekly"}};
+const weeklyShown = bindQmlFunction("claudeBucketShownInBar", weeklyScope);
+equal(weeklyShown(weeklyAll), true, "legacy weekly selection includes general");
+equal(weeklyShown(weeklyFable), true, "legacy weekly selection includes scoped");
+for (const general of [false, true]) {
+    for (const scoped of [false, true]) {
+        weeklyScope.barClaudeWeeklyOverrides = {"general-weekly": general, "fable-weekly": scoped};
+        equal(weeklyShown(weeklyAll), general, "general weekly independent");
+        equal(weeklyShown(weeklyFable), scoped, "scoped weekly independent");
+    }
+}
+weeklyScope.barShowClaudeWeekly = false;
+equal(weeklyShown(weeklyFuture), false, "new limits inherit weekly default");
+equal(weeklyShown(weeklyFable), true, "explicit selection overrides default");
+weeklyScope.setQuickSetting = (key, value) => { weeklyScope[key] = value; };
+const saveWeekly = bindQmlFunction("setClaudeWeeklyBarBucket", weeklyScope);
+const oldOverrides = weeklyScope.barClaudeWeeklyOverrides;
+saveWeekly(weeklyAll, false);
+equal(oldOverrides["general-weekly"], true, "saving replaces object for QML reactivity");
+equal(weeklyShown(weeklyAll), false, "saved general choice applied");
+equal(weeklyShown(weeklyFable), true, "saving preserves another weekly choice");
+weeklyScope.claudeBucketShownInBar = weeklyShown;
+weeklyScope.providerQuotaBuckets = bindQmlFunction("providerQuotaBuckets", {});
+weeklyScope.providerTopBarBuckets = bindQmlFunction("providerTopBarBuckets", weeklyScope);
+weeklyScope.visibleProviders = () => [{id: "claude", quotaBuckets: [weeklyAll, weeklyFable]}];
+weeklyScope.compactPill = true;
+weeklyScope.barShowProviderLogos = true;
+weeklyScope.knownAllowance = () => true;
+weeklyScope.quotaShortLabel = bucket => bucket.id;
+weeklyScope.allowanceLabel = () => "50%";
+const compactSegments = bindQmlFunction("topBarSegments", weeklyScope);
+equal(compactSegments()[0].text, "fable-weekly 50%", "compact ignores deselected general weekly");
+saveWeekly(weeklyFable, false);
+equal(compactSegments().length, 0, "no weekly segment when neither selected");
+weeklyScope.claudeProvider = () => ({quotaBuckets: [weeklyAll, weeklyFable, {id: "session", allowance: {window: "session"}}]});
+weeklyScope.providerQuotaBuckets = bindQmlFunction("providerQuotaBuckets", {});
+equal(bindQmlFunction("claudeWeeklyBarChoices", weeklyScope)().length, 2, "controls list each weekly bucket only");
+weeklyScope.claudeProvider = () => null;
+equal(bindQmlFunction("claudeWeeklyBarChoices", weeklyScope)().length, 0, "missing provider is safe");
 equal(resolve("simple", {providers: []}), "simple", "persisted simple wins");
 equal(resolve("advanced", null), "advanced", "persisted advanced wins");
 equal(resolve("", {providers: []}), "advanced", "existing cached user migrates to advanced");

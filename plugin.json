@@ -50,6 +50,10 @@
       "type": "boolean",
       "default": true
     },
+    "barClaudeWeeklyOverrides": {
+      "type": "object",
+      "default": {}
+    },
     "barShowClaudeCredits": {
       "type": "boolean",
       "default": false

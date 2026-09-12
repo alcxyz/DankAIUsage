@@ -19,6 +19,7 @@ PluginComponent {
     property bool barShowProviderLogos: true
     property bool barShowClaudeSession: true
     property bool barShowClaudeWeekly: true
+    property var barClaudeWeeklyOverrides: ({})
     property bool barShowClaudeCredits: false
     property bool includeCachedTokens: false
     property bool compactPill: false
@@ -99,6 +100,8 @@ PluginComponent {
         barShowProviderLogos = pluginService.loadPluginData(pluginId, "barShowProviderLogos", true) !== false
         barShowClaudeSession = pluginService.loadPluginData(pluginId, "barShowClaudeSession", true) !== false
         barShowClaudeWeekly = pluginService.loadPluginData(pluginId, "barShowClaudeWeekly", true) !== false
+        var weeklyOverrides = pluginService.loadPluginData(pluginId, "barClaudeWeeklyOverrides", {})
+        barClaudeWeeklyOverrides = weeklyOverrides && typeof weeklyOverrides === "object" && !Array.isArray(weeklyOverrides) ? weeklyOverrides : {}
         barShowClaudeCredits = pluginService.loadPluginData(pluginId, "barShowClaudeCredits", false) === true
         includeCachedTokens = pluginService.loadPluginData(pluginId, "includeCachedTokens", false) === true
         compactPill = pluginService.loadPluginData(pluginId, "compactPill", false) === true
@@ -1014,8 +1017,27 @@ PluginComponent {
         if (!bucket) return false
         if (bucket.kind === "credits") return barShowClaudeCredits
         if (bucket.allowance && bucket.allowance.window === "session") return barShowClaudeSession
-        if (bucket.allowance && bucket.allowance.window === "weekly") return barShowClaudeWeekly
+        if (bucket.allowance && bucket.allowance.window === "weekly") {
+            var selected = barClaudeWeeklyOverrides[bucket.id]
+            return typeof selected === "boolean" ? selected : barShowClaudeWeekly
+        }
         return false
+    }
+
+    function claudeWeeklyBarChoices() {
+        var buckets = providerQuotaBuckets(claudeProvider())
+        var choices = []
+        for (var i = 0; i < buckets.length; i++) {
+            if (buckets[i].id && buckets[i].allowance && buckets[i].allowance.window === "weekly")
+                choices.push(buckets[i])
+        }
+        return choices
+    }
+
+    function setClaudeWeeklyBarBucket(bucket, selected) {
+        var overrides = Object.assign({}, barClaudeWeeklyOverrides)
+        overrides[bucket.id] = selected
+        setQuickSetting("barClaudeWeeklyOverrides", overrides)
     }
 
     function providerTopBarBuckets(provider) {
@@ -1471,7 +1493,15 @@ PluginComponent {
                     width: parent.width
                     spacing: Theme.spacingXS
                     QuickToggle { text: "Session"; checked: root.barShowClaudeSession; onClicked: root.setQuickSetting("barShowClaudeSession", !root.barShowClaudeSession) }
-                    QuickToggle { text: "Weekly"; checked: root.barShowClaudeWeekly; onClicked: root.setQuickSetting("barShowClaudeWeekly", !root.barShowClaudeWeekly) }
+                    Repeater {
+                        model: root.claudeWeeklyBarChoices()
+                        delegate: QuickToggle {
+                            required property var modelData
+                            text: modelData.id === "general-weekly" ? "Weekly (all models)" : modelData.label
+                            checked: root.claudeBucketShownInBar(modelData)
+                            onClicked: root.setClaudeWeeklyBarBucket(modelData, !checked)
+                        }
+                    }
                     QuickToggle { text: "Credits"; checked: root.barShowClaudeCredits; onClicked: root.setQuickSetting("barShowClaudeCredits", !root.barShowClaudeCredits) }
                 }
             }

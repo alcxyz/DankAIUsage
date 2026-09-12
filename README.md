@@ -324,6 +324,14 @@ The dropdown's **Bar controls** also offers immediate toggles for compact mode,
 provider logos, the plugin icon, and Claude session/weekly/credits selection.
 These controls save the same preferences as the plugin settings menu and do
 not need a data refresh. The Left / Used choice is saved as well.
+
+Under **Advanced → Bar controls → Claude in the top bar**, each reported weekly
+limit has its own switch: **Weekly (all models)** and model-specific limits such
+as Fable. Show either, both, or neither. Choices are remembered by quota ID,
+including when a limit temporarily disappears. Compact mode selects only among
+enabled quotas; the dropdown still shows all quotas. The settings-menu weekly
+default applies to limits without an individual choice and preserves existing
+preferences on upgrade.
 Under **Top bar: icons**, choose the plugin icon, provider logos, both, or
 neither. Under **Top bar: Claude quotas**, select session, weekly, and credits
 independently. All available quotas remain visible in the dropdown.
