@@ -63,8 +63,8 @@ header; both labels are visible and the active one is highlighted. Simple
 focuses on provider quota bars, percentages, reset countdowns, and warnings.
 Advanced adds the overall summary with an allowance ring, local token history
 and tracking controls, available reset details, and a set of collapsible
-sections at the bottom: reset history, public reset announcements, bar
-controls, and diagnostics. The header line shows when usage was last updated,
+sections at the bottom: reset history, public reset announcements (Alpha),
+and diagnostics. Bar preferences live in plugin settings. The header line shows when usage was last updated,
 whether it is stale, and (in Advanced) the next scheduled refresh. Failures
 and prompts that need a decision appear above the provider cards; routine
 information such as cached usage or local-history caveats uses neutral
@@ -295,10 +295,14 @@ offset a redemption. Sleep, unavailable data, caching, and gaps between polls
 can hide intermediate events. Automatic observations do not store credentials,
 account identifiers, prompts, or opaque reset-credit IDs.
 
-#### Public reset announcements (optional)
+#### Public reset announcements (Alpha, optional)
 
-Enable **Public reset announcements** in settings to read the
+Enable **Public reset announcements (Alpha)** in settings to read the
 [TokenResets public feed](https://tokenresets.com/api/). It is off by default.
+This experimental integration includes public reports, advance alerts, and local
+reset matching. Third-party coverage and matching may be incomplete or incorrect.
+Do not rely on it to decide when to spend quota or redeem a reset. Alpha applies
+to these feed-dependent features, not to the entire plugin release.
 The feed host receives your IP address and ordinary request metadata, but the
 plugin sends no credentials, account data, usage totals, history or notes.
 See the service [privacy notice](https://tokenresets.com/privacy/).

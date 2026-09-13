@@ -5,6 +5,17 @@ const test = require("node:test");
 
 const qml = fs.readFileSync(path.join(__dirname, "..", "DankAIUsageWidget.qml"), "utf8");
 
+test("feed-dependent features remain opt-in and visibly Alpha", () => {
+    const settings = fs.readFileSync(path.join(__dirname, "..", "DankAIUsageSettings.qml"), "utf8");
+    assert.ok(settings.includes('label: "Public reset announcements (Alpha)"'));
+    assert.ok(qml.includes('property bool publicResetAnnouncements: false'));
+    assert.ok(qml.includes('"publicResetAnnouncements", false'));
+    assert.ok(qml.includes('title: "Public reset announcements (Alpha)"'));
+    assert.ok(qml.includes('showInfo("Public reset announcement (Alpha)"'));
+    assert.ok(qml.includes('Alpha · verified by TokenResets'));
+    assert.ok(qml.includes('Alpha · via TokenResets'));
+});
+
 function extractFunction(name) {
     const marker = new RegExp(`\\bfunction\\s+${name}\\s*\\([^)]*\\)\\s*\\{`, "g");
     const match = marker.exec(qml);
