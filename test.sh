@@ -675,6 +675,7 @@ equal(scope.latestExplanationPrompt(now), null, "legacy timing noise neither pro
 equal(scope.historyGroups(scope.usageHistory).length, 2, "timing noise remains in history");
 scope.usageHistory = [timingNoise, {...latest, kind: "credits_changed"}];
 equal(scope.latestExplanationPrompt(now).groupId, "latest", "mixed group with a genuine change still prompts");
+scope.historyTimeOnlyChange = bindQmlFunction("historyTimeOnlyChange", scope);
 const title = bindQmlFunction("historyEventTitle", scope);
 equal(title(timingNoise), "Minor reset-time adjustment", "legacy noise has an honest history label");
 equal(title({...latest, kind: "window_changed_unknown"}), "Reset time changed", "time adjustment is distinguished from refill");

@@ -70,6 +70,27 @@ test('history uses checkbox controls and group hydration respects the filters', 
     assert.doesNotMatch(qml, /title: "Bar controls"|quickControlsOpen/);
 });
 
+test('time-only changes get a distinct status without an unchanged percentage arrow', () => {
+    const s = {showUsed: false, formatShortDateTime: value => value};
+    for (const name of ['historyTimeOnlyChange', 'historyEventTitle', 'historyPercent', 'historyEventDetail']) {
+        const source = qml.match(new RegExp(`    function ${name}\\([^]*?\\n    }`))[0];
+        s[name] = new Function('scope', `with(scope) { return (${source.trim()}); }`)(s);
+    }
+    const event = {kind:'window_changed_unknown', provider:'claude',
+        before:{usedPercent:9, resetAt:'2026-09-01T12:30:00Z'},
+        after:{usedPercent:9, resetAt:'2026-09-01T16:50:00Z'}};
+    assert.equal(s.historyEventTitle(event), 'Reset time changed · usage unchanged');
+    assert.match(s.historyEventDetail(event), /Usage unchanged: 91% left/);
+    assert.doesNotMatch(s.historyEventDetail(event), /91% left → 91% left/);
+    assert.match(s.historyEventDetail(event), /12:30:00Z → 2026-09-01T16:50:00Z/);
+    s.showUsed = true;
+    assert.match(s.historyEventDetail(event), /Usage unchanged: 9% used/);
+    assert.equal(s.historyTimeOnlyChange({...event, timingNoise:true}), false);
+    assert.equal(s.historyTimeOnlyChange({...event, after:{...event.after, usedPercent:8}}), false);
+    assert.equal(s.historyTimeOnlyChange({...event, after:{...event.after, resetAt:'invalid'}}), false);
+    assert.equal(s.historyTimeOnlyChange({...event, kind:'scheduled_window'}), false);
+});
+
 test('settings preserve individual weekly choices including temporarily absent limits', () => {
     const settings = fs.readFileSync(`${__dirname}/../DankAIUsageSettings.qml`, 'utf8');
     const all = {id: 'general-weekly', allowance: {window: 'weekly'}};

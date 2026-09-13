@@ -1057,7 +1057,19 @@ PluginComponent {
         }).slice(0, 8)
     }
 
+    function historyTimeOnlyChange(event) {
+        if (!event || event.kind !== "window_changed_unknown" || event.timingNoise === true) return false
+        var before = event.before || {}
+        var after = event.after || {}
+        var oldTime = Date.parse(before.resetAt)
+        var newTime = Date.parse(after.resetAt)
+        return typeof before.usedPercent === "number" && isFinite(before.usedPercent)
+                && before.usedPercent === after.usedPercent
+                && isFinite(oldTime) && isFinite(newTime) && oldTime !== newTime
+    }
+
     function historyEventTitle(event) {
+        if (historyTimeOnlyChange(event)) return "Reset time changed · usage unchanged"
         switch (event.kind) {
         case "scheduled_window": return "Scheduled window change"
         case "allowance_increased_unknown": return "Unexpected replenishment"
@@ -1088,7 +1100,9 @@ PluginComponent {
             lines.push("Previous sample " + formatShortDateTime(event.previousObservedAt))
         var before = event.before || {}
         var after = event.after || {}
-        if (typeof before.usedPercent === "number" && typeof after.usedPercent === "number")
+        if (historyTimeOnlyChange(event))
+            lines.push("Usage unchanged: " + historyPercent(after.usedPercent))
+        else if (typeof before.usedPercent === "number" && typeof after.usedPercent === "number")
             lines.push(historyPercent(before.usedPercent) + " → " + historyPercent(after.usedPercent))
         if (typeof before.availableCredits === "number" && typeof after.availableCredits === "number")
             lines.push("Available resets: " + before.availableCredits + " → " + after.availableCredits)

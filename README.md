@@ -262,7 +262,9 @@ Reset-time fluctuations of up to five seconds are ignored as timing noise;
 actual allowance increases are still detected. Older noise events remain in
 Advanced history as **Minor reset-time adjustment**, with any notes preserved,
 but do not trigger a question. **Reset time changed** means the expected reset
-time moved, not that allowance was refilled.
+time moved, not that allowance was refilled. If the recorded percentage is
+unchanged, the status is **Reset time changed · usage unchanged**. Its details
+show usage once and the old/new reset times, not an unchanged percentage arrow.
 
 Observed Claude behavior: a reported reset time can move several hours later
 while allowance usage remains unchanged. This is a schedule observation, not
