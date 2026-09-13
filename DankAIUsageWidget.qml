@@ -34,7 +34,8 @@ PluginComponent {
     property bool includeCachedTokens: false
     property bool compactPill: false
     property bool showUsed: false
-    property bool quickControlsOpen: false
+    property bool historyShowScheduledShort: false
+    property bool historyShowScheduledWeekly: false
     property bool historyOpen: false
     property bool announcementsOpen: false
     property int popoutMaxHeightFallback: 720
@@ -114,6 +115,10 @@ PluginComponent {
 
     function loadSettings() {
         if (!pluginService || !pluginService.loadPluginData) return
+        if (pluginService.loadPluginState) {
+            historyShowScheduledShort = pluginService.loadPluginState(pluginId, "historyShowScheduledShort", false) === true
+            historyShowScheduledWeekly = pluginService.loadPluginState(pluginId, "historyShowScheduledWeekly", false) === true
+        }
         var wasEnabled = enableClaudePrime
         var announcementsWereEnabled = publicResetAnnouncements
         publicResetAnnouncements = pluginService.loadPluginData(pluginId, "publicResetAnnouncements", false) === true
@@ -699,10 +704,10 @@ PluginComponent {
     function visibleHistoryGroups() {
         // Keep ADR-0011's latest-eight-event scope, but hydrate any selected
         // group from retained history so its related-change count and edit
-        // target describe the whole exact observation group.
+        // target describe the matching changes in that observation group.
         var recentGroups = historyGroups(visibleHistory())
         var fullGroups = historyGroups(usageHistory.filter(function(event) {
-            return historyProviderVisible(event)
+            return historyProviderVisible(event) && historyMatchesFilters(event)
         }))
         var fullByKey = ({})
         for (var i = 0; i < fullGroups.length; i++) fullByKey[fullGroups[i].key] = fullGroups[i]
@@ -1023,10 +1028,28 @@ PluginComponent {
         return out
     }
 
+    function historyMatchesFilters(event) {
+        if (!event) return false
+        if (event.kind !== "scheduled_window") return true
+        var bucket = typeof event.bucket === "string" ? event.bucket : ""
+        if (bucket.endsWith("-5-hour")) return historyShowScheduledShort
+        if (bucket.endsWith("-weekly")) return historyShowScheduledWeekly
+        // Unknown provider-defined windows stay visible; never guess from dates or labels.
+        return true
+    }
+
+    function setHistoryFilter(key, checked) {
+        if (key !== "historyShowScheduledShort" && key !== "historyShowScheduledWeekly") return
+        root[key] = checked === true
+        if (pluginService && pluginService.savePluginState)
+            pluginService.savePluginState(pluginId, key, root[key])
+    }
+
     function visibleHistory() {
         return usageHistory.filter(function(event) {
             return event && ((event.provider === "codex" && root.showCodex)
                     || (event.provider === "claude" && root.showClaude))
+                    && historyMatchesFilters(event)
         }).sort(function(a, b) {
             return Date.parse(b.observedAt) - Date.parse(a.observedAt)
         }).slice(0, 8)
@@ -1346,22 +1369,6 @@ PluginComponent {
             return typeof selected === "boolean" ? selected : barShowClaudeWeekly
         }
         return false
-    }
-
-    function claudeWeeklyBarChoices() {
-        var buckets = providerQuotaBuckets(claudeProvider())
-        var choices = []
-        for (var i = 0; i < buckets.length; i++) {
-            if (buckets[i].id && buckets[i].allowance && buckets[i].allowance.window === "weekly")
-                choices.push(buckets[i])
-        }
-        return choices
-    }
-
-    function setClaudeWeeklyBarBucket(bucket, selected) {
-        var overrides = Object.assign({}, barClaudeWeeklyOverrides)
-        overrides[bucket.id] = selected
-        setQuickSetting("barClaudeWeeklyOverrides", overrides)
     }
 
     function providerTopBarBuckets(provider) {
@@ -2405,6 +2412,21 @@ PluginComponent {
                             visible: root.historyOpen || (root.historyExplanationGroup !== null
                                     && root.historyExplanationLocation !== "prompt")
 
+                            Flow {
+                                width: parent.width
+                                spacing: Theme.spacingS
+                                HistoryCheckbox {
+                                    text: "Scheduled 5-hour resets"
+                                    checked: root.historyShowScheduledShort
+                                    onClicked: root.setHistoryFilter("historyShowScheduledShort", checked)
+                                }
+                                HistoryCheckbox {
+                                    text: "Scheduled weekly resets"
+                                    checked: root.historyShowScheduledWeekly
+                                    onClicked: root.setHistoryFilter("historyShowScheduledWeekly", checked)
+                                }
+                            }
+
                             NoticeRow {
                                 width: parent.width
                                 level: "warning"
@@ -2415,8 +2437,8 @@ PluginComponent {
                             StyledText {
                                 width: parent.width
                                 text: root.visibleHistory().length === 0
-                                        ? "No reset changes recorded yet. History starts with observed usage; it cannot reconstruct earlier resets."
-                                        : "Latest 8 events · up to 30 days retained. Times show when changes were observed, not necessarily when they happened."
+                                        ? "No matching reset events. Scheduled events remain recorded regardless of these filters."
+                                        : "Latest 8 matching events · up to 30 days retained. Times show when changes were observed, not necessarily when they happened."
                                 textFormat: Text.PlainText
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
@@ -2606,53 +2628,6 @@ PluginComponent {
                                         }
                                     }
                                 }
-                            }
-                        }
-
-                        SectionHeader {
-                            width: parent.width
-                            title: "Bar controls"
-                            expanded: root.quickControlsOpen
-                            visible: root.advancedDropdown
-                            onClicked: root.quickControlsOpen = !root.quickControlsOpen
-                        }
-
-                        Column {
-                            width: parent.width
-                            spacing: Theme.spacingXS
-                            visible: root.advancedDropdown && root.quickControlsOpen
-
-                            StyledText {
-                                text: "Top bar"
-                                color: Theme.surfaceVariantText
-                                font.pixelSize: Theme.fontSizeSmall
-                            }
-                            Flow {
-                                width: parent.width
-                                spacing: Theme.spacingXS
-                                QuickToggle { text: "Compact"; checked: root.compactPill; onClicked: root.setQuickSetting("compactPill", !root.compactPill) }
-                                QuickToggle { text: "Logos"; checked: root.barShowProviderLogos; onClicked: root.setQuickSetting("barShowProviderLogos", !root.barShowProviderLogos) }
-                                QuickToggle { text: "Plugin icon"; checked: root.barShowPluginIcon; onClicked: root.setQuickSetting("barShowPluginIcon", !root.barShowPluginIcon) }
-                            }
-                            StyledText {
-                                text: "Claude in the top bar"
-                                color: Theme.surfaceVariantText
-                                font.pixelSize: Theme.fontSizeSmall
-                            }
-                            Flow {
-                                width: parent.width
-                                spacing: Theme.spacingXS
-                                QuickToggle { text: "Session"; checked: root.barShowClaudeSession; onClicked: root.setQuickSetting("barShowClaudeSession", !root.barShowClaudeSession) }
-                                Repeater {
-                                    model: root.claudeWeeklyBarChoices()
-                                    delegate: QuickToggle {
-                                        required property var modelData
-                                        text: modelData.id === "general-weekly" ? "Weekly (all models)" : modelData.label
-                                        checked: root.claudeBucketShownInBar(modelData)
-                                        onClicked: root.setClaudeWeeklyBarBucket(modelData, !checked)
-                                    }
-                                }
-                                QuickToggle { text: "Credits"; checked: root.barShowClaudeCredits; onClicked: root.setQuickSetting("barShowClaudeCredits", !root.barShowClaudeCredits) }
                             }
                         }
 
@@ -3213,6 +3188,35 @@ PluginComponent {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: sectionHeader.clicked()
+        }
+    }
+
+    component HistoryCheckbox: Controls.CheckBox {
+        id: historyCheckbox
+        padding: 4
+        spacing: Theme.spacingS
+        indicator: StyledRect {
+            x: historyCheckbox.leftPadding
+            y: (historyCheckbox.height - height) / 2
+            implicitWidth: 18
+            implicitHeight: 18
+            radius: 3
+            color: historyCheckbox.checked ? Theme.primary : "transparent"
+            border.width: 1
+            border.color: historyCheckbox.activeFocus ? Theme.primary : Theme.surfaceVariantText
+            DankIcon {
+                anchors.centerIn: parent
+                name: "check"
+                size: 16
+                color: Theme.primaryText
+                visible: historyCheckbox.checked
+            }
+        }
+        contentItem: StyledText {
+            text: historyCheckbox.text
+            leftPadding: historyCheckbox.indicator.width + historyCheckbox.spacing
+            color: Theme.surfaceText
+            font.pixelSize: Theme.fontSizeSmall
         }
     }
 
