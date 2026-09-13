@@ -71,6 +71,30 @@ func TestUsageHistoryScheduledAndEarlyRefills(t *testing.T) {
 	}
 }
 
+func TestClaudeHistoryUnchangedUsageWithLaterResetIsNotRefill(t *testing.T) {
+	now := mustParseTime(t, "2026-09-01T12:00:00Z")
+	path := filepath.Join(t.TempDir(), "usage-history.json")
+	initialReset := now.Add(30 * time.Minute)
+	provider := historyProvider("claude", "general-5-hour", "5-hour", 9, initialReset)
+	if _, err := observeUsageHistory(path, now, []ProviderUsage{provider}); err != nil {
+		t.Fatal(err)
+	}
+	provider = historyProvider("claude", "general-5-hour", "5-hour", 9, initialReset.Add(4*time.Hour+20*time.Minute))
+	events, err := observeUsageHistory(path, now.Add(5*time.Minute), []ProviderUsage{provider})
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events=%+v error=%v", events, err)
+	}
+	if events[0].Kind != "window_changed_unknown" || events[0].Before == nil || events[0].After == nil ||
+		events[0].Before.UsedPercent == nil || events[0].After.UsedPercent == nil ||
+		*events[0].Before.UsedPercent != *events[0].After.UsedPercent || events[0].Before.ResetAt == events[0].After.ResetAt {
+		t.Fatalf("expected a schedule-only change: %+v", events[0])
+	}
+	events, err = observeUsageHistory(path, now.Add(10*time.Minute), []ProviderUsage{provider})
+	if err != nil || len(events) != 1 {
+		t.Fatalf("unchanged follow-up duplicated the event: count=%d error=%v", len(events), err)
+	}
+}
+
 func TestUsageHistoryAnchorShiftAndIdleSlidingWindow(t *testing.T) {
 	now := mustParseTime(t, "2026-09-08T12:00:00Z")
 	path := filepath.Join(t.TempDir(), "usage-history.json")

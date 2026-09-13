@@ -2241,7 +2241,7 @@ PluginComponent {
                                         }
                                     }
 
-                                    TokenHistoryRow {
+                                    TokenHistoryResult {
                                         width: parent.width
                                         visible: root.advancedDropdown
                                         value: root.providerTokenBreakdown(modelData)
@@ -2888,6 +2888,37 @@ PluginComponent {
                     onClicked: root.cancelHistoryExplanation()
                 }
             }
+        }
+    }
+
+    component TokenHistoryResult: Item {
+        id: tokenResult
+        property string value: ""
+        height: 32
+        Accessible.role: Accessible.StaticText
+        Accessible.name: root.tokenHistoryLabel() + ": " + value
+
+        StyledText {
+            text: root.tokenHistoryLabel()
+            anchors.left: parent.left
+            anchors.right: resultValue.left
+            anchors.rightMargin: Theme.spacingS
+            anchors.verticalCenter: parent.verticalCenter
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceVariantText
+            elide: Text.ElideRight
+        }
+        StyledText {
+            id: resultValue
+            text: tokenResult.value
+            width: Math.min(implicitWidth, parent.width * 0.55)
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            font.pixelSize: Theme.fontSizeSmall
+            font.weight: Font.Medium
+            color: Theme.surfaceText
+            elide: Text.ElideRight
+            horizontalAlignment: Text.AlignRight
         }
     }
 
