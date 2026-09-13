@@ -4,7 +4,7 @@ const test = require('node:test');
 const qml = fs.readFileSync(`${__dirname}/../DankAIUsageWidget.qml`, 'utf8');
 
 function scope() {
-    const s = { historyShowScheduledShort: false, historyShowScheduledWeekly: false,
+    const s = { historyShowOther: true, historyShowScheduledShort: false, historyShowScheduledWeekly: false,
         showCodex: true, showClaude: true, usageHistory: [], pluginId: 'test', saved: [] };
     s.root = s;
     s.pluginService = { savePluginState: (...args) => s.saved.push(args) };
@@ -47,6 +47,21 @@ test('filtering precedes the eight-event limit and never mutates retained histor
     s.showClaude = false;
     assert.equal(s.visibleHistory().length, 0);
     assert.equal(JSON.stringify(s.usageHistory), before);
+});
+
+test('Other is enabled by default and all categories can be independently hidden', () => {
+    const s = scope();
+    s.usageHistory = ['allowance_increased_unknown', 'window_changed_unknown', 'scheduled_window'].map(kind =>
+        ({provider: 'claude', kind, bucket: 'general-weekly', observedAt: '2026-09-13T12:00:00Z'}));
+    assert.equal(s.visibleHistory().length, 2);
+    s.setHistoryFilter('historyShowOther', false);
+    assert.equal(s.visibleHistory().length, 0);
+    assert.equal(s.historyMatchesFilters({kind:'scheduled_window', bucket:'unknown-window'}), false);
+    s.setHistoryFilter('historyShowScheduledWeekly', true);
+    assert.equal(s.visibleHistory().length, 1);
+    assert.equal(s.visibleHistory()[0].kind, 'scheduled_window');
+    assert.deepEqual(s.saved[0], ['test', 'historyShowOther', false]);
+    assert.match(qml, /loadPluginState\(pluginId, "historyShowOther", true\) !== false/);
 });
 
 test('history uses checkbox controls and group hydration respects the filters', () => {

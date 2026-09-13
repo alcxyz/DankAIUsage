@@ -412,9 +412,11 @@ independently. All available quotas remain visible in the dropdown.
 
 Reset History hides routine scheduled five-hour and weekly events by default.
 Its separate **Scheduled 5-hour resets** and **Scheduled weekly resets**
-checkboxes remember your choices. Recording and retention are unchanged;
+checkboxes remember your choices. **Other reset events** is checked by default
+and includes unexpected refills, redemptions, timing changes, and unclassified
+windows. Uncheck all three to hide all events. Recording and retention are unchanged;
 the latest eight matching events are shown, so routine events do not crowd out
-unexpected refills or reset redemptions. Unknown window types remain visible.
+unexpected refills or reset redemptions. Unknown window types follow Other.
 
 ## Troubleshooting
 
