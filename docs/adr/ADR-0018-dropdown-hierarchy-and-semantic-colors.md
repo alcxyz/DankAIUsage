@@ -31,6 +31,9 @@ the DMS theme.
 - Render each quota as label, inline countdown or detail, severity-colored value,
   allowance bar, and (Advanced) the ADR-0013 window-time bar beneath it. The exact
   reset time stays on hover.
+- Keep one shared token-history range selector above the provider cards in
+  Advanced. Provider token rows display the selected range and their own results
+  without duplicating controls or implying independent ranges.
 - Classify provider notices as info, warning, or error and render each on its own
   line with an icon. Info uses the neutral variant text color; warnings and errors
   use the theme's `warning` and `error` colors. An unavailable provider with no

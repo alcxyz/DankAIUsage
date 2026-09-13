@@ -104,6 +104,13 @@ assert 'allowanceLabel(buckets[i].allowance, false)' in component_text
 assert 'allowanceLabel(compactWeakest.allowance, false)' in component_text
 assert 'return allowanceLabel(bucket.allowance)' in component_text
 assert 'component TokenHistoryRow: StyledRect' in component_text
+assert component_text.count('TokenHistoryRow {') == 1, 'only the overview owns a range selector'
+assert component_text.count('TokenHistoryResult {') == 1, 'provider repeater uses read-only results'
+result_component = component_text.split('component TokenHistoryResult: Item {', 1)[1].split('component TokenHistoryRow:', 1)[0]
+assert 'root.tokenHistoryLabel()' in result_component
+assert 'Accessible.StaticText' in result_component
+for forbidden in ('MouseArea', 'onClicked', 'selectorOpen', 'selectTokenHistoryRange'):
+    assert forbidden not in result_component, 'provider token results must not be interactive'
 assert 'property string tokenHistoryRange: "7d"' in component_text
 for token_range in ('5h', '7d', '30d', '90d', 'tracked'):
     assert f'{{ key: "{token_range}"' in component_text

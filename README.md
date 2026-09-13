@@ -108,6 +108,10 @@ available when it differs from the presets. The selection is remembered and
 does not make another provider request. The rows support keyboard activation
 and show unavailable or partial collection explicitly.
 
+In Advanced mode, the token-history selector above the provider cards controls
+one shared range. The Codex and Claude rows show read-only results for that range,
+including its label; they do not have separate selectors.
+
 ### Optional tracked totals
 
 **Tracked total** is a separate, opt-in view. Tracking is **off by default**.
@@ -259,6 +263,15 @@ actual allowance increases are still detected. Older noise events remain in
 Advanced history as **Minor reset-time adjustment**, with any notes preserved,
 but do not trigger a question. **Reset time changed** means the expected reset
 time moved, not that allowance was refilled.
+
+Observed Claude behavior: a reported reset time can move several hours later
+while allowance usage remains unchanged. This is a schedule observation, not
+proof of a refill or a known provider policy. Keep **Other reset events** checked
+to review repeats under **Reset time changed**. Compare the old/new reset times
+and observation interval; add an explanation only when the cause is known.
+The existing bounded history records these changes during normal polling—no
+extra requests or new notifications are needed. If it recurs, review and share
+only the relevant sanitized details; private notes should not be copied blindly.
 
 - **Scheduled window change:** a rollover consistent with the previous reset
   schedule; inferred from snapshots.
