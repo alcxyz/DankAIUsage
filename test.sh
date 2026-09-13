@@ -171,12 +171,10 @@ schema = plugin["settings_schema"]
 for key in schema:
     assert f'"{key}"' in component_text, f"component does not load {key}"
     if key == "barClaudeWeeklyOverrides":
-        # Dynamic provider-defined choices live in the dropdown, not a fixed
-        # settings form. The settings menu explains where to customize them.
+        # Dynamic provider-defined choices belong in plugin settings.
         assert schema[key] == {"type": "object", "default": {}}
-        assert 'model: root.claudeWeeklyBarChoices()' in component_text
-        assert 'root.setClaudeWeeklyBarBucket(modelData, !checked)' in component_text
-        assert 'individual choices take precedence' in settings_text
+        assert 'barClaudeWeeklyOverrides' in settings_text
+        assert 'title: "Bar controls"' not in component_text
         continue
     assert f'settingKey: "{key}"' in settings_text, f"settings UI does not expose {key}"
 
@@ -252,7 +250,6 @@ for expected in (
     'onClicked: root.setDropdownMode(root.advancedDropdown ? "simple" : "advanced")',
     'text: root.showUsed ? "Used" : "Left"',
     'onClicked: root.setQuickSetting("showUsed", !root.showUsed)',
-    'visible: root.advancedDropdown && root.quickControlsOpen',
     'visible: root.advancedDropdown && root.tokenHistoryRange === "tracked"',
     'visible: root.advancedDropdown && root.providerResets(modelData).length > 0',
     'visible: modelData.id === "codex" && root.resetControlsVisible()',
@@ -334,11 +331,7 @@ for (const general of [false, true]) {
 weeklyScope.barShowClaudeWeekly = false;
 equal(weeklyShown(weeklyFuture), false, "new limits inherit weekly default");
 equal(weeklyShown(weeklyFable), true, "explicit selection overrides default");
-weeklyScope.setQuickSetting = (key, value) => { weeklyScope[key] = value; };
-const saveWeekly = bindQmlFunction("setClaudeWeeklyBarBucket", weeklyScope);
-const oldOverrides = weeklyScope.barClaudeWeeklyOverrides;
-saveWeekly(weeklyAll, false);
-equal(oldOverrides["general-weekly"], true, "saving replaces object for QML reactivity");
+weeklyScope.barClaudeWeeklyOverrides = {"general-weekly": false, "fable-weekly": true};
 equal(weeklyShown(weeklyAll), false, "saved general choice applied");
 equal(weeklyShown(weeklyFable), true, "saving preserves another weekly choice");
 weeklyScope.claudeBucketShownInBar = weeklyShown;
@@ -352,13 +345,8 @@ weeklyScope.quotaShortLabel = bucket => bucket.id;
 weeklyScope.allowanceLabel = () => "50%";
 const compactSegments = bindQmlFunction("topBarSegments", weeklyScope);
 equal(compactSegments()[0].text, "fable-weekly 50%", "compact ignores deselected general weekly");
-saveWeekly(weeklyFable, false);
+weeklyScope.barClaudeWeeklyOverrides = {"general-weekly": false, "fable-weekly": false};
 equal(compactSegments().length, 0, "no weekly segment when neither selected");
-weeklyScope.claudeProvider = () => ({quotaBuckets: [weeklyAll, weeklyFable, {id: "session", allowance: {window: "session"}}]});
-weeklyScope.providerQuotaBuckets = bindQmlFunction("providerQuotaBuckets", {});
-equal(bindQmlFunction("claudeWeeklyBarChoices", weeklyScope)().length, 2, "controls list each weekly bucket only");
-weeklyScope.claudeProvider = () => null;
-equal(bindQmlFunction("claudeWeeklyBarChoices", weeklyScope)().length, 0, "missing provider is safe");
 equal(resolve("simple", {providers: []}), "simple", "persisted simple wins");
 equal(resolve("advanced", null), "advanced", "persisted advanced wins");
 equal(resolve("", {providers: []}), "advanced", "existing cached user migrates to advanced");
@@ -723,6 +711,11 @@ fi
 
 echo "Go helper"
 if command -v node >/dev/null 2>&1; then
+    if node --test tests/history-filters-ui.test.cjs; then
+        pass "history display filters"
+    else
+        fail "history display filters" "checkbox filtering failed"
+    fi
     if node --test tests/announcements-ui.test.cjs; then
         pass "public announcement selection and notification behavior"
     else

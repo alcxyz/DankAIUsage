@@ -41,9 +41,14 @@ the plugin, without adding a monitoring service or another dependency.
   noise, not a schedule change. This conservative local tolerance covers
   observed one-second fluctuations; it does not suppress an actual allowance
   increase or a larger timing change. Continue updating the observation baseline.
-- Display the latest eight events in a collapsible history section, following
+- Display the latest eight matching events in a collapsible history section, following
   provider visibility and the Left/Used presentation preference. Keep history
   out of DMS's persistent summary cache so there is one retained history store.
+- Hide known scheduled five-hour and weekly events by default, with separate
+  remembered checkboxes in Reset History to include each. Apply filters before
+  the display limit and when hydrating groups. Retain all events normally;
+  unknown window types remain visible, and non-scheduled changes are not hidden
+  based on their duration. An open explanation editor remains accessible.
 
 ## Alternatives and consequences
 

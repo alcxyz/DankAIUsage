@@ -22,7 +22,7 @@ It brings their remaining allowances together, with local token history
 available in the same dropdown.
 It displays the limits each provider reports, including model-scoped windows,
 Claude extra-usage credits, and available Codex resets with their expiry.
-Left/Used and bar controls let you adjust the view while checking your usage.
+Left/Used adjusts the view while checking usage; persistent bar preferences live in plugin settings.
 
 The scope is deliberately two providers. The Go helper uses the local Codex
 app server and Claude sign-in; it also exposes a JSON summary for terminal use.
@@ -396,21 +396,25 @@ minimum, not a guarantee against account restrictions. Claude's undocumented
 OAuth usage source has separate policy and compatibility risks regardless of
 polling frequency. Longer intervals also delay automatic reset checks and may
 miss a credit's expiry window; that feature remains best effort.
-The dropdown's **Bar controls** section (Advanced, at the bottom) also offers immediate toggles for compact mode,
-provider logos, the plugin icon, and Claude session/weekly/credits selection.
-These controls save the same preferences as the plugin settings menu and do
-not need a data refresh. The Left / Used choice is saved as well.
+Manage compact mode, provider logos, the plugin icon, and Claude quota selection
+under **Settings → Plugins → AI Usage**. Left / Used stays in the dropdown.
 
-Under **Advanced → Bar controls → Claude in the top bar**, each reported weekly
+In the plugin settings, each reported weekly
 limit has its own switch: **Weekly (all models)** and model-specific limits such
 as Fable. Show either, both, or neither. Choices are remembered by quota ID,
 including when a limit temporarily disappears. Compact mode selects only among
 enabled quotas; the dropdown still shows all quotas. The settings-menu weekly
 default applies to limits without an individual choice and preserves existing
 preferences on upgrade.
-Under **Top bar: icons**, choose the plugin icon, provider logos, both, or
-neither. Under **Top bar: Claude quotas**, select session, weekly, and credits
+Under **Top bar layout and icons**, choose the plugin icon, provider logos, both, or
+neither. Under **Claude quotas in the top bar**, select session, weekly, and credits
 independently. All available quotas remain visible in the dropdown.
+
+Reset History hides routine scheduled five-hour and weekly events by default.
+Its separate **Scheduled 5-hour resets** and **Scheduled weekly resets**
+checkboxes remember your choices. Recording and retention are unchanged;
+the latest eight matching events are shown, so routine events do not crowd out
+unexpected refills or reset redemptions. Unknown window types remain visible.
 
 ## Troubleshooting
 
