@@ -37,7 +37,7 @@ PluginComponent {
     property bool quickControlsOpen: false
     property bool historyOpen: false
     property bool announcementsOpen: false
-    property int popoutMaxHeight: 720
+    property int popoutMaxHeightFallback: 720
     property bool publicResetAnnouncements: false
     property var publicAnnouncements: []
     property bool announcementsStale: true
@@ -189,6 +189,21 @@ PluginComponent {
         return advancedDropdown || codexResetStatus.armed === true
                 || codexResetStatus.stateKnown === false || !!codexResetStatus.error
                 || codexResetStatus.state === "attempted"
+    }
+
+    // The status line stays quiet while the control is simply off and settled.
+    function codexResetNeedsAttention() {
+        return codexResetStatus.armed === true || codexResetStatus.stateKnown === false
+                || !!codexResetStatus.error || !!codexResetStatus.historyError
+                || codexResetStatus.state === "attempted"
+    }
+
+    function popoutMaxHeight(popout) {
+        var screen = popout && popout.screen ? popout.screen : null
+        var height = screen && isFinite(screen.height) ? screen.height : 0
+        if (height <= 0) return popoutMaxHeightFallback
+        // Leave room for the bar, popout margins, and a little breathing space.
+        return Math.max(480, Math.round(height - 140))
     }
 
     Component.onCompleted: {
@@ -1302,6 +1317,8 @@ PluginComponent {
         return "Next expiry" + (expiry !== "" ? " · " + expiry : " not reported")
     }
 
+    readonly property string codexAutoResetHelp: "Uses one reset at 99% general usage or 10 min before its expiry. Turns off after one attempt; DMS must be running."
+
     function codexResetDetailText() {
         var message = codexResetStatus.message || "Automatic reset is off"
         if (codexResetStatus.error)
@@ -1795,7 +1812,8 @@ PluginComponent {
     popoutContent: Component {
         Item {
             id: popoutRoot
-            implicitHeight: Math.min(popoutColumn.implicitHeight, root.popoutMaxHeight)
+            property var parentPopout: null
+            implicitHeight: Math.min(popoutColumn.implicitHeight, root.popoutMaxHeight(parentPopout))
 
             DankFlickable {
                 anchors.fill: parent
@@ -1806,7 +1824,7 @@ PluginComponent {
                 Column {
                     id: popoutColumn
                     width: popoutRoot.width
-                    spacing: Theme.spacingM
+                    spacing: Theme.spacingS
 
                     // Header: title, freshness, refresh.
                     Item {
@@ -2222,10 +2240,11 @@ PluginComponent {
 
                                     Item {
                                         width: parent.width
-                                        height: 34
+                                        height: 20
                                         visible: root.advancedDropdown && root.providerResets(modelData).length > 0
 
                                         DankIcon {
+                                            id: resetsIcon
                                             name: "redeem"
                                             size: Theme.fontSizeMedium
                                             color: Theme.primary
@@ -2233,31 +2252,31 @@ PluginComponent {
                                             anchors.verticalCenter: parent.verticalCenter
                                         }
 
-                                        Column {
-                                            anchors.left: parent.left
-                                            anchors.leftMargin: Theme.fontSizeMedium + Theme.spacingS
+                                        StyledText {
+                                            id: resetsSummary
+                                            anchors.left: resetsIcon.right
+                                            anchors.leftMargin: Theme.spacingXS
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            width: Math.min(implicitWidth, parent.width - resetsIcon.width - Theme.spacingXS)
+                                            text: root.providerResetSummary(modelData)
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.weight: Font.Medium
+                                            color: Theme.primary
+                                            elide: Text.ElideRight
+                                            maximumLineCount: 1
+                                        }
+
+                                        StyledText {
+                                            anchors.left: resetsSummary.right
+                                            anchors.leftMargin: Theme.spacingXS
                                             anchors.right: parent.right
                                             anchors.verticalCenter: parent.verticalCenter
-                                            spacing: 1
-
-                                            StyledText {
-                                                width: parent.width
-                                                text: root.providerResetSummary(modelData)
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                font.weight: Font.Medium
-                                                color: Theme.primary
-                                                elide: Text.ElideRight
-                                                maximumLineCount: 1
-                                            }
-
-                                            StyledText {
-                                                width: parent.width
-                                                text: root.providerResetDetail(modelData)
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                color: Theme.surfaceVariantText
-                                                elide: Text.ElideRight
-                                                maximumLineCount: 1
-                                            }
+                                            text: "· " + root.providerResetDetail(modelData)
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            color: Theme.surfaceVariantText
+                                            elide: Text.ElideRight
+                                            maximumLineCount: 1
+                                            visible: width > 24
                                         }
                                     }
 
@@ -2282,6 +2301,7 @@ PluginComponent {
                                             Accessible.onToggleAction: handleClick()
                                             Keys.onSpacePressed: handleClick()
                                             Keys.onReturnPressed: handleClick()
+                                            Accessible.description: root.codexAutoResetHelp
 
                                             Rectangle {
                                                 anchors.fill: parent
@@ -2290,6 +2310,28 @@ PluginComponent {
                                                 border.width: codexAutoResetToggle.activeFocus ? 2 : 0
                                                 border.color: Theme.primary
                                             }
+
+                                            HoverHandler { id: autoResetHover }
+                                            Controls.ToolTip {
+                                                id: autoResetTooltip
+                                                visible: autoResetHover.hovered
+                                                delay: 500
+                                                text: root.codexAutoResetHelp
+                                                contentItem: StyledText {
+                                                    text: autoResetTooltip.text
+                                                    textFormat: Text.PlainText
+                                                    font.pixelSize: Theme.fontSizeSmall
+                                                    color: Theme.surfaceText
+                                                    wrapMode: Text.WordWrap
+                                                    width: Math.min(implicitWidth, 300)
+                                                }
+                                                background: StyledRect {
+                                                    color: Theme.surfaceContainerHigh
+                                                    radius: Theme.cornerRadius
+                                                    border.color: Theme.outlineVariant
+                                                    border.width: 1
+                                                }
+                                            }
                                         }
 
                                         NoticeRow {
@@ -2297,15 +2339,7 @@ PluginComponent {
                                             level: root.codexResetStatus.error ? "error"
                                                     : root.codexResetStatus.armed === true ? "warning" : "info"
                                             text: root.codexResetDetailText()
-                                        }
-
-                                        StyledText {
-                                            width: parent.width
-                                            text: "Uses one reset at 99% general usage or 10 min before its expiry. Turns off after one attempt; DMS must be running."
-                                            visible: root.advancedDropdown
-                                            font.pixelSize: Theme.fontSizeSmall
-                                            color: Theme.surfaceVariantText
-                                            wrapMode: Text.WordWrap
+                                            visible: root.codexResetNeedsAttention()
                                         }
                                     }
 
@@ -3108,7 +3142,7 @@ PluginComponent {
         property string badge: ""
         property bool expanded: false
         signal clicked()
-        height: 36
+        height: 32
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
         Accessible.name: title + (badge !== "" ? " (" + badge + ")" : "") + (expanded ? "; expanded" : "; collapsed")

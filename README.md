@@ -197,7 +197,9 @@ shell's `PATH` before starting DMS.
 
 ### One-shot Codex reset
 
-The Codex dropdown includes **Auto-use one reset**, off by default. Turning it
+The Codex dropdown includes **Auto-use one reset**, off by default. Hover the
+switch for the trigger rules; its status line appears only while it is armed,
+unknown, or reporting a problem. Turning it
 on selects the earliest-expiring available reset with a known ID and expiry.
 It waits until general Codex usage reaches 99%, or until ten minutes before
 that reset expires with some general allowance used in a window whose natural
