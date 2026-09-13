@@ -24,6 +24,10 @@ Two layers:
   widget): shown totals are `total - cached`, approximating "fresh work"
   tokens. An "Include cached tokens" setting restores raw totals for users
   inspecting cache overhead.
+- The local-history breakdown always shows disjoint **Input / Cached / Output**
+  components. Input is `total - cached - output`, bounded at zero, for both
+  provider representations. Changing the combined-total setting never folds
+  cached tokens into the Input component or hides Cached from the breakdown.
 
 ## Alternatives Considered
 
@@ -38,7 +42,7 @@ Two layers:
 
 - Displayed totals intentionally do not match ccusage or raw transcript sums;
   the toggle exists for reconciliation.
-- Displayed "input" is derived (`displayTotal - output`), not the raw input
+- Displayed "input" is derived (`total - cached - output`), not the raw input
   field.
 - Per-provider semantics live in one function (`eventTotal`) with a test
   pinning the difference (`TestEventTotalProviderSemantics`).

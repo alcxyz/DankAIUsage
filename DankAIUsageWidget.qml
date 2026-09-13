@@ -1010,7 +1010,7 @@ PluginComponent {
         errorText = hasError ? summary.errors.join("\n") : ""
 
         var d = new Date(summary.generatedAt || Date.now())
-        lastUpdated = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2)
+        lastUpdated = d.toLocaleTimeString(Qt.locale(), Locale.ShortFormat)
         var claude = claudeProvider()
         if (claudeSessionIsActive(claude) && lastClaudeAutoPrimeFailed) {
             lastClaudeAutoPrimeFailed = false
@@ -1121,7 +1121,11 @@ PluginComponent {
 
     function displayInput(totals) {
         if (!totals) return 0
-        return Math.max(0, displayTotal(totals) - displayOutput(totals))
+        return Math.max(0, (totals.total || 0) - displayCached(totals) - displayOutput(totals))
+    }
+
+    function displayCached(totals) {
+        return totals ? Math.max(0, totals.cached || 0) : 0
     }
 
     function displayOutput(totals) {
@@ -1152,6 +1156,15 @@ PluginComponent {
         var list = visibleProviders()
         for (var i = 0; i < list.length; i++) {
             if (tokenHistoryAvailable(list[i])) total += displayOutput(tokenHistoryTotals(list[i]))
+        }
+        return total
+    }
+
+    function filteredGrandCached() {
+        var total = 0
+        var list = visibleProviders()
+        for (var i = 0; i < list.length; i++) {
+            if (tokenHistoryAvailable(list[i])) total += displayCached(tokenHistoryTotals(list[i]))
         }
         return total
     }
@@ -1497,20 +1510,16 @@ PluginComponent {
         if (!allowance || !allowance.resetAt) return "--"
         var d = new Date(allowance.resetAt)
         if (isNaN(d.getTime())) return "--"
-        var clock = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2)
-        if (allowance.window === "weekly") {
-            var days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-            return days[d.getDay()] + " " + (d.getMonth() + 1) + "/" + d.getDate() + " " + clock
-        }
-        return clock
+        return allowance.window === "weekly"
+                ? d.toLocaleString(Qt.locale(), Locale.ShortFormat)
+                : d.toLocaleTimeString(Qt.locale(), Locale.ShortFormat)
     }
 
     function formatShortDateTime(value) {
         if (!value) return ""
         var d = new Date(value)
         if (isNaN(d.getTime())) return ""
-        var clock = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2)
-        return (d.getMonth() + 1) + "/" + d.getDate() + " " + clock
+        return d.toLocaleString(Qt.locale(), Locale.ShortFormat)
     }
 
     function formatTokens(value) {
@@ -1529,6 +1538,10 @@ PluginComponent {
         return formatTokens(displayOutput(totals)) + " out"
     }
 
+    function cachedTokenLabel(totals) {
+        return formatTokens(displayCached(totals)) + " cached"
+    }
+
     function filteredGrandTokenBreakdown() {
         var list = visibleProviders()
         var available = 0
@@ -1541,7 +1554,8 @@ PluginComponent {
         if (tokenHistoryRange === "tracked" && trackingStatus.errors && trackingStatus.errors.length > 0)
             partial = true
         if (available === 0) return "Unavailable"
-        return formatTokens(filteredGrandInput()) + " in / " + formatTokens(filteredGrandOutput()) + " out" + (partial ? " (partial)" : "")
+        return formatTokens(filteredGrandInput()) + " in / " + formatTokens(filteredGrandCached()) + " cached / "
+                + formatTokens(filteredGrandOutput()) + " out" + (partial ? " (partial)" : "")
     }
 
     function tokenHistoryAvailable(provider) {
@@ -1612,8 +1626,8 @@ PluginComponent {
         if (trackingStatus.known !== true) return "Tracking status unavailable"
         var started = formatShortDateTime(trackingStatus.startedAt)
         if (trackingStatus.enabled === true)
-            return "Tracking enabled" + (started ? " · started " + started : "")
-        if (started) return "Tracking paused · started " + started
+            return "Tracking enabled" + (started ? " · " + started : "")
+        if (started) return "Tracking paused · first enabled " + started
         return "Tracking is off · no tracked period yet"
     }
 
@@ -1622,7 +1636,7 @@ PluginComponent {
         if (trackingStatus.errors && trackingStatus.errors.length > 0)
             return "Some tracked token data is incomplete. Refresh or check the helper."
         if (trackingStatus.enabled === true)
-            return "The initial total may include older retained local history."
+            return "Includes imported local history from before tracking was enabled."
         if (trackingStatus.startedAt) return "Totals are retained; paused usage is not backfilled on resume."
         return "Enable to seed a persistent total from retained local history."
     }
@@ -1630,7 +1644,7 @@ PluginComponent {
     function providerTokenBreakdown(provider) {
         if (!tokenHistoryAvailable(provider)) return "Unavailable"
         var totals = tokenHistoryTotals(provider)
-        return inputTokenLabel(totals) + " / " + outputTokenLabel(totals)
+        return inputTokenLabel(totals) + " / " + cachedTokenLabel(totals) + " / " + outputTokenLabel(totals)
                 + (tokenHistoryRange === "tracked"
                     ? (trackingStatus.errors && trackingStatus.errors.length > 0 ? " (partial)" : "")
                     : (provider.meta && provider.meta.tokenDataError ? " (partial)" : ""))
@@ -2908,16 +2922,16 @@ PluginComponent {
     component TokenHistoryResult: Item {
         id: tokenResult
         property string value: ""
-        height: 32
+        height: 48
         Accessible.role: Accessible.StaticText
         Accessible.name: root.tokenHistoryLabel() + ": " + value
 
         StyledText {
             text: root.tokenHistoryLabel()
             anchors.left: parent.left
-            anchors.right: resultValue.left
-            anchors.rightMargin: Theme.spacingS
-            anchors.verticalCenter: parent.verticalCenter
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.topMargin: 4
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceVariantText
             elide: Text.ElideRight
@@ -2925,14 +2939,15 @@ PluginComponent {
         StyledText {
             id: resultValue
             text: tokenResult.value
-            width: Math.min(implicitWidth, parent.width * 0.55)
+            anchors.left: parent.left
             anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 4
             font.pixelSize: Theme.fontSizeSmall
             font.weight: Font.Medium
             color: Theme.surfaceText
             elide: Text.ElideRight
-            horizontalAlignment: Text.AlignRight
+            horizontalAlignment: Text.AlignLeft
         }
     }
 
@@ -2940,7 +2955,7 @@ PluginComponent {
         id: tokenRow
         property string value: ""
         property bool selectorOpen: false
-        height: selectorOpen ? 36 + tokenRangeFlow.implicitHeight + Theme.spacingXS : 32
+        height: selectorOpen ? 56 + tokenRangeFlow.implicitHeight + Theme.spacingXS : 52
         radius: Theme.cornerRadius
         color: Theme.withAlpha(Theme.surfaceVariant, 0.35)
         border.width: activeFocus ? 2 : 1
@@ -2956,7 +2971,7 @@ PluginComponent {
         Item {
             id: tokenRowHeader
             width: parent.width
-            height: 32
+            height: 26
             anchors.top: parent.top
         }
 
@@ -2978,7 +2993,7 @@ PluginComponent {
             text: root.tokenHistoryLabel()
             anchors.left: tokenSwitchIcon.right
             anchors.leftMargin: Theme.spacingXS
-            anchors.right: tokenValue.left
+            anchors.right: parent.right
             anchors.rightMargin: Theme.spacingS
             anchors.verticalCenter: tokenRowHeader.verticalCenter
             font.pixelSize: Theme.fontSizeSmall
@@ -2988,21 +3003,22 @@ PluginComponent {
         StyledText {
             id: tokenValue
             text: tokenRow.value
-            width: Math.min(implicitWidth, parent.width * 0.55)
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.spacingS
             anchors.right: parent.right
             anchors.rightMargin: Theme.spacingS
-            anchors.verticalCenter: tokenRowHeader.verticalCenter
+            anchors.top: tokenRowHeader.bottom
             font.pixelSize: Theme.fontSizeSmall
             font.weight: Font.Medium
             color: Theme.surfaceText
             elide: Text.ElideRight
-            horizontalAlignment: Text.AlignRight
+            horizontalAlignment: Text.AlignLeft
         }
         MouseArea {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: 32
+            height: 52
             cursorShape: Qt.PointingHandCursor
             onClicked: tokenRow.selectorOpen = !tokenRow.selectorOpen
         }
@@ -3014,7 +3030,7 @@ PluginComponent {
             anchors.leftMargin: Theme.spacingXS
             anchors.rightMargin: Theme.spacingXS
             anchors.top: parent.top
-            anchors.topMargin: 36
+            anchors.topMargin: 56
             spacing: Theme.spacingXS
             visible: tokenRow.selectorOpen
 
@@ -3445,7 +3461,7 @@ PluginComponent {
             visible: resetHover.hovered && !!root.resetTiming(bucket ? bucket.allowance : null, root.resetClock)
             delay: 400
             text: bucket && bucket.allowance
-                    ? "Reset: " + new Date(bucket.allowance.resetAt).toLocaleString()
+                    ? "Reset: " + root.formatShortDateTime(bucket.allowance.resetAt)
                         + (quotaBar.showTime
                            ? "\nThin bar: window time " + (root.showUsed ? "elapsed" : "remaining")
                              + " (not quota usage)" : "") : ""

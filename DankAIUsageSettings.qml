@@ -95,7 +95,7 @@ PluginSettings {
     ToggleSetting {
         settingKey: "includeCachedTokens"
         label: "Include cached tokens"
-        description: "Include cache read and cache creation tokens in displayed totals"
+        description: "Include cached tokens in combined totals. The Input / Cached / Output breakdown always shows cached tokens separately."
         defaultValue: false
     }
 
