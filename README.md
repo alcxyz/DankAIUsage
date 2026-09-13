@@ -1,8 +1,10 @@
 # DankAIUsage
 
-DankAIUsage is a [DankMaterialShell](https://github.com/AvengeMedia/DankMaterialShell)
-widget for Codex and Claude subscription quotas, extra-usage credits, and local
-token history. A small Go helper collects usage for the widget.
+A [DankMaterialShell](https://github.com/AvengeMedia/DankMaterialShell) widget
+for Codex and Claude subscription quotas, extra-usage credits, and local token
+history. A small Go helper (`dankaiusage`) collects the data using the
+provider CLIs and their existing local sign-ins. No proxy, no extra
+monitoring app.
 
 ![Advanced dropdown with Codex and Claude quotas, local token history, and reset controls](docs/screenshot.png)
 
@@ -10,177 +12,45 @@ token history. A small Go helper collects usage for the widget.
 
 ![AI Usage on the DankBar with provider logos and minimal quota percentages](docs/screenshot-bar.png)
 
-## Why this plugin?
+## What you get
 
-Choose DankAIUsage when you mainly use Codex and Claude and want a quota widget
-without installing a separate third-party usage-monitoring application or
-running a proxy service. Keeping the dependency footprint small is a design
-goal: this repository maintains both the DMS widget and its small Go helper,
-using the provider CLIs and their existing local sign-ins.
+- **Every limit the provider reports**, as a list of quota bars: Codex weekly
+  and model-scoped windows, Claude five-hour, weekly, model-scoped, and
+  extra-usage credits. Nothing is inferred from position in a response.
+- **Reset countdowns** inline on each row, exact time on hover, and colors
+  that turn to warning at 25% and error at 10% remaining.
+- **Simple or Advanced** dropdown, remembered. Advanced adds an overview,
+  local token history with an optional persistent tracked total, available
+  Codex resets, reset history, and diagnostics.
+- **Top bar** with provider logos and the quotas you choose; percentages
+  take the same warning colors.
+- **Left / Used** switch for all percentages and bars at once.
+- **Opt-in automation**: a one-shot Codex reset that fires once near expiry
+  or exhaustion, and Claude prime as a session-window scheduler. Both are off
+  by default.
+- **Local reset history** with an optional "What changed?" prompt, and an
+  optional, alpha-quality public reset feed.
 
-It brings their remaining allowances together, with local token history
-available in the same dropdown.
-It displays the limits each provider reports, including model-scoped windows,
-Claude extra-usage credits, and available Codex resets with their expiry.
-Left/Used adjusts the view while checking usage; persistent bar preferences live in plugin settings.
+The scope is deliberately two providers. Token history covers local CLI
+transcripts only, so it is not a complete account ledger. Subscription
+percentages come from the providers, never from token estimates.
 
-The scope is deliberately two providers. The Go helper uses the local Codex
-app server and Claude sign-in; it also exposes a JSON summary for terminal use.
-Install that helper alongside the widget. This is not a dependency-free plugin:
-it avoids an additional quota application, rather than eliminating the helper
-or provider CLIs.
-Token history covers local CLI
-activity, so it is not a complete account activity ledger. Claude prime is an
-optional session-scheduling feature that consumes usage and is off by default.
+## Install
 
-### Similar plugins
+The widget needs both the plugin files and the `dankaiusage` helper on the DMS
+process's `PATH`.
 
-Several registry plugins cover overlapping needs. Used/remaining views,
-provider logos, and configurable bar values are shared features, not exclusive
-to DankAIUsage. The dependency distinction is clearest against
-[CodexBar](https://github.com/zakstam/dms-codexbar#readme), which wraps the separate
-CodexBar CLI, and [CLIProxyAPI Quota](https://github.com/SpyrosPsarras/dms-cliproxy-quota#readme),
-which requires a CLIProxyAPI server with pi-bridge. Other plugins also use local
-provider sign-ins directly, so this is not a claim of fewer dependencies than
-every alternative. These options are worth considering for different setups:
-
-| Plugin | When it may fit your workflow |
-|---|---|
-| [AI Quotas](https://github.com/agneswd/dms-ai-quotas#readme) | You want additional providers and balances, with per-limit pinning and a used/remaining toggle. |
-| [AiOverviewControl](https://github.com/bernardopg/AiOverviewControl#readme) | You want a broader provider dashboard with quota notifications, usage analytics, and history export. |
-| [Claude Usage](https://github.com/bogdan-velicu/DankClaudeUsage#readme) | You want a focused Claude limit display with rings or numbers and support for existing Claude Code or OpenCode sign-ins. |
-| [Claude Code Usage](https://github.com/titeya/dms-claudecode#readme) | You want Claude pacing, daily activity charts, profile breakdowns, and estimated API costs. |
-| [CodexBar](https://github.com/zakstam/dms-codexbar#readme) | You already use the CodexBar CLI and want its quota output in DMS. |
-| [CLIProxyAPI Quota](https://github.com/SpyrosPsarras/dms-cliproxy-quota#readme) | You want to monitor accounts behind a CLIProxyAPI server running pi-bridge. |
-
-These comparisons describe the linked projects' documentation as reviewed in
-September 2026; check their current documentation for changes.
-
-## Features
-
-The dropdown has a remembered **Simple / Advanced** segmented switch under the
-header; both labels are visible and the active one is highlighted. Simple
-focuses on provider quota bars, percentages, reset countdowns, and warnings.
-Advanced adds the overall summary with an allowance ring, local token history
-and tracking controls, available reset details, and a set of collapsible
-sections at the bottom: reset history, public reset announcements (Alpha),
-and diagnostics. Bar preferences live in plugin settings. The header line shows when usage was last updated,
-whether it is stale, and (in Advanced) the next scheduled refresh. Failures
-and prompts that need a decision appear above the provider cards; routine
-information such as cached usage or local-history caveats uses neutral
-styling, while sign-in or refresh failures use warning and error colors.
-The dropdown scrolls when it would otherwise exceed the screen.
-New installations start in Simple; existing installations with a cached usage
-summary retain Advanced on upgrade. Either choice leaves the topbar layout,
-tracking, and automation settings unchanged. Armed Codex resets remain visible
-and cancellable in Simple, as do reset errors or unknown outcomes. Enabled
-Claude session scheduling is also indicated there.
-
-The main display is a provider-defined list of quota bars rather than a fixed
-session/weekly grid. Codex may expose its general subscription allowance
-as a weekly-only window alongside separate model-scoped limits. Claude exposes five-hour,
-weekly, model-scoped, and extra-usage credit limits. Missing buckets are omitted
-instead of inferred from their position in an API response. Token totals are
-kept as a secondary detail. Local history shows **Input / Cached / Output**:
-Input excludes cached tokens, and Cached always appears separately. This avoids
-counting Codex's cached subset twice and distinguishes Claude's additive cache
-accounting. **Include cached tokens** controls combined totals, not this split.
-Large cached counts describe repeatedly processed context, not new text output.
-
-The top bar uses provider logos. Claude's five-hour, weekly, and extra-usage
-credit values can each be enabled independently in plugin settings; these
-choices do not remove any quota bars from the dropdown. Compact mode retains
-one selected quota for each enabled provider rather than hiding a provider.
-The generic plugin icon and provider logos are independently configurable, so
-the bar can show either icon style, both styles, or text only.
-
-Use the **Left / Used** segmented switch in the dropdown to switch all quota percentages and progress
-bars together, including credits. Left is the default: 26% left fills 26% of the
-bar; Used shows 74% used and fills 74%. Credit details show the remaining balance
-or spending against the budget. Warning colors always reflect proximity to the
-limit, regardless of display mode.
-Both bar layouts show only the percentage, without repeating "left" or "used";
-the dropdown retains those labels.
-
-Click a **Local tokens** row to choose **5h**, **7d**, **30d**, or **90d** directly.
-These are rolling ranges across local conversations, not active-conversation
-totals or subscription reset windows. The configured history range remains
-available when it differs from the presets. The selection is remembered and
-does not make another provider request. The rows support keyboard activation
-and show unavailable or partial collection explicitly.
-
-In Advanced mode, the token-history selector above the provider cards controls
-one shared range. The Codex and Claude rows show read-only results for that range,
-including its label; they do not have separate selectors.
-
-### Optional tracked totals
-
-**Tracked total** is a separate, opt-in view. Tracking is **off by default**.
-Enable it in the token-range controls to seed a persistent total from retained
-Codex and Claude transcripts, without a 90-day cutoff. The start date records
-when tracking was enabled (labelled **Tracking enabled**); the seed can include older usage. Missing, deleted,
-or remote history cannot be recovered, so this is not called all-time usage.
-
-While enabled, normal refreshes add newly observed usage without counting the
-same events again. Saved totals survive deletion of the original transcripts.
-**Pause** retains the total and its duplicate-detection checkpoints; resuming
-does not backfill the explicitly paused interval. **Clear** requires confirmation,
-removes only tracking totals/checkpoints, and turns tracking off. It does not
-delete CLI transcripts, plugin preferences, or quota reset history.
-
-Tracking is local, with no extra database, service, or provider calls for its
-controls. It stores token counters, dates, and hashed event checkpoints—not
-prompts, credentials, raw session identifiers, or transcript contents. Partial
-seed history is disclosed rather than silently presented as complete.
-Enabled tracking scans retained transcripts, so it can take longer than the
-rolling views; checkpoint storage grows with observed usage. Usage deleted
-before a refresh observes it cannot be preserved.
-Late or changed Codex checkpoints behind an already observed session timestamp
-are conservatively skipped and flagged as partial coverage to avoid recounting.
-
-Tracking state lives in `$XDG_STATE_HOME/dankaiusage/token-tracking.json`, falling
-back to `~/.local/state/dankaiusage/token-tracking.json`. Keep it if you want the
-tracked period to survive a configuration reinstall; it is separate from both
-the quota-reset observation log and provider transcripts.
-
-Terminal controls use the same helper-owned state as the widget:
-
-```sh
-dankaiusage tracking status
-dankaiusage tracking enable
-dankaiusage tracking pause
-```
-
-The separate `dankaiusage tracking clear` command permanently clears this local
-tracked period and disables tracking. See
-[ADR-0012](docs/adr/ADR-0012-optional-persistent-token-totals.md) for the tracking
-scope and checkpoint policy.
-
-## Installation
-
-Install the plugin files in
-`~/.config/DankMaterialShell/plugins/DankAIUsage/`, then enable **AI Usage** in
-DMS plugin settings and add it to your bar. The widget also needs the
-`dankaiusage` helper on the DMS process's `PATH`; copying the QML files alone
-does not install the helper.
-
-### Nix
-
-Build the helper from this checkout with `nix build`, or install the released
-source with:
+**Nix**
 
 ```sh
 nix profile install github:alcxyz/DankAIUsage/main
 ```
 
-For a declarative setup, install the helper and plugin source together from
-the same pinned revision. This repository exposes `packages.<system>.default`
-for the helper; use the source directory for your DMS plugin configuration.
-The maintained `dms-plugins` aggregate exports this source as `srcs.aiusage`.
+For a declarative setup, this flake exposes `packages.<system>.default` for
+the helper; use the source directory as the DMS plugin. The maintained
+`dms-plugins` aggregate exports it as `srcs.aiusage`.
 
-### Manual
-
-With Go 1.22 or newer, build and install the helper from this checkout:
+**Manual** (Go 1.22 or newer)
 
 ```sh
 go build -o dankaiusage ./cmd/dankaiusage
@@ -188,377 +58,47 @@ install -Dm755 dankaiusage ~/.local/bin/dankaiusage
 ```
 
 Copy `plugin.json`, `DankAIUsageWidget.qml`, `DankAIUsageSettings.qml`, and
-`assets/` into the plugin directory above. Ensure `~/.local/bin` is on the
-shell's `PATH` before starting DMS.
-
-### Provider setup
-
-- Install and sign in to the CLI for each provider you enable: Codex, Claude
-  Code, or both. Disable providers you do not use in plugin settings.
-- Token history reads local CLI transcripts directly; `sqlite3` is not required.
-  Subscription percentages come from the provider, independently of those totals.
-- Claude prime is off by default. Enabling it makes small model requests that
-  consume usage to start session windows; it is not required to display quotas.
-
-### One-shot Codex reset
-
-The Codex dropdown includes **Auto-use one reset**, off by default. Hover the
-switch for the trigger rules; its status line appears only while it is armed,
-unknown, or reporting a problem. Turning it
-on selects the earliest-expiring available reset with a known ID and expiry.
-It waits until general Codex usage reaches 99%, or until ten minutes before
-that reset expires with some general allowance used in a window whose natural
-reset time is known and still in the future. It avoids the 99% trigger
-when a natural quota reset is already within ten minutes. Spark usage alone
-does not trigger it.
-
-The control turns off before its single redemption attempt, including if that
-attempt fails. After an uncertain result, check Codex's usage page before
-arming again. It never purchases credits or chooses another reset silently.
-Only the provider decides whether a window is eligible to reset.
-
-If you are considering a subscription change, see the cautious, anecdotal
-[upgrade timing note](docs/usage-tips.md#timing-a-codex-subscription-upgrade).
-
-Checks follow the selected usage refresh interval while DMS is running and
-Codex is visible. Sleeping,
-closing DMS, hiding Codex, or losing connectivity can miss the expiry; there is
-no separate background service. The timing balances retained allowance against
-a small safety margin, rather than guaranteeing the last possible moment.
-
-The helper owns the state, so restarting DMS does not forget an armed reset and
-multiple widget instances cannot independently redeem it. Terminal controls:
-
-```sh
-dankaiusage codex-reset status
-dankaiusage codex-reset arm
-dankaiusage codex-reset disarm
-```
-
-Requires a Codex CLI exposing the documented
-[earned-reset app-server method](https://learn.chatgpt.com/docs/app-server#8-earned-rate-limit-resets-chatgpt).
-Unsupported helpers or CLI versions show an error rather than using an
-undocumented endpoint.
-
-### Why does Spark have two bars?
-
-Spark has [separate usage limits](https://learn.chatgpt.com/docs/agent-configuration/speed#codex-spark).
-When Codex reports both five-hour and weekly Spark windows, the plugin shows
-both, independently of the general Codex allowance. These are live provider
-buckets, not hardcoded legacy quotas. A window disappears when the provider
-stops reporting it; identical percentages alone do not make two windows duplicates.
-
-### Reset history
-
-Expand **Reset history** at the bottom of the Advanced dropdown to see the latest eight observed events
-for your enabled providers. The helper keeps at most 200 events for 30 days,
-locally, without a separate service or database. History starts with the first
-observation; it cannot reconstruct earlier resets.
-
-Each entry includes the observation time, previous sample time where available,
-before/after allowance, and changes to the reset schedule or earned-reset count.
-Left/Used also controls historical allowance percentages.
-
-Reset-time fluctuations of up to five seconds are ignored as timing noise;
-actual allowance increases are still detected. Older noise events remain in
-Advanced history as **Minor reset-time adjustment**, with any notes preserved,
-but do not trigger a question. **Reset time changed** means the expected reset
-time moved, not that allowance was refilled. If the recorded percentage is
-unchanged, the status is **Reset time changed · usage unchanged**. Its details
-show usage once and the old/new reset times, not an unchanged percentage arrow.
-
-Observed Claude behavior: a reported reset time can move several hours later
-while allowance usage remains unchanged. This is a schedule observation, not
-proof of a refill or a known provider policy. Keep **Other reset events** checked
-to review repeats under **Reset time changed**. Compare the old/new reset times
-and observation interval; add an explanation only when the cause is known.
-The existing bounded history records these changes during normal polling—no
-extra requests or new notifications are needed. If it recurs, review and share
-only the relevant sanitized details; private notes should not be copied blindly.
-
-- **Scheduled window change:** a rollover consistent with the previous reset
-  schedule; inferred from snapshots.
-- **Unexpected replenishment:** allowance increased early. This can suggest a
-  provider-granted reset, but an external manual reset, account/plan change, or
-  corrected measurement cannot be ruled out.
-- **Likely reset redeemed:** an early general Codex refill coincided with fewer
-  available earned resets, and known expiry evidence does not explain the
-  decrease. This is an inference, not a confirmed manual action.
-- **Available resets changed:** the count changed; this alone cannot establish
-  whether credits were granted, redeemed, expired, or withdrawn.
-- **Plugin reset applied / outcome unknown:** the result of an explicit
-  one-shot plugin attempt, kept separate from inferred observations.
-
-The log records when a change was observed, not its exact occurrence time.
-Unchanged reset counts do not prove provider generosity: a new credit could
-offset a redemption. Sleep, unavailable data, caching, and gaps between polls
-can hide intermediate events. Automatic observations do not store credentials,
-account identifiers, prompts, or opaque reset-credit IDs.
-
-#### Public reset announcements (Alpha, optional)
-
-Enable **Public reset announcements (Alpha)** in settings to read the
-[TokenResets public feed](https://tokenresets.com/api/). It is off by default.
-This experimental integration includes public reports, advance alerts, and local
-reset matching. Third-party coverage and matching may be incomplete or incorrect.
-Do not rely on it to decide when to spend quota or redeem a reset. Alpha applies
-to these feed-dependent features, not to the entire plugin release.
-The feed host receives your IP address and ordinary request metadata, but the
-plugin sends no credentials, account data, usage totals, history or notes.
-See the service [privacy notice](https://tokenresets.com/privacy/).
-
-Checks run separately from quota collection every fifteen minutes with shared
-cooldowns and conditional caching. A feed outage cannot make your quotas
-unavailable. Public content uses XDG cache; request reservations and notification
-receipts use durable state. No additional application or login is required.
-
-Explicit upcoming resets marked verified by TokenResets can generate a DMS
-notification and appear in either dropdown mode. Times are displayed locally;
-unknown timing and eligibility stay unknown. Advanced also shows recent reports
-and links to the evidence. Corrections replace the previous snapshot; stale
-feeds cannot trigger alerts or matching. Completed historical reports do not
-generate notifications on installation or restart.
-
-Nearby public reset reports can appear alongside a clear local refill in
-Advanced history. This is a possible association, not confirmation of why your
-account changed. Original observations and your explanations are preserved.
-Banked-reset grants remain separate from immediate usage refills. There are no
-statistical predictions, rumor alerts, or feed-driven automation changes.
-
-#### Reset countdowns
-
-Widget dates and clock times use the user's Qt locale, including date order and
-12/24-hour conventions. The plugin does not infer a locale from the timezone or
-change system settings. For example, an English interface can use a Norwegian
-time locale. Diagnostic exports retain unambiguous UTC timestamps.
-
-Each quota row shows a locally updated countdown inline after its label; hover
-the row for the exact reset date and local time. Advanced mode also shows a
-thin, muted time progress bar under the quota bar when the window duration is
-known. Left shows time remaining;
-Used shows elapsed window time. This is separate from the colored quota bar.
-Unknown durations omit time progress, and overdue resets say “Reset due ·
-awaiting update” until fresh data arrives. These updates make no provider requests.
-
-#### Local diagnostics
-
-Expand **Advanced → Diagnostics** at the bottom of the dropdown to preview
-recent failures and recoveries.
-**Refresh report** reads local state only; it does not request provider usage.
-**Copy report** copies exactly the preview for you to review and share in an
-issue. Nothing is uploaded automatically. The same local report is available
-with `dankaiusage diagnostics`.
-
-Diagnostics retain at most 100 events for seven days in
-`$XDG_STATE_HOME/dankaiusage/diagnostics.json`, falling back to
-`~/.local/state/dankaiusage/diagnostics.json`. Files are owner-only and bounded;
-old events are pruned when diagnostics are accessed. Durable quota refresh
-reservations also belong in state, not disposable cache.
-
-Reports contain only event timestamps, provider names, predefined categories,
-HTTP status/cooldown information, and validated build identifiers. They exclude
-raw errors, responses, credentials, account IDs, paths, usage totals, prompts,
-and notes. Report timestamps use UTC (`Z`) for unambiguous issue reports.
-Timestamps can reveal activity times: preview before sharing.
-Local failures distinguish refresh-lock timeouts, invalid timestamps, invalid
-caches, and other state failures without including raw error details.
-Build identifiers distinguish development revisions; flake-less Nix packages
-use a public-source fingerprint. Diagnostics start with this version and cannot
-recover failures that were previously overwritten or never recorded.
-
-#### Explain an unexpected change
-
-Clear early refills and redemptions supported by a simultaneous drop in available
-resets are recorded quietly, without asking you to supply a cause. Optional
-explanations remain available in Advanced history. Missing or contradictory
-evidence, or unexplained companion changes, can still warrant a question.
-
-Both Simple and Advanced can show a compact **What changed?** prompt for the
-latest unexplained change observed within the last 24 hours. Related changes
-sampled together for one provider share a response. Ordinary scheduled resets,
-confirmed plugin actions, and reset-count drops fully explained by known expiry
-evidence do not prompt.
-
-Choose a relevant explanation: **Changed subscription**, **Used a reset
-elsewhere**, **Switched account/workspace**, **Provider announced a bonus/reset**,
-or **Not sure**. You can add a short optional note; it is stored locally with
-history, so do not include sensitive information. **Dismiss** hides the prompt
-without claiming a cause. Answering or dismissing the latest change does not
-bring up a queue of older prompts.
-
-Use **Explain / Edit explanation** in Advanced reset history to add context
-later or correct your choice. Explanations are labelled **user reported** and
-kept alongside the original observations, not substituted for them. They do not
-confirm provider generosity or establish that a reset was redeemed. Saving an
-explanation does not contact providers or change tracking or automation. A
-failed save leaves the draft available for retry. Explanations and notes expire
-with their events under the existing 30-day/200-event history limit.
-Existing history migrates automatically when saved. Older helpers cannot read
-the new history format, so keep the helper and widget updated together; a
-downgrade leaves the saved history intact rather than silently erasing notes.
-
-See [ADR-0014](docs/adr/ADR-0014-user-reported-history-explanations.md) for the
-grouping and attribution policy.
-
-The history file is `$XDG_STATE_HOME/dankaiusage/usage-history.json`, falling
-back to `~/.local/state/dankaiusage/usage-history.json`. Read the retained events
-without contacting either provider with `dankaiusage history`.
-
-## Settings
-
-Plugin settings control the refresh interval, token history period, enabled
-providers, cached-token totals, and compact mode. **Usage refresh interval**
-ranges from three to sixty minutes, with a marked five-minute default and a
-reset-to-default action. Longer intervals reduce regular network requests and
-local history scans, at the cost of less current information.
-
-The helper shares a per-provider cooldown across refresh paths and processes.
-Manual Refresh can reuse cached quotas; it does not bypass the minimum.
-An already scheduled cooldown is not shortened by changing the slider;
-subsequent requests use the new interval. Provider error backoff may extend
-the wait. Three minutes is a conservative
-minimum, not a guarantee against account restrictions. Claude's undocumented
-OAuth usage source has separate policy and compatibility risks regardless of
-polling frequency. Longer intervals also delay automatic reset checks and may
-miss a credit's expiry window; that feature remains best effort.
-Manage compact mode, provider logos, the plugin icon, and Claude quota selection
-under **Settings → Plugins → AI Usage**. Left / Used stays in the dropdown.
-
-In the plugin settings, each reported weekly
-limit has its own switch: **Weekly (all models)** and model-specific limits such
-as Fable. Show either, both, or neither. Choices are remembered by quota ID,
-including when a limit temporarily disappears. Compact mode selects only among
-enabled quotas; the dropdown still shows all quotas. The settings-menu weekly
-default applies to limits without an individual choice and preserves existing
-preferences on upgrade.
-Under **Top bar layout and icons**, choose the plugin icon, provider logos, both, or
-neither. Under **Claude quotas in the top bar**, select session, weekly, and credits
-independently. All available quotas remain visible in the dropdown.
-
-Reset History hides routine scheduled five-hour and weekly events by default.
-Its separate **Scheduled 5-hour resets** and **Scheduled weekly resets**
-checkboxes remember your choices. **Other reset events** is checked by default
-and includes unexpected refills, redemptions, timing changes, and unclassified
-windows. Uncheck all three to hide all events. Recording and retention are unchanged;
-the latest eight matching events are shown, so routine events do not crowd out
-unexpected refills or reset redemptions. Unknown window types follow Other.
-
-## Troubleshooting
-
-If Claude quotas disappear, run `claude auth status`. If signed out, run
-`claude auth login`. The helper backs off briefly after authentication errors;
-after the retry window expires, click Refresh in the dropdown or wait for the
-next automatic refresh. Restarting DMS is not required after signing in.
-
-If the widget cannot run its helper, check `dankaiusage version` from the same
-environment as DMS. For Nix installations, ensure the helper and plugin files
-come from the same revision. `dankaiusage summary --pretty` reports provider
-diagnostics under `meta`; a provider being available means its CLI is present,
-not necessarily that its account is signed in.
-
-## Data sources
-
-- Codex limits: queries the local Codex app server with
-  `account/rateLimits/read`. Windows are classified by their returned duration,
-  and available banked resets are shown with their expiry. Apply a reset from
-  Codex **Settings → Usage**, or explicitly arm the one-shot control above.
-- Claude limits: queries Anthropic's OAuth usage endpoint using the local
-  Claude Code sign-in (see
-  [ADR-0001](docs/adr/ADR-0001-claude-limits-from-oauth-usage-api.md)).
-  The helper prefers the structured `spend` object for extra-usage credits and
-  falls back to `extra_usage`, deduplicating both into one monetary quota bar.
-  The statusline JSON cached by `dankaiusage claude-statusline` is the
-  fallback source.
-- Token history: reads Codex session/archived-session JSONL and Claude project JSONL
-  transcripts from their normal CLI config locations. Claude token totals are
-  local Claude Code history only; usage from claude.ai, mobile, or other online
-  surfaces is not written to those transcripts and is not exposed through a
-  Claude CLI usage command.
-- CLI availability: reports whether `codex` and `claude` are on
-  `PATH`.
-
-For Claude limits the helper reads the Claude Code OAuth token from
-`~/.claude/.credentials.json` itself, uses it only for the usage request, and
-never prints or logs it. Everything it emits is aggregate local usage and
-subscription-window percentages.
-
-## Claude statusline (fallback)
-
-Claude Code passes statusline commands a JSON snapshot on stdin. This is the
-fallback limit source for setups where the usage endpoint is unavailable
-(for example macOS installs keeping credentials in the Keychain). Configure it
-to let DankAIUsage cache the rate-limit data without making extra model calls:
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "dankaiusage claude-statusline",
-    "padding": 0
-  }
-}
-```
-
-The cache is written to
-`$XDG_STATE_HOME/dankaiusage/claude-statusline.json`, or
-`~/.local/state/dankaiusage/claude-statusline.json` when `XDG_STATE_HOME` is
-unset.
-
-The statusline payload is produced by Claude Code after an interactive API
-response. If the cache does not exist yet, open Claude Code in a trusted
-workspace and send one message so Claude Code can pass fresh account limit data
-to `dankaiusage claude-statusline`.
-
-Claude prime deliberately starts a Claude subscription window with one tiny
-request. Originally a statusline-era limit workaround (see
-[ADR-0006](docs/adr/ADR-0006-opt-in-claude-prime.md)), it is now useful as a
-window scheduler: if you reliably use up every 5-hour window, auto-priming
-starts the next window's countdown as soon as the previous one closes instead
-of waiting for your next real request (see
-[ADR-0007](docs/adr/ADR-0007-auto-prime-as-window-scheduler.md)).
-
-```sh
-dankaiusage claude-prime
-```
-
-The command refuses to run unless the statusline command is configured. It
-skips without spending anything when account usage data already shows an
-active session window, when a prime ran within the last 15 minutes, or — if
-account data is unavailable — while the local prime timer is active.
-Otherwise, it sends one small `claude -p` prompt with safe mode, no
-session persistence, tools disabled, a tiny replacement system prompt, `sonnet`
-as the default model, prompt suggestions disabled, and a low budget cap. It
-then obtains account usage subject to the shared cooldown, and records a
-local five-hour session timer as the fallback guard. New account percentages
-may need to wait for the next eligible refresh. This spends a small amount of
-Claude usage by design.
-
-When the "Enable Claude prime" setting is on, the widget automatically runs the
-prime request whenever Claude is visible and no active session timer is known.
-Any current local Claude session with a future reset time prevents another
-automatic prime until that timer expires. After a successful prime, the cached
-five-hour session timer provides that reset time even when Claude statusline
-does not publish account limits. If an automatic prime fails without producing
-local usage, the widget does not keep retrying; use the Claude bolt or toggle
-the setting off and on to try again.
-
-## Build
-
-```sh
-nix build
-```
-
-or:
-
-```sh
-go build ./cmd/dankaiusage
-```
-
-## Usage
-
-```sh
-dankaiusage summary --period-days 7 --pretty
-```
-
-The widget polls that command and caches the last successful summary in DMS
-plugin state so the bar can render immediately after shell restart.
+`assets/` into `~/.config/DankMaterialShell/plugins/DankAIUsage/`. Make sure
+`~/.local/bin` is on the shell's `PATH` before starting DMS.
+
+Then enable **AI Usage** in DMS plugin settings and add it to your bar.
+
+## Set up providers
+
+1. Install and sign in to the CLI for each provider you use: `codex`,
+   `claude`, or both.
+2. Disable the provider you do not use under **Settings → Plugins → AI
+   Usage**.
+3. Optional: pick which Claude quotas appear in the top bar, and the refresh
+   interval (default five minutes).
+
+If Claude quotas disappear later, run `claude auth status` and sign in again
+if needed; the widget recovers on its next refresh.
+
+## Learn more
+
+| Topic | Read |
+|---|---|
+| Reading the dropdown: modes, quota bars, countdowns, local tokens, tracked totals | [docs/dropdown.md](docs/dropdown.md) |
+| Plugin settings, top-bar layout, Claude quota selection | [docs/settings.md](docs/settings.md) |
+| One-shot Codex reset | [docs/codex-reset.md](docs/codex-reset.md) |
+| Reset history, explaining changes, public announcements (Alpha) | [docs/reset-history.md](docs/reset-history.md) |
+| Where the numbers come from, refresh cooldown, Claude statusline fallback, Claude prime | [docs/data-sources.md](docs/data-sources.md) |
+| Troubleshooting and local diagnostics | [docs/diagnostics.md](docs/diagnostics.md) |
+| Helper CLI reference | [docs/cli.md](docs/cli.md) |
+| Similar plugins and when they fit better | [docs/similar-plugins.md](docs/similar-plugins.md) |
+| Anecdotal usage tips | [docs/usage-tips.md](docs/usage-tips.md) |
+| Design decisions | [docs/adr/README.md](docs/adr/README.md) |
+
+## Privacy in one paragraph
+
+The helper reads provider sign-ins locally and never prints credentials.
+Everything the widget stores is local and bounded: quota snapshots, reset
+observations, optional explanations, hashed token checkpoints, and a
+diagnostics log with no raw errors or identifiers. The only optional network
+call beyond the two providers is the public reset feed, which is off by
+default.
+
+## License
+
+[MIT](LICENSE)
