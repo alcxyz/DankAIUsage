@@ -35,6 +35,7 @@ PluginComponent {
     property bool compactPill: false
     property bool showUsed: false
     property bool historyShowScheduledShort: false
+    property bool historyShowOther: true
     property bool historyShowScheduledWeekly: false
     property bool historyOpen: false
     property bool announcementsOpen: false
@@ -116,6 +117,7 @@ PluginComponent {
     function loadSettings() {
         if (!pluginService || !pluginService.loadPluginData) return
         if (pluginService.loadPluginState) {
+            historyShowOther = pluginService.loadPluginState(pluginId, "historyShowOther", true) !== false
             historyShowScheduledShort = pluginService.loadPluginState(pluginId, "historyShowScheduledShort", false) === true
             historyShowScheduledWeekly = pluginService.loadPluginState(pluginId, "historyShowScheduledWeekly", false) === true
         }
@@ -1030,16 +1032,16 @@ PluginComponent {
 
     function historyMatchesFilters(event) {
         if (!event) return false
-        if (event.kind !== "scheduled_window") return true
+        if (event.kind !== "scheduled_window") return historyShowOther
         var bucket = typeof event.bucket === "string" ? event.bucket : ""
         if (bucket.endsWith("-5-hour")) return historyShowScheduledShort
         if (bucket.endsWith("-weekly")) return historyShowScheduledWeekly
-        // Unknown provider-defined windows stay visible; never guess from dates or labels.
-        return true
+        // Unknown windows belong to Other; never guess from dates or labels.
+        return historyShowOther
     }
 
     function setHistoryFilter(key, checked) {
-        if (key !== "historyShowScheduledShort" && key !== "historyShowScheduledWeekly") return
+        if (key !== "historyShowOther" && key !== "historyShowScheduledShort" && key !== "historyShowScheduledWeekly") return
         root[key] = checked === true
         if (pluginService && pluginService.savePluginState)
             pluginService.savePluginState(pluginId, key, root[key])
@@ -2416,6 +2418,11 @@ PluginComponent {
                                 width: parent.width
                                 spacing: Theme.spacingS
                                 HistoryCheckbox {
+                                    text: "Other reset events"
+                                    checked: root.historyShowOther
+                                    onClicked: root.setHistoryFilter("historyShowOther", checked)
+                                }
+                                HistoryCheckbox {
                                     text: "Scheduled 5-hour resets"
                                     checked: root.historyShowScheduledShort
                                     onClicked: root.setHistoryFilter("historyShowScheduledShort", checked)
@@ -2437,7 +2444,7 @@ PluginComponent {
                             StyledText {
                                 width: parent.width
                                 text: root.visibleHistory().length === 0
-                                        ? "No matching reset events. Scheduled events remain recorded regardless of these filters."
+                                        ? "No matching reset events. Filtering does not change recorded history."
                                         : "Latest 8 matching events · up to 30 days retained. Times show when changes were observed, not necessarily when they happened."
                                 textFormat: Text.PlainText
                                 font.pixelSize: Theme.fontSizeSmall

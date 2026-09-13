@@ -47,8 +47,9 @@ the plugin, without adding a monitoring service or another dependency.
 - Hide known scheduled five-hour and weekly events by default, with separate
   remembered checkboxes in Reset History to include each. Apply filters before
   the display limit and when hydrating groups. Retain all events normally;
-  unknown window types remain visible, and non-scheduled changes are not hidden
-  based on their duration. An open explanation editor remains accessible.
+  a third **Other reset events** checkbox defaults on and covers non-scheduled
+  events and unknown window types. All three may be unchecked. Non-scheduled
+  changes are not classified by duration. An open explanation editor remains accessible.
 
 ## Alternatives and consequences
 
