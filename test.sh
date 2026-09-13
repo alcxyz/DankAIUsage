@@ -120,7 +120,7 @@ assert 'savePluginState(pluginId, "tokenHistoryRange", tokenHistoryRange)' in co
 assert 'Keys.onSpacePressed: tokenRow.selectorOpen = !tokenRow.selectorOpen' in component_text
 assert 'model: root.tokenHistoryRangeChoices()' in component_text
 assert 'root.selectTokenHistoryRange(modelData.key)' in component_text
-assert 'height: selectorOpen ? 36 + tokenRangeFlow.implicitHeight + Theme.spacingXS : 32' in component_text
+assert 'height: selectorOpen ? 56 + tokenRangeFlow.implicitHeight + Theme.spacingXS : 52' in component_text
 assert 'anchors.verticalCenter: tokenRowHeader.verticalCenter' in component_text
 assert 'if (days === 7 || days === 30 || days === 90) return days + "d"' in component_text
 assert 'if (tokenHistoryRange === "period") return provider.period' in component_text
@@ -144,7 +144,7 @@ assert 'text: root.clearTrackingConfirm ? "Confirm clear" : "Clear tracked data"
 assert 'delete cachedSummary.tracking' in component_text
 assert 'Qt.callLater(root.refreshUsage)' in component_text
 assert 'Some tracked token data is incomplete.' in component_text
-assert 'The initial total may include older retained local history.' in component_text
+assert 'Includes imported local history from before tracking was enabled.' in component_text
 assert 'all-time' not in component_text.lower()
 
 # Refresh intervals remain seconds in storage/argv while the setting presents
@@ -733,6 +733,11 @@ if command -v node >/dev/null 2>&1; then
         pass "reset countdown and progress behavior"
     else
         fail "reset countdowns" "countdown or progress behavior failed"
+    fi
+    if node --test tests/token-display-ui.test.cjs; then
+        pass "token component display and locale formatting behavior"
+    else
+        fail "token display" "token components or locale formatting are inconsistent"
     fi
 fi
 VERSION="$(python3 -c 'import json; print(json.load(open("plugin.json", encoding="utf-8"))["version"])')"

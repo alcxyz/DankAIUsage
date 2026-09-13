@@ -81,10 +81,11 @@ session/weekly grid. Codex may expose its general subscription allowance
 as a weekly-only window alongside separate model-scoped limits. Claude exposes five-hour,
 weekly, model-scoped, and extra-usage credit limits. Missing buckets are omitted
 instead of inferred from their position in an API response. Token totals are
-kept as a secondary detail. Cached tokens are excluded from displayed totals by
-default because Claude Code can attach large cached prompt/context blocks to
-very small requests; enable "Include cached tokens" when you want to inspect
-that overhead.
+kept as a secondary detail. Local history shows **Input / Cached / Output**:
+Input excludes cached tokens, and Cached always appears separately. This avoids
+counting Codex's cached subset twice and distinguishes Claude's additive cache
+accounting. **Include cached tokens** controls combined totals, not this split.
+Large cached counts describe repeatedly processed context, not new text output.
 
 The top bar uses provider logos. Claude's five-hour, weekly, and extra-usage
 credit values can each be enabled independently in plugin settings; these
@@ -117,7 +118,7 @@ including its label; they do not have separate selectors.
 **Tracked total** is a separate, opt-in view. Tracking is **off by default**.
 Enable it in the token-range controls to seed a persistent total from retained
 Codex and Claude transcripts, without a 90-day cutoff. The start date records
-when tracking was enabled; the seed can include older usage. Missing, deleted,
+when tracking was enabled (labelled **Tracking enabled**); the seed can include older usage. Missing, deleted,
 or remote history cannot be recovered, so this is not called all-time usage.
 
 While enabled, normal refreshes add newly observed usage without counting the
@@ -321,6 +322,11 @@ Banked-reset grants remain separate from immediate usage refills. There are no
 statistical predictions, rumor alerts, or feed-driven automation changes.
 
 #### Reset countdowns
+
+Widget dates and clock times use the user's Qt locale, including date order and
+12/24-hour conventions. The plugin does not infer a locale from the timezone or
+change system settings. For example, an English interface can use a Norwegian
+time locale. Diagnostic exports retain unambiguous UTC timestamps.
 
 Each quota row shows a locally updated countdown inline after its label; hover
 the row for the exact reset date and local time. Advanced mode also shows a
