@@ -22,7 +22,7 @@ It brings their remaining allowances together, with local token history
 available in the same dropdown.
 It displays the limits each provider reports, including model-scoped windows,
 Claude extra-usage credits, and available Codex resets with their expiry.
-Left/Used and bar controls let you adjust the view while checking your usage.
+Left/Used adjusts the view while checking usage; persistent bar preferences live in plugin settings.
 
 The scope is deliberately two providers. The Go helper uses the local Codex
 app server and Claude sign-in; it also exposes a JSON summary for terminal use.
@@ -58,11 +58,18 @@ September 2026; check their current documentation for changes.
 
 ## Features
 
-The dropdown has a remembered **Simple / Advanced** toggle button. Its label
-shows the current mode; click to switch. Simple focuses on
-provider quota bars, percentages, reset countdowns, and warnings. Advanced adds
-the overall summary, local token history and tracking controls, available reset
-details, reset history, automation controls, and quick top-bar settings.
+The dropdown has a remembered **Simple / Advanced** segmented switch under the
+header; both labels are visible and the active one is highlighted. Simple
+focuses on provider quota bars, percentages, reset countdowns, and warnings.
+Advanced adds the overall summary with an allowance ring, local token history
+and tracking controls, available reset details, and a set of collapsible
+sections at the bottom: reset history, public reset announcements (Alpha),
+and diagnostics. Bar preferences live in plugin settings. The header line shows when usage was last updated,
+whether it is stale, and (in Advanced) the next scheduled refresh. Failures
+and prompts that need a decision appear above the provider cards; routine
+information such as cached usage or local-history caveats uses neutral
+styling, while sign-in or refresh failures use warning and error colors.
+The dropdown scrolls when it would otherwise exceed the screen.
 New installations start in Simple; existing installations with a cached usage
 summary retain Advanced on upgrade. Either choice leaves the topbar layout,
 tracking, and automation settings unchanged. Armed Codex resets remain visible
@@ -74,10 +81,11 @@ session/weekly grid. Codex may expose its general subscription allowance
 as a weekly-only window alongside separate model-scoped limits. Claude exposes five-hour,
 weekly, model-scoped, and extra-usage credit limits. Missing buckets are omitted
 instead of inferred from their position in an API response. Token totals are
-kept as a secondary detail. Cached tokens are excluded from displayed totals by
-default because Claude Code can attach large cached prompt/context blocks to
-very small requests; enable "Include cached tokens" when you want to inspect
-that overhead.
+kept as a secondary detail. Local history shows **Input / Cached / Output**:
+Input excludes cached tokens, and Cached always appears separately. This avoids
+counting Codex's cached subset twice and distinguishes Claude's additive cache
+accounting. **Include cached tokens** controls combined totals, not this split.
+Large cached counts describe repeatedly processed context, not new text output.
 
 The top bar uses provider logos. Claude's five-hour, weekly, and extra-usage
 credit values can each be enabled independently in plugin settings; these
@@ -86,7 +94,7 @@ one selected quota for each enabled provider rather than hiding a provider.
 The generic plugin icon and provider logos are independently configurable, so
 the bar can show either icon style, both styles, or text only.
 
-Click the **Left / Used** toggle in the dropdown to switch all quota percentages and progress
+Use the **Left / Used** segmented switch in the dropdown to switch all quota percentages and progress
 bars together, including credits. Left is the default: 26% left fills 26% of the
 bar; Used shows 74% used and fills 74%. Credit details show the remaining balance
 or spending against the budget. Warning colors always reflect proximity to the
@@ -101,12 +109,16 @@ available when it differs from the presets. The selection is remembered and
 does not make another provider request. The rows support keyboard activation
 and show unavailable or partial collection explicitly.
 
+In Advanced mode, the token-history selector above the provider cards controls
+one shared range. The Codex and Claude rows show read-only results for that range,
+including its label; they do not have separate selectors.
+
 ### Optional tracked totals
 
 **Tracked total** is a separate, opt-in view. Tracking is **off by default**.
 Enable it in the token-range controls to seed a persistent total from retained
 Codex and Claude transcripts, without a 90-day cutoff. The start date records
-when tracking was enabled; the seed can include older usage. Missing, deleted,
+when tracking was enabled (labelled **Tracking enabled**); the seed can include older usage. Missing, deleted,
 or remote history cannot be recovered, so this is not called all-time usage.
 
 While enabled, normal refreshes add newly observed usage without counting the
@@ -190,7 +202,9 @@ shell's `PATH` before starting DMS.
 
 ### One-shot Codex reset
 
-The Codex dropdown includes **Auto-use one reset**, off by default. Turning it
+The Codex dropdown includes **Auto-use one reset**, off by default. Hover the
+switch for the trigger rules; its status line appears only while it is armed,
+unknown, or reporting a problem. Turning it
 on selects the earliest-expiring available reset with a known ID and expiry.
 It waits until general Codex usage reaches 99%, or until ten minutes before
 that reset expires with some general allowance used in a window whose natural
@@ -236,7 +250,7 @@ stops reporting it; identical percentages alone do not make two windows duplicat
 
 ### Reset history
 
-Open **Reset history** in the Advanced dropdown to see the latest eight observed events
+Expand **Reset history** at the bottom of the Advanced dropdown to see the latest eight observed events
 for your enabled providers. The helper keeps at most 200 events for 30 days,
 locally, without a separate service or database. History starts with the first
 observation; it cannot reconstruct earlier resets.
@@ -249,7 +263,18 @@ Reset-time fluctuations of up to five seconds are ignored as timing noise;
 actual allowance increases are still detected. Older noise events remain in
 Advanced history as **Minor reset-time adjustment**, with any notes preserved,
 but do not trigger a question. **Reset time changed** means the expected reset
-time moved, not that allowance was refilled.
+time moved, not that allowance was refilled. If the recorded percentage is
+unchanged, the status is **Reset time changed · usage unchanged**. Its details
+show usage once and the old/new reset times, not an unchanged percentage arrow.
+
+Observed Claude behavior: a reported reset time can move several hours later
+while allowance usage remains unchanged. This is a schedule observation, not
+proof of a refill or a known provider policy. Keep **Other reset events** checked
+to review repeats under **Reset time changed**. Compare the old/new reset times
+and observation interval; add an explanation only when the cause is known.
+The existing bounded history records these changes during normal polling—no
+extra requests or new notifications are needed. If it recurs, review and share
+only the relevant sanitized details; private notes should not be copied blindly.
 
 - **Scheduled window change:** a rollover consistent with the previous reset
   schedule; inferred from snapshots.
@@ -270,7 +295,83 @@ offset a redemption. Sleep, unavailable data, caching, and gaps between polls
 can hide intermediate events. Automatic observations do not store credentials,
 account identifiers, prompts, or opaque reset-credit IDs.
 
+#### Public reset announcements (Alpha, optional)
+
+Enable **Public reset announcements (Alpha)** in settings to read the
+[TokenResets public feed](https://tokenresets.com/api/). It is off by default.
+This experimental integration includes public reports, advance alerts, and local
+reset matching. Third-party coverage and matching may be incomplete or incorrect.
+Do not rely on it to decide when to spend quota or redeem a reset. Alpha applies
+to these feed-dependent features, not to the entire plugin release.
+The feed host receives your IP address and ordinary request metadata, but the
+plugin sends no credentials, account data, usage totals, history or notes.
+See the service [privacy notice](https://tokenresets.com/privacy/).
+
+Checks run separately from quota collection every fifteen minutes with shared
+cooldowns and conditional caching. A feed outage cannot make your quotas
+unavailable. Public content uses XDG cache; request reservations and notification
+receipts use durable state. No additional application or login is required.
+
+Explicit upcoming resets marked verified by TokenResets can generate a DMS
+notification and appear in either dropdown mode. Times are displayed locally;
+unknown timing and eligibility stay unknown. Advanced also shows recent reports
+and links to the evidence. Corrections replace the previous snapshot; stale
+feeds cannot trigger alerts or matching. Completed historical reports do not
+generate notifications on installation or restart.
+
+Nearby public reset reports can appear alongside a clear local refill in
+Advanced history. This is a possible association, not confirmation of why your
+account changed. Original observations and your explanations are preserved.
+Banked-reset grants remain separate from immediate usage refills. There are no
+statistical predictions, rumor alerts, or feed-driven automation changes.
+
+#### Reset countdowns
+
+Widget dates and clock times use the user's Qt locale, including date order and
+12/24-hour conventions. The plugin does not infer a locale from the timezone or
+change system settings. For example, an English interface can use a Norwegian
+time locale. Diagnostic exports retain unambiguous UTC timestamps.
+
+Each quota row shows a locally updated countdown inline after its label; hover
+the row for the exact reset date and local time. Advanced mode also shows a
+thin, muted time progress bar under the quota bar when the window duration is
+known. Left shows time remaining;
+Used shows elapsed window time. This is separate from the colored quota bar.
+Unknown durations omit time progress, and overdue resets say “Reset due ·
+awaiting update” until fresh data arrives. These updates make no provider requests.
+
+#### Local diagnostics
+
+Expand **Advanced → Diagnostics** at the bottom of the dropdown to preview
+recent failures and recoveries.
+**Refresh report** reads local state only; it does not request provider usage.
+**Copy report** copies exactly the preview for you to review and share in an
+issue. Nothing is uploaded automatically. The same local report is available
+with `dankaiusage diagnostics`.
+
+Diagnostics retain at most 100 events for seven days in
+`$XDG_STATE_HOME/dankaiusage/diagnostics.json`, falling back to
+`~/.local/state/dankaiusage/diagnostics.json`. Files are owner-only and bounded;
+old events are pruned when diagnostics are accessed. Durable quota refresh
+reservations also belong in state, not disposable cache.
+
+Reports contain only event timestamps, provider names, predefined categories,
+HTTP status/cooldown information, and validated build identifiers. They exclude
+raw errors, responses, credentials, account IDs, paths, usage totals, prompts,
+and notes. Report timestamps use UTC (`Z`) for unambiguous issue reports.
+Timestamps can reveal activity times: preview before sharing.
+Local failures distinguish refresh-lock timeouts, invalid timestamps, invalid
+caches, and other state failures without including raw error details.
+Build identifiers distinguish development revisions; flake-less Nix packages
+use a public-source fingerprint. Diagnostics start with this version and cannot
+recover failures that were previously overwritten or never recorded.
+
 #### Explain an unexpected change
+
+Clear early refills and redemptions supported by a simultaneous drop in available
+resets are recorded quietly, without asking you to supply a cause. Optional
+explanations remain available in Advanced history. Missing or contradictory
+evidence, or unexplained companion changes, can still warrant a question.
 
 Both Simple and Advanced can show a compact **What changed?** prompt for the
 latest unexplained change observed within the last 24 hours. Related changes
@@ -320,13 +421,27 @@ minimum, not a guarantee against account restrictions. Claude's undocumented
 OAuth usage source has separate policy and compatibility risks regardless of
 polling frequency. Longer intervals also delay automatic reset checks and may
 miss a credit's expiry window; that feature remains best effort.
-The dropdown's **Bar controls** also offers immediate toggles for compact mode,
-provider logos, the plugin icon, and Claude session/weekly/credits selection.
-These controls save the same preferences as the plugin settings menu and do
-not need a data refresh. The Left / Used choice is saved as well.
-Under **Top bar: icons**, choose the plugin icon, provider logos, both, or
-neither. Under **Top bar: Claude quotas**, select session, weekly, and credits
+Manage compact mode, provider logos, the plugin icon, and Claude quota selection
+under **Settings → Plugins → AI Usage**. Left / Used stays in the dropdown.
+
+In the plugin settings, each reported weekly
+limit has its own switch: **Weekly (all models)** and model-specific limits such
+as Fable. Show either, both, or neither. Choices are remembered by quota ID,
+including when a limit temporarily disappears. Compact mode selects only among
+enabled quotas; the dropdown still shows all quotas. The settings-menu weekly
+default applies to limits without an individual choice and preserves existing
+preferences on upgrade.
+Under **Top bar layout and icons**, choose the plugin icon, provider logos, both, or
+neither. Under **Claude quotas in the top bar**, select session, weekly, and credits
 independently. All available quotas remain visible in the dropdown.
+
+Reset History hides routine scheduled five-hour and weekly events by default.
+Its separate **Scheduled 5-hour resets** and **Scheduled weekly resets**
+checkboxes remember your choices. **Other reset events** is checked by default
+and includes unexpected refills, redemptions, timing changes, and unclassified
+windows. Uncheck all three to hide all events. Recording and retention are unchanged;
+the latest eight matching events are shown, so routine events do not crowd out
+unexpected refills or reset redemptions. Unknown window types follow Other.
 
 ## Troubleshooting
 

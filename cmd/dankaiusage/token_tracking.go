@@ -70,11 +70,7 @@ type tokenTrackingScan struct {
 }
 
 func tokenTrackingPath() string {
-	if value := os.Getenv("XDG_STATE_HOME"); value != "" {
-		return filepath.Join(value, "dankaiusage", "token-tracking.json")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "dankaiusage", "token-tracking.json")
+	return filepath.Join(pluginStateDir(), "token-tracking.json")
 }
 
 func defaultTokenTrackingState() tokenTrackingState {

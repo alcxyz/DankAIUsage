@@ -33,6 +33,11 @@ both `spend` and `extra_usage` forms.
   ordering always use remaining allowance. Credit details retain the provider's
   formatted monetary values. Quick bar controls use the same saved preferences
   as the full settings menu.
+- Claude weekly top-bar selections are independently persisted by bucket ID.
+  The existing weekly preference remains the fallback for unconfigured buckets,
+  preserving upgrades and providing a default for newly reported limits. Quick
+  controls use provider labels rather than hard-coded model names. Both normal
+  and compact pills honor these choices; dropdown quota bars remain complete.
 
 ## Consequences
 

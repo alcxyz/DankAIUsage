@@ -431,7 +431,7 @@ func checkCodexReset(state *codexResetState, deps codexResetDeps) (*codexResetHi
 
 func readCodexLimitsForReset(deps codexResetDeps, requireFresh bool) (codexRateLimitsResult, usageRefreshInfo, codexResetClient, error) {
 	var client codexResetClient
-	limits, refresh, err := collectCachedCodexRateLimits(deps.RefreshPath, deps.Now(), deps.RefreshInterval, requireFresh, func() (codexRateLimitsResult, error) {
+	limits, refresh, err := collectCachedCodexRateLimitsWithClock(deps.RefreshPath, deps.RefreshInterval, requireFresh, func() (codexRateLimitsResult, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), deps.Timeout)
 		opened, openErr := deps.OpenClient(ctx)
 		if openErr != nil {
@@ -446,7 +446,7 @@ func readCodexLimitsForReset(deps codexResetDeps, requireFresh bool) (codexRateL
 			return codexRateLimitsResult{}, errors.New(safeCodexResetError(readErr))
 		}
 		return read, nil
-	})
+	}, deps.Now)
 	if err != nil && client != nil {
 		client.Close()
 		client = nil
@@ -581,11 +581,7 @@ func publicCodexResetStatus(state codexResetState) codexResetStatus {
 }
 
 func codexResetStatePath() string {
-	if value := os.Getenv("XDG_STATE_HOME"); value != "" {
-		return filepath.Join(value, "dankaiusage", "codex-reset.json")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "dankaiusage", "codex-reset.json")
+	return filepath.Join(pluginStateDir(), "codex-reset.json")
 }
 
 func withCodexResetLock(path string, fn func() error) error {

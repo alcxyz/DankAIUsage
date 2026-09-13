@@ -20,6 +20,12 @@ should be able to supply that context directly in the widget.
 - Offer explanations for ambiguous refills, reset-count changes, reset-schedule
   changes, and inferred external redemptions. Do not prompt for ordinary
   scheduled windows or confirmed plugin actions.
+- Record clear early allowance increases and supported inferred redemptions
+  quietly. Uncertainty about the ultimate cause alone does not justify a
+  question. Keep Explain / Edit available; do not infer generosity or silently
+  write user explanations. Missing or contradictory evidence and unexplained
+  companion events remain prompt candidates. Quiet latest groups must not
+  reveal older unanswered prompts.
 - Retained schedule-only events with a reset-time shift of at most five seconds
   and no allowance increase are marked as minor timing noise for presentation.
   Preserve their original facts, group identifiers and user explanations. Do not

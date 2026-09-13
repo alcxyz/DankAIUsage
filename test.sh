@@ -37,6 +37,7 @@ assert {"settings_read", "settings_write", "process"} <= set(plugin["permissions
 assert plugin["settings_schema"]["refreshInterval"]["minimum"] == 180
 assert plugin["settings_schema"]["refreshInterval"]["maximum"] == 3600
 assert plugin["settings_schema"]["refreshInterval"]["default"] == 300
+assert plugin["settings_schema"]["publicResetAnnouncements"] == {"type": "boolean", "default": False}
 
 component = pathlib.Path(plugin["component"].removeprefix("./"))
 settings = pathlib.Path(plugin["settings"].removeprefix("./"))
@@ -64,6 +65,19 @@ for screenshot in ("docs/screenshot.png", "docs/screenshot-simple.png", "docs/sc
 assert 'armed: false' in component_text
 assert '"dankaiusage", "codex-reset", action,' in component_text
 assert component_text.count('"--refresh-interval", "" + root.refreshInterval') == 3
+assert 'command: ["dankaiusage", "diagnostics"]' in component_text
+assert 'command: ["dankaiusage", "announcements", "--enabled"]' in component_text
+assert 'if (!publicResetAnnouncements || announcementProcess.running) return' in component_text
+assert 'interval: 900000' in component_text
+assert 'root._announcementOutput.length + data.length > 524288' in component_text
+assert 'The feed host sees your IP address' in settings_text
+assert 'command: ["dankaiusage", "diagnostics", "helper-failed"]' in component_text
+assert 'root._diagnosticOutput.length + data.length > 65536' in component_text
+assert 'result.available !== true || typeof result.report !== "string"' in component_text
+assert 'diagnosticPreview.copy()' in component_text
+assert 'text: root.diagnosticReport' in component_text
+assert 'Accessible.name: "Diagnostic report preview"' in component_text
+assert 'component DiagnosticsPanel: Column' in component_text
 assert 'runCodexReset("status")' in component_text
 assert 'if (showCodex && codexResetStatus.armed === true)' in component_text
 assert 'runCodexReset("check")' in component_text
@@ -90,6 +104,13 @@ assert 'allowanceLabel(buckets[i].allowance, false)' in component_text
 assert 'allowanceLabel(compactWeakest.allowance, false)' in component_text
 assert 'return allowanceLabel(bucket.allowance)' in component_text
 assert 'component TokenHistoryRow: StyledRect' in component_text
+assert component_text.count('TokenHistoryRow {') == 1, 'only the overview owns a range selector'
+assert component_text.count('TokenHistoryResult {') == 1, 'provider repeater uses read-only results'
+result_component = component_text.split('component TokenHistoryResult: Item {', 1)[1].split('component TokenHistoryRow:', 1)[0]
+assert 'root.tokenHistoryLabel()' in result_component
+assert 'Accessible.StaticText' in result_component
+for forbidden in ('MouseArea', 'onClicked', 'selectorOpen', 'selectTokenHistoryRange'):
+    assert forbidden not in result_component, 'provider token results must not be interactive'
 assert 'property string tokenHistoryRange: "7d"' in component_text
 for token_range in ('5h', '7d', '30d', '90d', 'tracked'):
     assert f'{{ key: "{token_range}"' in component_text
@@ -99,7 +120,7 @@ assert 'savePluginState(pluginId, "tokenHistoryRange", tokenHistoryRange)' in co
 assert 'Keys.onSpacePressed: tokenRow.selectorOpen = !tokenRow.selectorOpen' in component_text
 assert 'model: root.tokenHistoryRangeChoices()' in component_text
 assert 'root.selectTokenHistoryRange(modelData.key)' in component_text
-assert 'height: selectorOpen ? 36 + tokenRangeFlow.implicitHeight + Theme.spacingXS : 32' in component_text
+assert 'height: selectorOpen ? 56 + tokenRangeFlow.implicitHeight + Theme.spacingXS : 52' in component_text
 assert 'anchors.verticalCenter: tokenRowHeader.verticalCenter' in component_text
 assert 'if (days === 7 || days === 30 || days === 90) return days + "d"' in component_text
 assert 'if (tokenHistoryRange === "period") return provider.period' in component_text
@@ -123,7 +144,7 @@ assert 'text: root.clearTrackingConfirm ? "Confirm clear" : "Clear tracked data"
 assert 'delete cachedSummary.tracking' in component_text
 assert 'Qt.callLater(root.refreshUsage)' in component_text
 assert 'Some tracked token data is incomplete.' in component_text
-assert 'The initial total may include older retained local history.' in component_text
+assert 'Includes imported local history from before tracking was enabled.' in component_text
 assert 'all-time' not in component_text.lower()
 
 # Refresh intervals remain seconds in storage/argv while the setting presents
@@ -156,6 +177,12 @@ assert 'provider requests respect the selected interval' in component_text
 schema = plugin["settings_schema"]
 for key in schema:
     assert f'"{key}"' in component_text, f"component does not load {key}"
+    if key == "barClaudeWeeklyOverrides":
+        # Dynamic provider-defined choices belong in plugin settings.
+        assert schema[key] == {"type": "object", "default": {}}
+        assert 'barClaudeWeeklyOverrides' in settings_text
+        assert 'title: "Bar controls"' not in component_text
+        continue
     assert f'settingKey: "{key}"' in settings_text, f"settings UI does not expose {key}"
 
 for icon in (pathlib.Path("assets/openai.svg"), pathlib.Path("assets/claude.svg")):
@@ -230,7 +257,6 @@ for expected in (
     'onClicked: root.setDropdownMode(root.advancedDropdown ? "simple" : "advanced")',
     'text: root.showUsed ? "Used" : "Left"',
     'onClicked: root.setQuickSetting("showUsed", !root.showUsed)',
-    'visible: root.advancedDropdown && root.quickControlsOpen',
     'visible: root.advancedDropdown && root.tokenHistoryRange === "tracked"',
     'visible: root.advancedDropdown && root.providerResets(modelData).length > 0',
     'visible: modelData.id === "codex" && root.resetControlsVisible()',
@@ -292,6 +318,42 @@ function equal(actual, expected, description) {
 }
 
 const resolve = bindQmlFunction("resolveDropdownMode", {});
+const weeklyScope = {
+    barShowClaudeSession: true, barShowClaudeWeekly: true,
+    barShowClaudeCredits: false, barClaudeWeeklyOverrides: {},
+};
+const weeklyAll = {id: "general-weekly", allowance: {window: "weekly"}};
+const weeklyFable = {id: "fable-weekly", allowance: {window: "weekly"}};
+const weeklyFuture = {id: "future-weekly", allowance: {window: "weekly"}};
+const weeklyShown = bindQmlFunction("claudeBucketShownInBar", weeklyScope);
+equal(weeklyShown(weeklyAll), true, "legacy weekly selection includes general");
+equal(weeklyShown(weeklyFable), true, "legacy weekly selection includes scoped");
+for (const general of [false, true]) {
+    for (const scoped of [false, true]) {
+        weeklyScope.barClaudeWeeklyOverrides = {"general-weekly": general, "fable-weekly": scoped};
+        equal(weeklyShown(weeklyAll), general, "general weekly independent");
+        equal(weeklyShown(weeklyFable), scoped, "scoped weekly independent");
+    }
+}
+weeklyScope.barShowClaudeWeekly = false;
+equal(weeklyShown(weeklyFuture), false, "new limits inherit weekly default");
+equal(weeklyShown(weeklyFable), true, "explicit selection overrides default");
+weeklyScope.barClaudeWeeklyOverrides = {"general-weekly": false, "fable-weekly": true};
+equal(weeklyShown(weeklyAll), false, "saved general choice applied");
+equal(weeklyShown(weeklyFable), true, "saving preserves another weekly choice");
+weeklyScope.claudeBucketShownInBar = weeklyShown;
+weeklyScope.providerQuotaBuckets = bindQmlFunction("providerQuotaBuckets", {});
+weeklyScope.providerTopBarBuckets = bindQmlFunction("providerTopBarBuckets", weeklyScope);
+weeklyScope.visibleProviders = () => [{id: "claude", quotaBuckets: [weeklyAll, weeklyFable]}];
+weeklyScope.compactPill = true;
+weeklyScope.barShowProviderLogos = true;
+weeklyScope.knownAllowance = () => true;
+weeklyScope.quotaShortLabel = bucket => bucket.id;
+weeklyScope.allowanceLabel = () => "50%";
+const compactSegments = bindQmlFunction("topBarSegments", weeklyScope);
+equal(compactSegments()[0].text, "fable-weekly 50%", "compact ignores deselected general weekly");
+weeklyScope.barClaudeWeeklyOverrides = {"general-weekly": false, "fable-weekly": false};
+equal(compactSegments().length, 0, "no weekly segment when neither selected");
 equal(resolve("simple", {providers: []}), "simple", "persisted simple wins");
 equal(resolve("advanced", null), "advanced", "persisted advanced wins");
 equal(resolve("", {providers: []}), "advanced", "existing cached user migrates to advanced");
@@ -524,6 +586,7 @@ for (const name of [
     "historyProviderVisible",
     "hasHistoryExplanation",
     "latestExplanationPrompt",
+    "historyEventNeedsNoPrompt",
     "historyNoteRuneLength",
     "truncateHistoryNote",
 ]) scope[name] = bindQmlFunction(name, scope);
@@ -537,7 +600,7 @@ scope.historyExplanationError = "stale error";
 scope.beginHistoryExplanation = bindQmlFunction("beginHistoryExplanation", scope);
 
 function event({
-    kind = "allowance_increased_unknown",
+    kind = "window_changed_unknown",
     provider = "codex",
     observedAt = "2026-09-08T10:00:00Z",
     groupId = "group-a",
@@ -588,6 +651,19 @@ const latest = event({observedAt: "2026-09-08T11:00:00Z", groupId: "latest"});
 scope.usageHistory = [older, latest];
 equal(scope.latestExplanationPrompt(now).groupId, "latest", "newest visible eligible group prompts");
 
+const clearRefill = {...latest, kind: "allowance_increased_unknown", before: {usedPercent: 58}, after: {usedPercent: 0}};
+scope.usageHistory = [older, clearRefill];
+equal(scope.latestExplanationPrompt(now), null, "clear refill is quiet without exposing older prompts");
+const likelyRedemption = {...clearRefill, kind: "reset_redeemed_inferred", before: {usedPercent: 58, availableCredits: 2}, after: {usedPercent: 0, availableCredits: 1}};
+scope.usageHistory = [older, likelyRedemption];
+equal(scope.latestExplanationPrompt(now), null, "inferred redemption with matching evidence is quiet");
+scope.usageHistory = [clearRefill, {...latest, kind: "credits_changed"}];
+equal(scope.latestExplanationPrompt(now).groupId, "latest", "unexplained companion event still prompts");
+scope.usageHistory = [{...clearRefill, before: {usedPercent: null}}];
+equal(scope.latestExplanationPrompt(now).groupId, "latest", "missing refill evidence remains ambiguous");
+scope.usageHistory = [{...likelyRedemption, after: {usedPercent: 0, availableCredits: 2}}];
+equal(scope.latestExplanationPrompt(now).groupId, "latest", "contradictory redemption evidence still prompts");
+
 scope.usageHistory = [older, {...latest, explanation: {reason: "external_reset", source: "user"}}];
 equal(scope.latestExplanationPrompt(now), null, "answering latest does not reveal older unanswered group");
 scope.usageHistory = [older, {...latest, explanation: {reason: "dismissed", source: "user"}}];
@@ -599,6 +675,7 @@ equal(scope.latestExplanationPrompt(now), null, "legacy timing noise neither pro
 equal(scope.historyGroups(scope.usageHistory).length, 2, "timing noise remains in history");
 scope.usageHistory = [timingNoise, {...latest, kind: "credits_changed"}];
 equal(scope.latestExplanationPrompt(now).groupId, "latest", "mixed group with a genuine change still prompts");
+scope.historyTimeOnlyChange = bindQmlFunction("historyTimeOnlyChange", scope);
 const title = bindQmlFunction("historyEventTitle", scope);
 equal(title(timingNoise), "Minor reset-time adjustment", "legacy noise has an honest history label");
 equal(title({...latest, kind: "window_changed_unknown"}), "Reset time changed", "time adjustment is distinguished from refill");
@@ -641,6 +718,28 @@ else
 fi
 
 echo "Go helper"
+if command -v node >/dev/null 2>&1; then
+    if node --test tests/history-filters-ui.test.cjs; then
+        pass "history display filters"
+    else
+        fail "history display filters" "checkbox filtering failed"
+    fi
+    if node --test tests/announcements-ui.test.cjs; then
+        pass "public announcement selection and notification behavior"
+    else
+        fail "public announcements" "selection or notification behavior failed"
+    fi
+    if node --test tests/reset-time-ui.test.cjs; then
+        pass "reset countdown and progress behavior"
+    else
+        fail "reset countdowns" "countdown or progress behavior failed"
+    fi
+    if node --test tests/token-display-ui.test.cjs; then
+        pass "token component display and locale formatting behavior"
+    else
+        fail "token display" "token components or locale formatting are inconsistent"
+    fi
+fi
 VERSION="$(python3 -c 'import json; print(json.load(open("plugin.json", encoding="utf-8"))["version"])')"
 BINARY="$TEST_TMP/dankaiusage"
 if go build -ldflags "-X main.version=$VERSION" -o "$BINARY" ./cmd/dankaiusage; then
@@ -651,6 +750,17 @@ fi
 
 if [ -x "$BINARY" ]; then
     assert_eq "helper version matches plugin.json" "$VERSION" "$("$BINARY" version)"
+    if XDG_STATE_HOME="$TEST_TMP/diagnostic-state" "$BINARY" diagnostics | python3 -c '
+import json, sys
+report = json.load(sys.stdin)
+assert report["available"] is True
+assert "No diagnostics have been recorded" in report["report"]
+assert "DankAIUsage diagnostics" in report["report"]
+'; then
+        pass "local-only diagnostic CLI report"
+    else
+        fail "diagnostic CLI report" "safe report unavailable"
+    fi
 fi
 
 if go test ./...; then

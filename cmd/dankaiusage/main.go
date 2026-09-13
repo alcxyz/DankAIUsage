@@ -173,6 +173,14 @@ func main() {
 		runTokenTrackingCommand(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "diagnostics" {
+		runDiagnosticsCommand(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "announcements" {
+		runAnnouncementsCommand(os.Args[2:])
+		return
+	}
 
 	fs := flag.NewFlagSet("summary", flag.ExitOnError)
 	periodDays := fs.Int("period-days", 7, "rolling period length in days")
@@ -258,7 +266,7 @@ func collectCodex(now time.Time, opts options) ProviderUsage {
 	root := codexHome()
 	provider.DataPath = root
 	provider.historyObservedAt = time.Now()
-	if sessionLeft, weeklyLeft, extraLimits, resets, meta, observedAt, err := collectCodexSubscriptionLimits(now, opts.RefreshInterval); err == nil {
+	if sessionLeft, weeklyLeft, extraLimits, resets, meta, observedAt, err := collectCodexSubscriptionLimitsWithClock(now, opts.RefreshInterval, time.Now); err == nil {
 		provider.SessionLeft = sessionLeft
 		provider.WeeklyLeft = weeklyLeft
 		provider.ExtraLimits = extraLimits
@@ -310,7 +318,7 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 	root := claudeHome()
 	provider.DataPath = root
 	provider.historyObservedAt = time.Now()
-	sessionLeft, weeklyLeft, extraLimits, additionalBuckets, meta, observedAt, limitErr := collectClaudeSubscriptionLimits(now, opts.RefreshInterval)
+	sessionLeft, weeklyLeft, extraLimits, additionalBuckets, meta, observedAt, limitErr := collectClaudeSubscriptionLimitsWithClock(now, opts.RefreshInterval, time.Now)
 	provider.SessionLeft = sessionLeft
 	provider.WeeklyLeft = weeklyLeft
 	provider.ExtraLimits = extraLimits
@@ -812,8 +820,8 @@ type codexRateLimitResetCredit struct {
 	Description string `json:"description"`
 }
 
-func collectCodexSubscriptionLimits(now time.Time, refreshInterval time.Duration) (Allowance, Allowance, []ExtraLimit, []UsageReset, map[string]any, time.Time, error) {
-	limits, refresh, err := collectCachedCodexRateLimits(codexUsageCachePath(), now, refreshInterval, false, fetchCodexRateLimits)
+func collectCodexSubscriptionLimitsWithClock(now time.Time, refreshInterval time.Duration, clock usageRefreshClock) (Allowance, Allowance, []ExtraLimit, []UsageReset, map[string]any, time.Time, error) {
+	limits, refresh, err := collectCachedCodexRateLimitsWithClock(codexUsageCachePath(), refreshInterval, false, fetchCodexRateLimits, clock)
 	if err != nil {
 		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, usageRefreshMeta(refresh), refresh.FetchedAt, err
 	}
@@ -1217,7 +1225,7 @@ func primeClaudeStatusline(opts claudePrimeOptions) (claudePrimeResult, error) {
 		result.Message = "Claude prime ran recently; waiting for account usage data"
 		return result, nil
 	}
-	oauthSession, oauthWeekly, _, _, _, _, oauthErr := collectClaudeOAuthLimitsWithPolicy(now, opts.RefreshInterval, false)
+	oauthSession, oauthWeekly, _, _, _, _, oauthErr := collectClaudeOAuthLimitsWithClock(time.Now, opts.RefreshInterval, false)
 	if oauthErr == nil && allowanceActive(oauthSession, now) {
 		result.SessionLeft = oauthSession
 		result.WeeklyLeft = oauthWeekly
@@ -1460,20 +1468,19 @@ const claudeOAuthUsageStaleTTL = 30 * time.Minute
 const claudeFallbackCodeVersion = "2.1.185"
 
 type claudeOAuthUsageCache struct {
-	FetchedAt     string          `json:"fetchedAt,omitempty"`
-	Body          json.RawMessage `json:"body,omitempty"`
-	NextAttemptAt string          `json:"nextAttemptAt,omitempty"`
-	LastError     string          `json:"lastError,omitempty"`
-	ClaudeVersion string          `json:"claudeVersion,omitempty"`
-	Invalidated   bool            `json:"invalidated,omitempty"`
+	FetchedAt                 string          `json:"fetchedAt,omitempty"`
+	Body                      json.RawMessage `json:"body,omitempty"`
+	NextAttemptAt             string          `json:"nextAttemptAt,omitempty"`
+	LastError                 string          `json:"lastError,omitempty"`
+	DiagnosticCategory        string          `json:"diagnosticCategory,omitempty"`
+	DiagnosticHTTPStatus      int             `json:"diagnosticHttpStatus,omitempty"`
+	DiagnosticCooldownSeconds int64           `json:"diagnosticCooldownSeconds,omitempty"`
+	ClaudeVersion             string          `json:"claudeVersion,omitempty"`
+	Invalidated               bool            `json:"invalidated,omitempty"`
 }
 
 func claudeOAuthUsageCachePath() string {
-	if value := os.Getenv("XDG_STATE_HOME"); value != "" {
-		return filepath.Join(value, "dankaiusage", "claude-oauth-usage.json")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "dankaiusage", "claude-oauth-usage.json")
+	return filepath.Join(pluginStateDir(), "claude-oauth-usage.json")
 }
 
 func loadClaudeOAuthUsageCache(path string) claudeOAuthUsageCache {
@@ -1876,16 +1883,7 @@ func claudeOAuthAllowancesFromCache(path string, cache claudeOAuthUsageCache, no
 	return session, weekly, extras, additional, meta, nil
 }
 
-func collectClaudeOAuthLimits(now time.Time, intervals ...time.Duration) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, error) {
-	interval := usageRefreshDefaultInterval
-	if len(intervals) > 0 {
-		interval = intervals[0]
-	}
-	session, weekly, extras, additional, meta, _, err := collectClaudeOAuthLimitsWithPolicy(now, interval, false)
-	return session, weekly, extras, additional, meta, err
-}
-
-func collectClaudeOAuthLimitsWithPolicy(now time.Time, interval time.Duration, requireFresh bool) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, usageRefreshInfo, error) {
+func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Duration, requireFresh bool) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, usageRefreshInfo, error) {
 	interval = normalizeUsageRefreshInterval(interval)
 	path := claudeOAuthUsageCachePath()
 	var session Allowance
@@ -1895,7 +1893,11 @@ func collectClaudeOAuthLimitsWithPolicy(now time.Time, interval time.Duration, r
 	var meta map[string]any
 	var info usageRefreshInfo
 	var actionErr error
+	var recovered bool
 	err := withUsageRefreshLock(path, func() error {
+		// A concurrent refresh may be newer than this summary's start time.
+		// Sample under the lock before validating or reserving shared state.
+		now := clock()
 		cache, err := loadClaudeOAuthUsageCacheStrict(path)
 		if err != nil {
 			return err
@@ -1916,10 +1918,15 @@ func collectClaudeOAuthLimitsWithPolicy(now time.Time, interval time.Duration, r
 			nextAttemptAt = configuredNext
 		}
 		if fetchedAt.After(now) {
-			return fmt.Errorf("%w: Claude cache future timestamp", errUsageRefreshState)
+			return fmt.Errorf("%w: %w: Claude cache future timestamp", errUsageRefreshState, errUsageRefreshTimestamp)
 		}
 		info = usageRefreshInfo{
 			FetchedAt: fetchedAt, NextAttemptAt: nextAttemptAt, LastError: cache.LastError,
+			DiagnosticCategory: cache.DiagnosticCategory, DiagnosticHTTPStatus: cache.DiagnosticHTTPStatus,
+			DiagnosticCooldownSeconds: cache.DiagnosticCooldownSeconds,
+		}
+		if info.DiagnosticCategory == "" && cache.LastError != "" {
+			info.DiagnosticCategory = "provider_unavailable"
 		}
 		cacheUsable := len(cache.Body) > 0 && !fetchedAt.IsZero() && !cache.Invalidated
 		staleTTL := max(claudeOAuthUsageStaleTTL, 2*interval)
@@ -1950,6 +1957,9 @@ func collectClaudeOAuthLimitsWithPolicy(now time.Time, interval time.Duration, r
 		token, subscription, err := readClaudeOAuthToken(now)
 		if err != nil {
 			cache.LastError = err.Error()
+			cache.DiagnosticCategory, cache.DiagnosticHTTPStatus = classifyDiagnosticError("claude", err)
+			cache.DiagnosticCooldownSeconds = int64(interval / time.Second)
+			info.DiagnosticCategory, info.DiagnosticHTTPStatus, info.DiagnosticCooldownSeconds = cache.DiagnosticCategory, cache.DiagnosticHTTPStatus, cache.DiagnosticCooldownSeconds
 			if saveErr := saveClaudeOAuthUsageCache(path, cache); saveErr != nil {
 				return errors.New("could not save Claude usage refresh failure")
 			}
@@ -1970,6 +1980,9 @@ func collectClaudeOAuthLimitsWithPolicy(now time.Time, interval time.Duration, r
 		if err != nil {
 			cache.LastError = err.Error()
 			retryAt := now.Add(max(interval, backoff))
+			cache.DiagnosticCategory, cache.DiagnosticHTTPStatus = classifyDiagnosticError("claude", err)
+			cache.DiagnosticCooldownSeconds = min(int64(max(interval, backoff)/time.Second), int64(diagnosticMaxCooldown/time.Second))
+			info.DiagnosticCategory, info.DiagnosticHTTPStatus, info.DiagnosticCooldownSeconds = cache.DiagnosticCategory, cache.DiagnosticHTTPStatus, cache.DiagnosticCooldownSeconds
 			cache.NextAttemptAt = retryAt.UTC().Format(time.RFC3339Nano)
 			info.NextAttemptAt = retryAt
 			if saveErr := saveClaudeOAuthUsageCache(path, cache); saveErr != nil {
@@ -1990,6 +2003,10 @@ func collectClaudeOAuthLimitsWithPolicy(now time.Time, interval time.Duration, r
 		session, weekly, extras, additional, err = parseClaudeOAuthUsage(body, now)
 		if err != nil {
 			cache.LastError = "Claude usage API returned an unsupported response"
+			cache.DiagnosticCategory = "invalid_response"
+			cache.DiagnosticHTTPStatus = 0
+			cache.DiagnosticCooldownSeconds = int64(max(interval, 5*time.Minute) / time.Second)
+			info.DiagnosticCategory, info.DiagnosticHTTPStatus, info.DiagnosticCooldownSeconds = cache.DiagnosticCategory, cache.DiagnosticHTTPStatus, cache.DiagnosticCooldownSeconds
 			cache.NextAttemptAt = now.Add(max(interval, 5*time.Minute)).UTC().Format(time.RFC3339Nano)
 			if saveErr := saveClaudeOAuthUsageCache(path, cache); saveErr != nil {
 				return errors.New("could not save Claude usage refresh failure")
@@ -2006,10 +2023,14 @@ func collectClaudeOAuthLimitsWithPolicy(now time.Time, interval time.Duration, r
 			actionErr = errors.New(cache.LastError)
 			return nil
 		}
+		recovered = cache.LastError != "" || cache.DiagnosticCategory != ""
 		cache.Body = body
 		cache.FetchedAt = now.UTC().Format(time.RFC3339Nano)
 		cache.NextAttemptAt = now.Add(interval).UTC().Format(time.RFC3339Nano)
 		cache.LastError = ""
+		cache.DiagnosticCategory = ""
+		cache.DiagnosticHTTPStatus = 0
+		cache.DiagnosticCooldownSeconds = 0
 		cache.Invalidated = false
 		if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
 			return errors.New("could not save refreshed Claude usage")
@@ -2023,11 +2044,14 @@ func collectClaudeOAuthLimitsWithPolicy(now time.Time, interval time.Duration, r
 		return nil
 	})
 	if err != nil {
+		emitUsageRefreshDiagnostics("claude", info, err, nil, false)
+		now := clock()
 		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, usageRefreshInfo{}, err
 	}
 	if actionErr != nil && errors.Is(actionErr, errUsageRefreshCoolingDown) {
 		meta = usageRefreshMeta(info)
 	}
+	emitUsageRefreshDiagnostics("claude", info, nil, actionErr, recovered)
 	return session, weekly, extras, additional, meta, info, actionErr
 }
 
@@ -2061,8 +2085,8 @@ func invalidateClaudeUsageCache(path string, now time.Time, interval time.Durati
 	})
 }
 
-func collectClaudeSubscriptionLimits(now time.Time, refreshInterval time.Duration) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, time.Time, error) {
-	session, weekly, extras, additional, meta, info, err := collectClaudeOAuthLimitsWithPolicy(now, refreshInterval, false)
+func collectClaudeSubscriptionLimitsWithClock(now time.Time, refreshInterval time.Duration, clock usageRefreshClock) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, time.Time, error) {
+	session, weekly, extras, additional, meta, info, err := collectClaudeOAuthLimitsWithClock(clock, refreshInterval, false)
 	if err == nil {
 		return session, weekly, extras, additional, meta, info.FetchedAt, nil
 	}
@@ -2239,19 +2263,11 @@ func stringValue(value any) string {
 }
 
 func claudeStatuslineCachePath() string {
-	if value := os.Getenv("XDG_STATE_HOME"); value != "" {
-		return filepath.Join(value, "dankaiusage", "claude-statusline.json")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "dankaiusage", "claude-statusline.json")
+	return filepath.Join(pluginStateDir(), "claude-statusline.json")
 }
 
 func claudePrimeCachePath() string {
-	if value := os.Getenv("XDG_STATE_HOME"); value != "" {
-		return filepath.Join(value, "dankaiusage", "claude-prime.json")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "dankaiusage", "claude-prime.json")
+	return filepath.Join(pluginStateDir(), "claude-prime.json")
 }
 
 func claudeStatuslineSettings() (bool, string) {

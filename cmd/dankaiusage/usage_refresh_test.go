@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -218,6 +219,36 @@ func TestCollectCachedCodexRateLimitsConcurrentCallersFetchOnce(t *testing.T) {
 	}
 }
 
+func TestCollectCachedCodexRateLimitsUsesTimeSampledAfterLock(t *testing.T) {
+	startedAt := mustParseTime(t, "2026-09-09T12:00:00Z")
+	lockedAt := startedAt.Add(time.Millisecond)
+	path := filepath.Join(t.TempDir(), "codex-usage.json")
+	cached := usageRefreshTestResult("newer-writer")
+	if err := saveCodexUsageCache(path, codexUsageCache{
+		Version:   usageRefreshCacheVersion,
+		FetchedAt: lockedAt.UTC().Format(time.RFC3339Nano),
+		Result:    &cached,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fetched := false
+	got, info, err := collectCachedCodexRateLimitsWithClock(path, 5*time.Minute, false, func() (codexRateLimitsResult, error) {
+		fetched = true
+		return usageRefreshTestResult("unexpected"), nil
+	}, clockAssertedUnderUsageRefreshLock(t, path, lockedAt))
+	if err != nil || fetched || !info.Cached || got.RateLimits.LimitID != "newer-writer" {
+		t.Fatalf("collect = %+v, info = %+v, err = %v, fetch called = %v", got, info, err, fetched)
+	}
+
+	_, _, err = collectCachedCodexRateLimitsWithClock(path, 5*time.Minute, false, func() (codexRateLimitsResult, error) {
+		return usageRefreshTestResult("unexpected"), nil
+	}, fixedUsageRefreshClock(startedAt))
+	if !errors.Is(err, errUsageRefreshTimestamp) || !errors.Is(err, errUsageRefreshState) {
+		t.Fatalf("genuinely future cache error = %v, want timestamp and state sentinels", err)
+	}
+}
+
 func TestCollectCachedCodexRateLimitsPersistsReservationOnFetchError(t *testing.T) {
 	now := mustParseTime(t, "2026-09-09T12:00:00Z")
 	path := filepath.Join(t.TempDir(), "codex-usage.json")
@@ -402,4 +433,49 @@ func TestCollectCachedCodexRateLimitsRetainsSelectedLongInterval(t *testing.T) {
 
 func usageRefreshTestResult(id string) codexRateLimitsResult {
 	return codexRateLimitsResult{RateLimits: codexRateLimitSnapshot{LimitID: id}}
+}
+
+func fixedUsageRefreshClock(now time.Time) usageRefreshClock {
+	return func() time.Time { return now }
+}
+
+func clockAssertedUnderUsageRefreshLock(t *testing.T, path string, now time.Time) usageRefreshClock {
+	t.Helper()
+	return func() time.Time {
+		lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer lock.Close()
+		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+			t.Fatal("refresh clock was sampled before acquiring the provider lock")
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			t.Fatalf("check provider lock: %v", err)
+		}
+		return now
+	}
+}
+
+func collectCachedCodexRateLimits(path string, now time.Time, interval time.Duration, requireFresh bool, fetch func() (codexRateLimitsResult, error)) (codexRateLimitsResult, usageRefreshInfo, error) {
+	return collectCachedCodexRateLimitsWithClock(path, interval, requireFresh, fetch, fixedUsageRefreshClock(now))
+}
+
+func collectClaudeOAuthLimits(now time.Time, intervals ...time.Duration) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, error) {
+	interval := usageRefreshDefaultInterval
+	if len(intervals) > 0 {
+		interval = intervals[0]
+	}
+	session, weekly, extras, additional, meta, _, err := collectClaudeOAuthLimitsWithPolicy(now, interval, false)
+	return session, weekly, extras, additional, meta, err
+}
+
+func collectClaudeOAuthLimitsWithPolicy(now time.Time, interval time.Duration, requireFresh bool) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, usageRefreshInfo, error) {
+	return collectClaudeOAuthLimitsWithClock(fixedUsageRefreshClock(now), interval, requireFresh)
+}
+
+func collectClaudeSubscriptionLimits(now time.Time, refreshInterval time.Duration) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, time.Time, error) {
+	return collectClaudeSubscriptionLimitsWithClock(now, refreshInterval, fixedUsageRefreshClock(now))
 }

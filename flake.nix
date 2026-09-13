@@ -13,7 +13,10 @@
         version = (builtins.fromJSON (builtins.readFile ./plugin.json)).version;
       in {
         packages = rec {
-          dankaiusage = pkgs.callPackage ./default.nix { inherit version; };
+          dankaiusage = pkgs.callPackage ./default.nix {
+            inherit version;
+            revision = self.rev or self.dirtyRev or "unknown";
+          };
           default = dankaiusage;
         };
 
