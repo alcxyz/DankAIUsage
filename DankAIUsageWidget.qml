@@ -506,7 +506,7 @@ PluginComponent {
             receipts[key] = now
             announcementReceipts = receipts
             pluginService.savePluginState(pluginId, "announcementReceipts", receipts)
-            ToastService.showInfo("Public reset announcement",
+            ToastService.showInfo("Public reset announcement (Alpha)",
                     (event.provider === "codex" ? "Codex" : "Claude") + " reset announced by "
                     + formatShortDateTime(event.expectedBy) + ". Reported via TokenResets; check eligibility in the dropdown.")
         }
@@ -2104,7 +2104,7 @@ PluginComponent {
                                 width: parent.width
                                 text: upcomingAnnouncementCard.event
                                         ? root.announcementSummary(upcomingAnnouncementCard.event)
-                                          + "\nVerified by TokenResets · account eligibility unverified" : ""
+                                          + "\nAlpha · verified by TokenResets · account eligibility unverified" : ""
                                 textFormat: Text.PlainText
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
@@ -2555,7 +2555,7 @@ PluginComponent {
                                             text: publicContext ? (publicContext.confidence === "verified"
                                                     ? "Likely linked to announced reset"
                                                     : "Public reset reported near this observation")
-                                                    + " · via TokenResets · account eligibility unverified\n" + root.announcementSummary(publicContext) : ""
+                                                    + " · Alpha · via TokenResets · account eligibility unverified\n" + root.announcementSummary(publicContext) : ""
                                             textFormat: Text.PlainText
                                             color: Theme.surfaceVariantText
                                             font.pixelSize: Theme.fontSizeSmall
@@ -2598,7 +2598,7 @@ PluginComponent {
 
                         SectionHeader {
                             width: parent.width
-                            title: "Public reset announcements"
+                            title: "Public reset announcements (Alpha)"
                             badge: root.visibleAnnouncements().length ? "" + root.visibleAnnouncements().length : ""
                             expanded: root.announcementsOpen
                             visible: root.advancedDropdown && root.publicResetAnnouncements
