@@ -39,6 +39,8 @@ PluginComponent {
     property bool historyShowScheduledWeekly: false
     property bool historyOpen: false
     property bool announcementsOpen: false
+    property var historyReadKeys: []
+    property var announcementsReadKeys: []
     property int popoutMaxHeightFallback: 720
     property bool publicResetAnnouncements: false
     property var publicAnnouncements: []
@@ -178,6 +180,8 @@ PluginComponent {
 
     function loadCache() {
         if (!pluginService || !pluginService.loadPluginState) return
+        historyReadKeys = normalizedReadKeys(pluginService.loadPluginState(pluginId, "historyReadKeys", []))
+        announcementsReadKeys = normalizedReadKeys(pluginService.loadPluginState(pluginId, "announcementsReadKeys", []))
         var cached = pluginService.loadPluginState(pluginId, "lastSummary", null)
         dropdownMode = resolveDropdownMode(pluginService.loadPluginState(pluginId, "dropdownMode", ""), cached)
         // Persist before the first summary so a new installation stays Simple.
@@ -199,6 +203,38 @@ PluginComponent {
     function resolveDropdownMode(savedMode, cachedSummary) {
         if (savedMode === "simple" || savedMode === "advanced") return savedMode
         return cachedSummary && cachedSummary.providers ? "advanced" : "simple"
+    }
+
+    function normalizedReadKeys(value) {
+        if (!Array.isArray(value)) return []
+        return value.filter(function(key) {
+            return typeof key === "string" && key.length > 0 && key.length <= 2048
+        }).slice(-200)
+    }
+
+    function sectionReadKeys(section, items) {
+        return items.map(function(event) {
+            if (section === "announcements") return JSON.stringify([event.id, event.revision])
+            // Explanations and display labels can change without creating a new event.
+            return JSON.stringify([event.provider, event.observedAt, event.bucket || "",
+                event.kind, event.source || "", event.groupId || ""])
+        })
+    }
+
+    function unreadSectionCount(keys, readKeys) {
+        return keys.filter(function(key) { return readKeys.indexOf(key) < 0 }).length
+    }
+
+    function markSectionRead(section, keys) {
+        if (section !== "history" && section !== "announcements") return
+        var property = section + "ReadKeys"
+        var previous = root[property]
+        if (unreadSectionCount(keys, previous) === 0) return
+        var retained = previous.filter(function(key) { return keys.indexOf(key) < 0 })
+        var updated = normalizedReadKeys(retained.concat(keys))
+        root[property] = updated
+        if (pluginService && pluginService.savePluginState)
+            pluginService.savePluginState(pluginId, property, updated)
     }
 
     function setDropdownMode(mode) {
@@ -1878,6 +1914,7 @@ PluginComponent {
         Item {
             id: popoutRoot
             property var parentPopout: null
+            readonly property bool popoutVisible: parentPopout ? parentPopout.shouldBeVisible : false
             implicitHeight: Math.min(popoutColumn.implicitHeight, root.popoutMaxHeight(parentPopout))
 
             DankFlickable {
@@ -2454,7 +2491,7 @@ PluginComponent {
                         SectionHeader {
                             width: parent.width
                             title: "Reset history"
-                            badge: root.visibleHistory().length ? "" + root.visibleHistory().length : ""
+                            badge: historySection.unreadCount ? "" + historySection.unreadCount : ""
                             expanded: root.historyOpen || (root.historyExplanationGroup !== null
                                     && root.historyExplanationLocation !== "prompt")
                             onClicked: {
@@ -2465,6 +2502,19 @@ PluginComponent {
                         }
 
                         Column {
+                            id: historySection
+                            readonly property var groups: root.historyGroupsForDisplay()
+                            readonly property var readKeys: root.sectionReadKeys("history", groups.reduce(function(events, group) {
+                                return events.concat(group.events)
+                            }, []))
+                            readonly property int unreadCount: root.unreadSectionCount(readKeys, root.historyReadKeys)
+                            readonly property bool reading: popoutRoot.popoutVisible && visible
+                            onReadingChanged: if (reading) Qt.callLater(markRead)
+                            onReadKeysChanged: if (reading) Qt.callLater(markRead)
+                            function markRead() {
+                                if (reading) root.markSectionRead("history", readKeys)
+                            }
+
                             width: parent.width
                             spacing: Theme.spacingS
                             visible: root.historyOpen || (root.historyExplanationGroup !== null
@@ -2509,7 +2559,7 @@ PluginComponent {
                             }
 
                             Repeater {
-                                model: root.historyGroupsForDisplay()
+                                model: historySection.groups
 
                                 StyledRect {
                                     id: historyGroupCard
@@ -2627,13 +2677,24 @@ PluginComponent {
                         SectionHeader {
                             width: parent.width
                             title: "Public reset announcements (Alpha)"
-                            badge: root.visibleAnnouncements().length ? "" + root.visibleAnnouncements().length : ""
+                            badge: announcementsSection.unreadCount ? "" + announcementsSection.unreadCount : ""
                             expanded: root.announcementsOpen
                             visible: root.advancedDropdown && root.publicResetAnnouncements
                             onClicked: root.announcementsOpen = !root.announcementsOpen
                         }
 
                         Column {
+                            id: announcementsSection
+                            readonly property var items: root.visibleAnnouncements()
+                            readonly property var readKeys: root.sectionReadKeys("announcements", items)
+                            readonly property int unreadCount: root.unreadSectionCount(readKeys, root.announcementsReadKeys)
+                            readonly property bool reading: popoutRoot.popoutVisible && visible
+                            onReadingChanged: if (reading) Qt.callLater(markRead)
+                            onReadKeysChanged: if (reading) Qt.callLater(markRead)
+                            function markRead() {
+                                if (reading) root.markSectionRead("announcements", readKeys)
+                            }
+
                             width: parent.width
                             spacing: Theme.spacingS
                             visible: root.advancedDropdown && root.publicResetAnnouncements && root.announcementsOpen
@@ -2649,7 +2710,7 @@ PluginComponent {
                             }
 
                             Repeater {
-                                model: root.visibleAnnouncements()
+                                model: announcementsSection.items
                                 delegate: StyledRect {
                                     required property var modelData
                                     width: parent.width
@@ -3216,7 +3277,7 @@ PluginComponent {
         height: 32
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
-        Accessible.name: title + (badge !== "" ? " (" + badge + ")" : "") + (expanded ? "; expanded" : "; collapsed")
+        Accessible.name: title + (badge !== "" ? " (" + badge + " unread)" : "") + (expanded ? "; expanded" : "; collapsed")
         Accessible.onPressAction: clicked()
         Keys.onSpacePressed: clicked()
         Keys.onReturnPressed: clicked()

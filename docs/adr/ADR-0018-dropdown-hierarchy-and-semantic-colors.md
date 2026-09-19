@@ -25,6 +25,12 @@ the DMS theme.
   public reset announcements, and diagnostics. Persistent bar layout and quota
   selection controls live only in Settings → Plugins, including per-model
   Claude weekly choices; view switches remain available in the dropdown.
+- Disclosure badges count unread displayed history events and public
+  announcements. Mark displayed items read while their section and the popout
+  are open, including items arriving during that view. Persist bounded read
+  identities across restarts; hidden or filtered-out items remain unread.
+  Announcement revisions count as new, while edits to a history explanation
+  do not. Reading never removes content or changes public notification receipts.
 - Use two-state segmented switches for Simple / Advanced and Left / Used. Both
   labels stay visible; clicking the inactive segment switches. Each switch still
   has a single persisted toggle action, so the ADR-0013 contracts are unchanged.

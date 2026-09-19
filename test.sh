@@ -756,6 +756,11 @@ fi
 
 echo "Go helper"
 if command -v node >/dev/null 2>&1; then
+    if node --test tests/section-unread-ui.test.cjs; then
+        pass "section unread badges and persisted read state"
+    else
+        fail "section unread badges" "read tracking or persistence failed"
+    fi
     if node --test tests/history-filters-ui.test.cjs; then
         pass "history display filters"
     else
