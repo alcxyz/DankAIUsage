@@ -64,14 +64,15 @@ class PackageFixtureTests(unittest.TestCase):
         })
         self.old_env = {key: os.environ.get(key) for key in self.git_env if key.startswith("GIT_")}
         os.environ.update({key: value for key, value in self.git_env.items() if key.startswith("GIT_")})
-        for name in package.PUBLIC_FILES:
+        for name in ("Widget.qml", "Settings.qml", "Extra.qml"):
             (self.repo / name).write_text("import QtQuick\n", encoding="utf-8")
         (self.repo / "assets").mkdir()
         (self.repo / "assets" / "logo.svg").write_text("<svg/>", encoding="utf-8")
         (self.repo / "README.md").write_text("readme", encoding="utf-8")
         (self.repo / "LICENSE").write_text("license", encoding="utf-8")
         (self.repo / ".gitignore").write_text("dist/\n", encoding="utf-8")
-        (self.repo / "plugin.json").write_text(json.dumps({"id": "test", "version": "1.0.0"}), encoding="utf-8")
+        (self.repo / "plugin.json").write_text(json.dumps({"id": "test", "version": "1.0.0", "component": "./Widget.qml?rev=test", "settings": "./Settings.qml"}), encoding="utf-8")
+        (self.repo / "packaging.json").write_text(json.dumps({"pluginDirectory": "TestPlugin"}), encoding="utf-8")
         self.git(["init", "-q"])
         self.git(["config", "user.email", "test@example.invalid"])
         self.git(["config", "user.name", "Test"])
@@ -127,7 +128,7 @@ class PackageFixtureTests(unittest.TestCase):
             manifest, base = package._load_manifest()
             output = self.repo / "out"
             package.stage(output, manifest, package.build_version(base, "abcdef1234567"))
-            stamped = json.loads((output / "share/dms-plugins/DankAIUsage/plugin.json").read_text())
+            stamped = json.loads((output / "share/dms-plugins/TestPlugin/plugin.json").read_text())
             self.assertEqual(stamped["version"], "1.0.0-dev.abcdef123456")
             self.assertEqual(json.loads((self.repo / "plugin.json").read_text())["version"], "1.0.0")
         finally:
@@ -158,6 +159,7 @@ class PackageFixtureTests(unittest.TestCase):
         finally:
             package.ROOT = old_root
 
+    @unittest.skipUnless(shutil.which("go"), "Go unavailable")
     def test_release_package_helper_and_manifest_match(self):
         (self.repo / "go.mod").write_text("module example.invalid/package-test\n\ngo 1.22\n")
         command = self.repo / "cmd" / "dankaiusage"
@@ -166,6 +168,7 @@ class PackageFixtureTests(unittest.TestCase):
             'package main\nimport "fmt"\nvar version = "dev"\nvar revision string\n'
             'func main() { fmt.Println(version) }\n'
         )
+        (self.repo / "packaging.json").write_text(json.dumps({"pluginDirectory": "TestPlugin", "helper": "dankaiusage"}), encoding="utf-8")
         self.git(["add", "."])
         self.git(["commit", "-qm", "helper"])
         self.git(["tag", "v1.0.0"])
@@ -176,7 +179,7 @@ class PackageFixtureTests(unittest.TestCase):
             output = self.repo / "dist" / "release"
             self.assertEqual(package.main(["--release", "--output", str(output)]), 0)
             actual = subprocess.check_output([str(output / "bin" / "dankaiusage"), "version"], text=True).strip()
-            manifest = json.loads((output / "share/dms-plugins/DankAIUsage/plugin.json").read_text())
+            manifest = json.loads((output / "share/dms-plugins/TestPlugin/plugin.json").read_text())
             self.assertEqual(actual, "1.0.0")
             self.assertEqual(manifest["version"], actual)
             self.assertFalse(package.git_revision().endswith("-dirty"))
