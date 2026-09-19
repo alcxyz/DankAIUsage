@@ -259,7 +259,7 @@ for expected in (
     'onClicked: root.setQuickSetting("showUsed", !root.showUsed)',
     'visible: root.advancedDropdown && root.tokenHistoryRange === "tracked"',
     'visible: root.advancedDropdown && root.providerResets(modelData).length > 0',
-    'visible: modelData.id === "codex" && root.resetControlsVisible()',
+    'visible: modelData.id === "codex" && root.resetControlsVisible(modelData)',
     'visible: (root.advancedDropdown && (root.showCodex || root.showClaude))',
     'visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime',
 ):
@@ -448,8 +448,45 @@ equal(setterScope.dropdownMode, "simple", "invalid values do not change mode");
 equal(setterScope.clearTrackingConfirm, true, "invalid values have no side effects");
 equal(saves.length, 1, "invalid values are not persisted");
 
-function resetVisible(advancedDropdown, codexResetStatus) {
-    return bindQmlFunction("resetControlsVisible", {advancedDropdown, codexResetStatus})();
+const resetClock = Date.parse("2026-09-19T12:00:00Z");
+const availableReset = {id: "reset-1", resetType: "codexRateLimits", expiresAt: "2026-09-20T12:00:00Z"};
+const fundedProvider = {meta: {availableResetCount: 1}, resets: [availableReset]};
+const settingsResetScope = {
+    root: {loadValue: () => 300},
+    codexResetProcess: {running: false},
+    _codexResetOutput: "old output",
+    _codexResetAction: "",
+};
+const settingsResetAction = bindQmlFunction("runCodexReset", settingsResetScope, settingsQml);
+for (const action of ["status", "arm", "disarm"]) {
+    settingsResetScope.codexResetProcess.running = false;
+    settingsResetAction(action);
+    equal(JSON.stringify(settingsResetScope.codexResetProcess.command),
+        JSON.stringify(["dankaiusage", "codex-reset", action, "--refresh-interval", "300"]),
+        "settings uses helper-owned reset action");
+    equal(settingsResetScope._codexResetOutput, "", "settings clears stale helper output");
+    equal(settingsResetScope.codexResetProcess.running, true, "settings starts action");
+}
+settingsResetAction("arm");
+equal(settingsResetScope._codexResetAction, "disarm", "busy settings cannot submit a second action");
+
+function resetVisible(advancedDropdown, codexResetStatus, provider = fundedProvider) {
+    const scope = {advancedDropdown, codexResetStatus, resetClock};
+    scope.providerResets = bindQmlFunction("providerResets", scope);
+    scope.hasSpendableCodexReset = bindQmlFunction("hasSpendableCodexReset", scope);
+    return bindQmlFunction("resetControlsVisible", scope)(provider);
+}
+for (const provider of [null, {}, {resets: [availableReset]},
+    {meta: {availableResetCount: 0}, resets: [availableReset]},
+    {meta: {availableResetCount: 1}, resets: []},
+    ...[
+        {id: ""}, {resetType: "other"}, {expiresAt: ""},
+        {expiresAt: "invalid"}, {expiresAt: "2026-09-19T12:00:00Z"},
+        {expiresAt: "2026-09-18T12:00:00Z"},
+    ].map(overrides => ({meta: {availableResetCount: 1}, resets: [{...availableReset, ...overrides}]})),
+]) {
+    equal(resetVisible(true, {armed: false, stateKnown: true}, provider), false, "advanced hides controls without spendable resets");
+    equal(resetVisible(true, {armed: true, stateKnown: true}, provider), true, "empty balance does not hide cancellation");
 }
 equal(resetVisible(false, {armed: false, stateKnown: true}), false, "settled reset controls hide in simple mode");
 equal(resetVisible(true, {armed: false, stateKnown: true}), true, "advanced mode shows reset controls");

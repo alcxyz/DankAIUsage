@@ -31,6 +31,8 @@ without changing collection or their topbar layout.
 - Keep armed Codex reset controls visible and cancellable in Simple. Also show
   errors, unknown reset state, and uncertain attempts. Indicate enabled Claude
   session scheduling even when its controls are hidden.
+- Hide the settled, unarmed Codex reset control in Advanced when no spendable
+  reset is available. The one-shot control remains accessible in settings.
 
 ## Alternatives
 
