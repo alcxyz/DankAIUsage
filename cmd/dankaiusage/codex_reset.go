@@ -757,7 +757,7 @@ func newCodexAppServerClient(parent context.Context, command string, args ...str
 	client.scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	var initialized map[string]any
 	if err := client.call("initialize", map[string]any{
-		"clientInfo":   map[string]string{"name": "dankaiusage", "title": "DankAIUsage", "version": version},
+		"clientInfo":   map[string]string{"name": "dankaiusage", "title": "DankAIUsage", "version": buildVersion()},
 		"capabilities": nil,
 	}, &initialized); err != nil {
 		client.Close()
