@@ -20,3 +20,4 @@
 | [ADR-0016](ADR-0016-private-local-diagnostics.md) | Allowlisted local diagnostics | helper + widget + packaging |
 | [ADR-0017](ADR-0017-public-reset-announcements.md) | Opt-in public reset announcements | helper + widget + settings |
 | [ADR-0018](ADR-0018-dropdown-hierarchy-and-semantic-colors.md) | Dropdown information hierarchy and semantic status colors | widget |
+| [ADR-0019](ADR-0019-link-plugin-reset-observations.md) | Link delayed observations to a confirmed plugin reset | helper + widget |

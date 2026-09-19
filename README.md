@@ -34,6 +34,8 @@ monitoring app.
 - **Local reset history** with an optional "What changed?" prompt, and an
   optional, alpha-quality public reset feed. Section badges count unread items
   and clear when viewed; read state survives restarts.
+  Confirmed plugin resets are linked to matching later refill and credit
+  observations, preserving the action and observation timestamps.
 
 The scope is deliberately two providers. Token history covers local CLI
 transcripts only, so it is not a complete account ledger. Subscription

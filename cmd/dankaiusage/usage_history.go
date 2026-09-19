@@ -54,6 +54,7 @@ type UsageHistoryExplanation struct {
 
 type UsageHistoryEvent struct {
 	ObservedAt         string                   `json:"observedAt"`
+	SampledAt          string                   `json:"sampledAt,omitempty"`
 	PreviousObservedAt string                   `json:"previousObservedAt,omitempty"`
 	Provider           string                   `json:"provider"`
 	Bucket             string                   `json:"bucket,omitempty"`
@@ -70,6 +71,7 @@ type UsageHistoryEvent struct {
 	Explanation        *UsageHistoryExplanation `json:"explanation,omitempty"`
 	ExpiryExplained    bool                     `json:"expiryExplained,omitempty"`
 	TimingNoise        bool                     `json:"timingNoise,omitempty"`
+	PluginResetAt      string                   `json:"pluginResetAt,omitempty"`
 }
 
 type usageHistoryExplainRequest struct {
@@ -331,6 +333,7 @@ func explainUsageHistory(path string, now time.Time, request usageHistoryExplain
 }
 
 func decorateUsageHistoryEvents(events []UsageHistoryEvent) error {
+	linkPluginResetObservations(events)
 	groups := make(map[string][]int)
 	for index := range events {
 		event := &events[index]
@@ -618,6 +621,7 @@ func quotaHistoryEvent(before, after usageHistoryObservation, kind, confidence, 
 	afterUsed := after.UsedPercent
 	return UsageHistoryEvent{
 		ObservedAt:         after.ObservedAt,
+		SampledAt:          historyObservationOrderAt(after),
 		PreviousObservedAt: before.ObservedAt,
 		Provider:           after.Provider,
 		Bucket:             after.Bucket,
@@ -647,6 +651,7 @@ func observeCreditCount(state *usageHistoryState, provider string, current usage
 		afterCount := current.AvailableCredits
 		state.Events = append(state.Events, UsageHistoryEvent{
 			ObservedAt:         current.ObservedAt,
+			SampledAt:          historyCreditOrderAt(current),
 			PreviousObservedAt: previous.ObservedAt,
 			Provider:           provider,
 			Bucket:             "earned-resets",
