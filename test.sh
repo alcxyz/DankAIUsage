@@ -756,6 +756,11 @@ fi
 
 echo "Go helper"
 if command -v node >/dev/null 2>&1; then
+    if node --test tests/plugin-reset-history-ui.test.cjs; then
+        pass "linked plugin reset history presentation"
+    else
+        fail "linked plugin reset history" "correlation presentation or grouping failed"
+    fi
     if node --test tests/section-unread-ui.test.cjs; then
         pass "section unread badges and persisted read state"
     else

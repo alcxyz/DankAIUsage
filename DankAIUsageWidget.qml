@@ -749,6 +749,10 @@ PluginComponent {
 
     function historyEventNeedsNoPrompt(event) {
         if (event.timingNoise === true) return true
+        if (typeof event.pluginResetAt === "string" && event.pluginResetAt
+                && (event.kind === "allowance_increased_unknown"
+                || event.kind === "reset_redeemed_inferred" || event.kind === "credits_changed"))
+            return true
         var before = event.before || {}
         var after = event.after || {}
         var clearRefill = typeof before.usedPercent === "number" && isFinite(before.usedPercent)
@@ -768,7 +772,7 @@ PluginComponent {
     }
 
     function visibleHistoryGroups() {
-        // Keep ADR-0011's latest-eight-event scope, but hydrate any selected
+        // Keep the ADR-0011 latest-eight-event scope, but hydrate any selected
         // group from retained history so its related-change count and edit
         // target describe the matching changes in that observation group.
         var recentGroups = historyGroups(visibleHistory())
@@ -781,7 +785,106 @@ PluginComponent {
             if (recentGroups[j].groupId && fullByKey[recentGroups[j].key])
                 recentGroups[j] = fullByKey[recentGroups[j].key]
         }
-        return recentGroups
+        return mergePluginResetHistoryGroups(recentGroups, fullGroups)
+    }
+
+    function mergePluginResetHistoryGroups(groups, retainedGroups) {
+        // A confirmed action and its effects can be observed in separate
+        // samples. Join them only when the helper supplied an exact action
+        // timestamp and that action identifies one observation group.
+        var actionsByTime = ({})
+        for (var i = 0; i < retainedGroups.length; i++) {
+            var retained = retainedGroups[i]
+            for (var j = 0; j < retained.events.length; j++) {
+                var action = retained.events[j]
+                if (action.provider !== "codex" || action.kind !== "plugin_reset_reset"
+                        || action.source !== "plugin_reset" || action.confidence !== "confirmed"
+                        || typeof action.observedAt !== "string" || !action.observedAt) continue
+                if (!actionsByTime[action.observedAt]) actionsByTime[action.observedAt] = []
+                actionsByTime[action.observedAt].push(action)
+            }
+        }
+
+        var linksByTime = ({})
+        for (var g = 0; g < retainedGroups.length; g++) {
+            var candidate = retainedGroups[g]
+            for (var e = 0; e < candidate.events.length; e++) {
+                var event = candidate.events[e]
+                if (event.provider !== "codex" || typeof event.pluginResetAt !== "string"
+                        || !event.pluginResetAt || (event.kind !== "allowance_increased_unknown"
+                        && event.kind !== "reset_redeemed_inferred" && event.kind !== "credits_changed")) continue
+                if (!linksByTime[event.pluginResetAt]) linksByTime[event.pluginResetAt] = []
+                linksByTime[event.pluginResetAt].push({group: candidate, event: event})
+            }
+        }
+
+        var plansByTime = ({})
+        var linkTimes = Object.keys(linksByTime)
+        for (var t = 0; t < linkTimes.length; t++) {
+            var at = linkTimes[t]
+            var links = linksByTime[at]
+            if (!actionsByTime[at] || actionsByTime[at].length !== 1) continue
+            var observedAt = links[0].event.observedAt
+            var namedGroups = []
+            var linkGroups = []
+            for (var l = 0; l < links.length; l++) {
+                if (links[l].event.observedAt !== observedAt) {
+                    observedAt = ""
+                    break
+                }
+                if (linkGroups.indexOf(links[l].group) < 0) linkGroups.push(links[l].group)
+                if (links[l].group.groupId && namedGroups.indexOf(links[l].group) < 0)
+                    namedGroups.push(links[l].group)
+            }
+            if (!observedAt || namedGroups.length > 1 || (namedGroups.length === 0 && linkGroups.length !== 1))
+                continue
+            var anchorGroup = namedGroups.length === 1 ? namedGroups[0] : linkGroups[0]
+            var anchorEvent = null
+            var linkedEvents = []
+            for (var p = 0; p < links.length; p++) {
+                linkedEvents.push(links[p].event)
+                if (!anchorEvent && links[p].group === anchorGroup) anchorEvent = links[p].event
+            }
+            plansByTime[at] = {action: actionsByTime[at][0], anchorEvent: anchorEvent,
+                linkedEvents: linkedEvents}
+        }
+
+        var merged = []
+        var movedEvents = []
+        var mergedGroups = []
+        for (var k = 0; k < groups.length; k++) {
+            var group = groups[k]
+            var plan = null
+            for (var q = 0; q < linkTimes.length && !plan; q++) {
+                var possible = plansByTime[linkTimes[q]]
+                if (possible && group.events.indexOf(possible.anchorEvent) >= 0) plan = possible
+            }
+            if (plan) {
+                var combinedEvents = [plan.action]
+                for (var c = 0; c < group.events.length; c++) {
+                    if (combinedEvents.indexOf(group.events[c]) < 0) combinedEvents.push(group.events[c])
+                }
+                for (var a = 0; a < plan.linkedEvents.length; a++) {
+                    if (combinedEvents.indexOf(plan.linkedEvents[a]) < 0)
+                        combinedEvents.push(plan.linkedEvents[a])
+                    if (movedEvents.indexOf(plan.linkedEvents[a]) < 0)
+                        movedEvents.push(plan.linkedEvents[a])
+                }
+                movedEvents.push(plan.action)
+                group = Object.assign({}, group, {events: combinedEvents})
+                mergedGroups.push(group)
+            }
+            merged.push(group)
+        }
+        return merged.filter(function(group) {
+            // Legacy no-groupId keys depend on array position, so identify the
+            // exact retained event objects. Preserve any card that also has an
+            // unrelated row rather than dropping that row during display merge.
+            if (mergedGroups.indexOf(group) >= 0) return true
+            for (var i = 0; i < group.events.length; i++)
+                if (movedEvents.indexOf(group.events[i]) < 0) return true
+            return false
+        })
     }
 
     function historyGroupsForDisplay() {
@@ -1134,6 +1237,12 @@ PluginComponent {
 
     function historyEventTitle(event) {
         if (historyTimeOnlyChange(event)) return "Reset time changed · usage unchanged"
+        if (typeof event.pluginResetAt === "string" && event.pluginResetAt
+                && (event.kind === "allowance_increased_unknown"
+                || event.kind === "reset_redeemed_inferred")) return "Refill observed after plugin reset"
+        if (typeof event.pluginResetAt === "string" && event.pluginResetAt
+                && event.kind === "credits_changed")
+            return "Reset credit decrease after plugin reset"
         switch (event.kind) {
         case "scheduled_window": return "Scheduled window change"
         case "allowance_increased_unknown": return "Unexpected replenishment"
@@ -1173,7 +1282,14 @@ PluginComponent {
         if (before.resetAt && after.resetAt && before.resetAt !== after.resetAt)
             lines.push("Reset time: " + formatShortDateTime(before.resetAt)
                     + " → " + formatShortDateTime(after.resetAt))
-        if (event.message) lines.push(event.message)
+        if (typeof event.pluginResetAt === "string" && event.pluginResetAt
+                && (event.kind === "allowance_increased_unknown"
+                || event.kind === "reset_redeemed_inferred" || event.kind === "credits_changed")) {
+            lines.push(event.kind === "credits_changed"
+                    ? "The available reset count changed after the plugin applied a reset."
+                    : "The allowance refill was observed after the plugin applied a reset.")
+            lines.push("Plugin reset applied " + formatShortDateTime(event.pluginResetAt))
+        } else if (event.message) lines.push(event.message)
         return lines.join("\n")
     }
 
