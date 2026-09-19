@@ -755,6 +755,11 @@ else
 fi
 
 echo "Go helper"
+if python3 -m unittest discover -s tests -p 'test_package.py'; then
+    pass "manual package identity and release safeguards"
+else
+    fail "manual package identity" "packaging or release validation failed"
+fi
 if command -v node >/dev/null 2>&1; then
     if node --test tests/plugin-reset-history-ui.test.cjs; then
         pass "linked plugin reset history presentation"

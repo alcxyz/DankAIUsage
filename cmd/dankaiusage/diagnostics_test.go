@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -180,18 +181,65 @@ func TestDiagnosticRecoveryAndBackoffTransitionsDedupe(t *testing.T) {
 }
 
 func TestDiagnosticBuildIdentityValidation(t *testing.T) {
-	for _, valid := range []string{"dev", "0.8.0", "10.20.300", "1.2.3-dev", "1.2.3-dirty"} {
+	for _, valid := range []string{
+		"dev",
+		"0.8.0",
+		"10.20.300",
+		"1.2.3-dev",
+		"1.2.3-dirty",
+		"dev-abcdef0",
+		"dev-abcdef012345-dirty",
+		"1.2.3-dev.abcdef0",
+		"1.2.3-dev.abcdef012345.dirty",
+		"1.2.3-dev.source.abcdef012345",
+		"1.2.3-dev.unknown",
+	} {
 		if !validBuildVersion(valid) {
 			t.Errorf("valid version rejected: %q", valid)
 		}
 	}
-	for _, invalid := range []string{"sk-tokensecret", "1.2", "01.2.3", "1.2.3/secret", "v1.2.3"} {
+	for _, invalid := range []string{
+		"sk-tokensecret",
+		"1.2",
+		"01.2.3",
+		"1.2.3/secret",
+		"v1.2.3",
+		"dev-ABCDEF0",
+		"dev-abcdef",
+		"dev-abcdef0123456",
+		"dev-abcdef0-private",
+		"1.2.3-dev.ABCDEF0",
+		"1.2.3-dev.abcdef",
+		"1.2.3-dev.abcdef0123456",
+		"1.2.3-dev.private",
+		"1.2.3-dev.abcdef0.private",
+		"1.2.3-dev.unknown.private",
+		"1.2.3-dev.source.abcdef0",
+		"1.2.3-dev.source.abcdef012345.dirty",
+	} {
 		if validBuildVersion(invalid) {
 			t.Errorf("unsafe version accepted: %q", invalid)
 		}
 	}
 	if !validBuildRevision("source-"+strings.Repeat("a", 64)) || !validBuildRevision("abcdef0-dirty") || validBuildRevision("source-"+strings.Repeat("A", 64)) || validBuildRevision("token-secret") {
 		t.Fatal("revision validation mismatch")
+	}
+}
+
+func TestDiagnosticBuildIdentityReadsDirtyRevisionIndependentOfSettingOrder(t *testing.T) {
+	fullRevision := "abcdef0123456789abcdef0123456789abcdef01"
+	info := &debug.BuildInfo{Settings: []debug.BuildSetting{
+		{Key: "vcs.modified", Value: "true"},
+		{Key: "vcs.revision", Value: fullRevision},
+	}}
+	gotVersion, gotRevision := diagnosticBuildIdentityFromBuildInfo("dev", "", info)
+	if gotVersion != "dev-abcdef012345-dirty" || gotRevision != fullRevision+"-dirty" {
+		t.Fatalf("identity = (%q, %q)", gotVersion, gotRevision)
+	}
+
+	gotVersion, gotRevision = diagnosticBuildIdentityFromBuildInfo("2.3.4", "1234567", info)
+	if gotVersion != "2.3.4" || gotRevision != "1234567" {
+		t.Fatalf("injected identity = (%q, %q)", gotVersion, gotRevision)
 	}
 }
 

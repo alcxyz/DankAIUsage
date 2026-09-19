@@ -375,21 +375,21 @@ func loadAndPruneDiagnosticStore(path string, now time.Time) (diagnosticStore, e
 }
 
 func diagnosticBuildIdentity() (string, string) {
-	v := version
+	info, _ := debug.ReadBuildInfo()
+	return diagnosticBuildIdentityFromBuildInfo(version, revision, info)
+}
+
+func diagnosticBuildIdentityFromBuildInfo(configuredVersion, configuredRevision string, info *debug.BuildInfo) (string, string) {
+	v := resolveBuildVersion(configuredVersion, info)
 	if !validBuildVersion(v) {
 		v = ""
 	}
-	r := revision
+	r := configuredRevision
 	if r == "" {
-		if info, ok := debug.ReadBuildInfo(); ok {
-			for _, setting := range info.Settings {
-				if setting.Key == "vcs.revision" {
-					r = setting.Value
-				}
-				if setting.Key == "vcs.modified" && setting.Value == "true" && r != "" {
-					r += "-dirty"
-				}
-			}
+		var modified bool
+		r, modified = vcsBuildRevision(info)
+		if modified && r != "" {
+			r += "-dirty"
 		}
 	}
 	if !validBuildRevision(r) {
@@ -405,8 +405,30 @@ func validBuildVersion(value string) bool {
 	if value == "dev" {
 		return true
 	}
+	if strings.HasPrefix(value, "dev-") {
+		base := strings.TrimSuffix(strings.TrimPrefix(value, "dev-"), "-dirty")
+		return len(base) >= 7 && len(base) <= 12 && isLowerHex(base)
+	}
+	if base, suffix, ok := strings.Cut(value, "-dev."); ok {
+		if !validReleaseVersion(base) {
+			return false
+		}
+		if suffix == "unknown" {
+			return true
+		}
+		if strings.HasPrefix(suffix, "source.") {
+			fingerprint := strings.TrimPrefix(suffix, "source.")
+			return len(fingerprint) == 12 && isLowerHex(fingerprint)
+		}
+		hash := strings.TrimSuffix(suffix, ".dirty")
+		return len(hash) >= 7 && len(hash) <= 12 && isLowerHex(hash)
+	}
 	base := strings.TrimSuffix(strings.TrimSuffix(value, "-dev"), "-dirty")
-	parts := strings.Split(base, ".")
+	return validReleaseVersion(base)
+}
+
+func validReleaseVersion(value string) bool {
+	parts := strings.Split(value, ".")
 	if len(parts) != 3 {
 		return false
 	}

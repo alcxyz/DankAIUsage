@@ -15,9 +15,10 @@
         packages = rec {
           dankaiusage = pkgs.callPackage ./default.nix {
             inherit version;
-            revision = self.rev or self.dirtyRev or "unknown";
+            revision = self.rev or self.dirtyRev or null;
           };
           default = dankaiusage;
+          release = dankaiusage.override { release = true; };
         };
 
         devShells.default = pkgs.mkShell {
