@@ -32,7 +32,8 @@ monitoring app.
   recovery messages remain visible even with no resets. Arming with no eligible
   reset leaves the control off; it does not automatically use future credits.
 - **Local reset history** with an optional "What changed?" prompt, and an
-  optional, alpha-quality public reset feed.
+  optional, alpha-quality public reset feed. Section badges count unread items
+  and clear when viewed; read state survives restarts.
 
 The scope is deliberately two providers. Token history covers local CLI
 transcripts only, so it is not a complete account ledger. Subscription
