@@ -4,30 +4,11 @@
 }:
 
 let
-  # Flake-less consumers do not carry Git metadata. Fingerprint only public
-  # source files so their reports still distinguish builds without local paths.
-  source = lib.cleanSourceWith {
-    src = ./.;
-    filter = path: type:
-      lib.cleanSourceFilter path type
-      && !(builtins.elem (baseNameOf path) [ "dist" "__pycache__" ".envrc" ]);
-  };
-  sourceFiles = lib.filesystem.listFilesRecursive source;
-  fingerprintFiles = builtins.filter (path:
-    let name = baseNameOf path;
-    in lib.hasSuffix ".go" name || lib.hasSuffix ".qml" name
-      || lib.hasSuffix ".nix" name || lib.hasSuffix ".py" name
-      || name == "plugin.json" || name == "go.mod"
-  ) sourceFiles;
-  sourceRevision = "source-" + builtins.hashString "sha256"
-    (lib.concatMapStrings (path: builtins.hashFile "sha256" path) fingerprintFiles);
-  buildRevision = if revision == null then sourceRevision else revision;
-  buildVersion = import ./build-version.nix {
-    inherit version release;
-    revision = buildRevision;
-  };
+  metadata = import ./build-metadata.nix { inherit lib version revision release; };
+  source = metadata.source;
+  buildRevision = metadata.revision;
+  buildVersion = metadata.version;
 in
-assert version == (builtins.fromJSON (builtins.readFile ./plugin.json)).version;
 buildGoModule {
   pname = "dankaiusage";
   version = buildVersion;

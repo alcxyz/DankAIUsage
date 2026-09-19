@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and stage a DankAIUsage plugin package."""
+"""Build and stage a DMS plugin package."""
 
 from __future__ import annotations
 
@@ -16,7 +16,13 @@ ROOT = Path(__file__).resolve().parents[1]
 REVISION_RE = re.compile(r"^[0-9a-f]{7,64}(?:-dirty)?$")
 SOURCE_RE = re.compile(r"^source-[0-9a-f]{64}$")
 BASE_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
-PUBLIC_FILES = ("DankAIUsageWidget.qml", "DankAIUsageSettings.qml")
+def package_config() -> dict:
+    config = json.loads((ROOT / "packaging.json").read_text(encoding="utf-8"))
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", config.get("pluginDirectory", "")):
+        raise ValueError("invalid pluginDirectory in packaging.json")
+    if config.get("helper") and not re.fullmatch(r"[a-z][a-z0-9-]*", config["helper"]):
+        raise ValueError("invalid helper in packaging.json")
+    return config
 
 
 def build_version(base: str, revision: str, release: bool = False) -> str:
@@ -88,20 +94,23 @@ def _load_manifest() -> tuple[dict, str]:
 
 
 def stage(output: Path, manifest: dict, version: str) -> None:
-    destination = output / "share" / "dms-plugins" / "DankAIUsage"
+    destination = output / "share" / "dms-plugins" / package_config()["pluginDirectory"]
     destination.mkdir(parents=True, exist_ok=True)
     stamped = dict(manifest)
     stamped["version"] = version
     (destination / "plugin.json").write_text(json.dumps(stamped, indent=2) + "\n", encoding="utf-8")
-    for name in PUBLIC_FILES:
-        source = ROOT / name
-        if not source.is_file():
-            raise ValueError(f"missing required public file: {name}")
-        shutil.copy2(source, destination / name)
+    for pattern in ("*.qml", "*.js", "*.svg", "*.png"):
+        for source in ROOT.glob(pattern):
+            shutil.copy2(source, destination / source.name)
+    for field in ("component", "settings"):
+        if field not in manifest:
+            continue
+        relative = Path(manifest[field].split("?", 1)[0])
+        if relative.is_absolute() or ".." in relative.parts or not (destination / relative).is_file():
+            raise ValueError(f"missing or invalid packaged {field}")
     assets = ROOT / "assets"
-    if not assets.is_dir():
-        raise ValueError("missing required public directory: assets")
-    shutil.copytree(assets, destination / "assets", dirs_exist_ok=True)
+    if assets.is_dir():
+        shutil.copytree(assets, destination / "assets", dirs_exist_ok=True)
     for name in ("README.md", "LICENSE"):
         source = ROOT / name
         if source.is_file():
@@ -117,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         manifest, base = _load_manifest()
+        config = package_config()
         revision = args.revision if args.revision is not None else git_revision()
         validate_revision(revision)
         if args.release:
@@ -130,10 +140,13 @@ def main(argv: list[str] | None = None) -> int:
         if not args.stage_only and output.exists() and any(output.iterdir()):
             raise ValueError("manual build output must be new or empty")
         output.mkdir(parents=True, exist_ok=True)
-        if not args.stage_only:
-            binary = output / "bin" / "dankaiusage"
+        if not args.stage_only and config.get("helper"):
+            binary = output / "bin" / config["helper"]
             binary.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run(["go", "build", "-ldflags", f"-X main.version={version} -X main.revision={revision}", "-o", str(binary), "./cmd/dankaiusage"], cwd=ROOT, check=True)
+            flags = f"-X main.version={version}"
+            if config.get("revisionVariable", False):
+                flags += f" -X main.revision={revision}"
+            subprocess.run(["go", "build", "-ldflags", flags, "-o", str(binary), "./cmd/" + config["helper"]], cwd=ROOT, check=True)
         stage(output, manifest, version)
         return 0
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
