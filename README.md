@@ -27,7 +27,10 @@ monitoring app.
 - **Left / Used** switch for all percentages and bars at once.
 - **Opt-in automation**: a one-shot Codex reset that fires once near expiry
   or exhaustion, and Claude prime as a session-window scheduler. Both are off
-  by default.
+  by default. The Codex control is always accessible in plugin settings and
+  appears in Advanced when a spendable reset is available. Armed controls and
+  recovery messages remain visible even with no resets. Arming with no eligible
+  reset leaves the control off; it does not automatically use future credits.
 - **Local reset history** with an optional "What changed?" prompt, and an
   optional, alpha-quality public reset feed.
 

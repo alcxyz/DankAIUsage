@@ -17,9 +17,14 @@ identifier, idempotency key, and explicit outcomes.
 
 ## Decision
 
-- Provide an explicit **Auto-use one reset** control in the Codex dropdown.
+- Provide an explicit **Auto-use one reset** control in plugin settings and,
+  when a spendable reset is available, the Advanced Codex dropdown. Keep armed
+  controls and recovery states visible in either dropdown mode even without
+  available resets.
   It is off by default. Arming selects the earliest-expiring available
   `codexRateLimits` credit whose identifier and future expiry are known.
+  With no eligible credit, arming leaves it off; it does not opt into future
+  credits automatically.
 - Keep durable one-shot state in the helper, not a second DMS preference.
   Serialize access across processes, store state with restrictive permissions,
   and pin the selected credit and a UUID idempotency key to the logical attempt.

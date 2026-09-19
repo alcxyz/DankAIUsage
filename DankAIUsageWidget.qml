@@ -106,6 +106,23 @@ PluginComponent {
     property string _codexResetAction: ""
     property bool _codexResetWasArmed: false
     property bool _refreshAfterCodexReset: false
+    property double _codexResetRevision: 0
+
+    Connections {
+        target: root.pluginService
+        enabled: root.pluginService !== null
+
+        function onPluginStateChanged(changedPluginId) {
+            if (changedPluginId !== root.pluginId) return
+            var revision = root.pluginService.loadPluginState(root.pluginId, "codexResetRevision", 0)
+            if (revision === root._codexResetRevision) return
+            root._codexResetRevision = revision
+            if (codexResetProcess.running)
+                root._refreshCyclePending = true
+            else
+                Qt.callLater(function() { root.runCodexReset("status") })
+        }
+    }
     property bool _refreshCyclePending: false
 
     function normalizedRefreshInterval(value) {
@@ -192,10 +209,21 @@ PluginComponent {
             pluginService.savePluginState(pluginId, "dropdownMode", mode)
     }
 
-    function resetControlsVisible() {
-        return advancedDropdown || codexResetStatus.armed === true
+    function resetControlsVisible(provider) {
+        return (advancedDropdown && hasSpendableCodexReset(provider)) || codexResetStatus.armed === true
                 || codexResetStatus.stateKnown === false || !!codexResetStatus.error
                 || codexResetStatus.state === "attempted"
+    }
+
+    function hasSpendableCodexReset(provider) {
+        if (!provider || !provider.meta || !(provider.meta.availableResetCount > 0)) return false
+        var resets = providerResets(provider)
+        for (var i = 0; i < resets.length; i++) {
+            var reset = resets[i]
+            if (reset && reset.id && reset.resetType === "codexRateLimits"
+                    && Date.parse(reset.expiresAt || "") > resetClock) return true
+        }
+        return false
     }
 
     // The status line stays quiet while the control is simply off and settled.
@@ -2320,7 +2348,7 @@ PluginComponent {
                                     Column {
                                         width: parent.width
                                         spacing: Theme.spacingXS
-                                        visible: modelData.id === "codex" && root.resetControlsVisible()
+                                        visible: modelData.id === "codex" && root.resetControlsVisible(modelData)
 
                                         DankToggle {
                                             id: codexAutoResetToggle
