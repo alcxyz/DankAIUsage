@@ -1431,9 +1431,20 @@ PluginComponent {
         var minutes = Math.ceil(ms / 60000)
         var days = Math.floor(minutes / 1440)
         var hours = Math.floor((minutes % 1440) / 60)
-        if (days > 0) return days + "d" + (hours ? " " + hours + "h" : "")
+        if (days > 0) return days + "d " + hours + "h" + (minutes % 60 ? " " + (minutes % 60) + "m" : "")
         if (hours > 0) return hours + "h" + (minutes % 60 ? " " + (minutes % 60) + "m" : "")
         return minutes + "m"
+    }
+
+    // Whole time units, with at most seven internal ticks for unusual windows.
+    function resetTimeScale(allowance) {
+        var minutes = allowance ? allowance.windowMinutes : 0
+        if (typeof minutes !== "number" || !isFinite(minutes) || minutes <= 0)
+            return { count: 0, stepMinutes: 0, label: "" }
+        var unit = minutes < 60 ? 15 : (minutes <= 1440 ? 60 : 1440)
+        var step = Math.ceil(minutes / (8 * unit)) * unit
+        return { count: Math.max(0, Math.ceil(minutes / step) - 1),
+            stepMinutes: step, label: step >= 1440 ? (step / 1440) + "d" : resetDuration(step * 60000) }
     }
 
     function resetCountdown(allowance, now, used) {
@@ -1463,9 +1474,8 @@ PluginComponent {
             if (showUsed && bucket.valueLabel) return bucket.valueLabel + " used"
             if (!showUsed && bucket.detail) return bucket.detail
         }
-        if (bucket.detail) return bucket.detail
         var countdown = resetCountdown(bucket.allowance, resetClock, showUsed)
-        return countdown || allowanceDetail(bucket.allowance)
+        return countdown || bucket.detail || allowanceDetail(bucket.allowance)
     }
 
     function quotaProgress(bucket) {
@@ -3657,6 +3667,7 @@ PluginComponent {
         property real timeProgress: bucket && bucket.kind !== "credits"
                 ? root.resetTimeProgress(bucket.allowance, root.resetClock, root.showUsed) : -1
         readonly property bool showTime: root.advancedDropdown && timeProgress >= 0
+        readonly property var timeScale: root.resetTimeScale(bucket ? bucket.allowance : null)
         readonly property color severityColor: root.allowanceColor(bucket ? bucket.allowance : null)
         height: root.quotaRowHeight(bucket)
 
@@ -3666,10 +3677,13 @@ PluginComponent {
             visible: resetHover.hovered && !!root.resetTiming(bucket ? bucket.allowance : null, root.resetClock)
             delay: 400
             text: bucket && bucket.allowance
-                    ? "Reset: " + root.formatShortDateTime(bucket.allowance.resetAt)
+                    ? root.resetCountdown(bucket.allowance, root.resetClock, root.showUsed)
+                        + "\nReset: " + root.formatShortDateTime(bucket.allowance.resetAt)
                         + (quotaBar.showTime
                            ? "\nThin bar: window time " + (root.showUsed ? "elapsed" : "remaining")
-                             + " (not quota usage)" : "") : ""
+                             + " (not quota usage)"
+                             + (quotaBar.timeScale.count > 0
+                                ? "\nTicks: every " + quotaBar.timeScale.label : "") : "") : ""
             contentItem: StyledText {
                 text: resetTooltip.text
                 textFormat: Text.PlainText
@@ -3747,6 +3761,7 @@ PluginComponent {
         }
 
         StyledRect {
+            id: timeTrack
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: quotaTrack.bottom
@@ -3761,6 +3776,19 @@ PluginComponent {
                 radius: parent.radius
                 color: Theme.surfaceVariantText
                 opacity: 0.6
+            }
+            Repeater {
+                model: quotaBar.showTime ? quotaBar.timeScale.count : 0
+                delegate: Rectangle {
+                    required property int index
+                    x: Math.round(timeTrack.width * (index + 1)
+                                  * quotaBar.timeScale.stepMinutes / quotaBar.bucket.allowance.windowMinutes) - width / 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 1
+                    height: 4
+                    color: Theme.surfaceVariantText
+                    opacity: 0.45
+                }
             }
         }
     }
