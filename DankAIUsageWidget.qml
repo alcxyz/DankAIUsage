@@ -39,6 +39,8 @@ PluginComponent {
     property bool historyShowScheduledWeekly: false
     property bool historyOpen: false
     property bool announcementsOpen: false
+    property var historyReadKeys: []
+    property var announcementsReadKeys: []
     property int popoutMaxHeightFallback: 720
     property bool publicResetAnnouncements: false
     property var publicAnnouncements: []
@@ -106,6 +108,23 @@ PluginComponent {
     property string _codexResetAction: ""
     property bool _codexResetWasArmed: false
     property bool _refreshAfterCodexReset: false
+    property double _codexResetRevision: 0
+
+    Connections {
+        target: root.pluginService
+        enabled: root.pluginService !== null
+
+        function onPluginStateChanged(changedPluginId) {
+            if (changedPluginId !== root.pluginId) return
+            var revision = root.pluginService.loadPluginState(root.pluginId, "codexResetRevision", 0)
+            if (revision === root._codexResetRevision) return
+            root._codexResetRevision = revision
+            if (codexResetProcess.running)
+                root._refreshCyclePending = true
+            else
+                Qt.callLater(function() { root.runCodexReset("status") })
+        }
+    }
     property bool _refreshCyclePending: false
 
     function normalizedRefreshInterval(value) {
@@ -161,6 +180,8 @@ PluginComponent {
 
     function loadCache() {
         if (!pluginService || !pluginService.loadPluginState) return
+        historyReadKeys = normalizedReadKeys(pluginService.loadPluginState(pluginId, "historyReadKeys", []))
+        announcementsReadKeys = normalizedReadKeys(pluginService.loadPluginState(pluginId, "announcementsReadKeys", []))
         var cached = pluginService.loadPluginState(pluginId, "lastSummary", null)
         dropdownMode = resolveDropdownMode(pluginService.loadPluginState(pluginId, "dropdownMode", ""), cached)
         // Persist before the first summary so a new installation stays Simple.
@@ -184,6 +205,38 @@ PluginComponent {
         return cachedSummary && cachedSummary.providers ? "advanced" : "simple"
     }
 
+    function normalizedReadKeys(value) {
+        if (!Array.isArray(value)) return []
+        return value.filter(function(key) {
+            return typeof key === "string" && key.length > 0 && key.length <= 2048
+        }).slice(-200)
+    }
+
+    function sectionReadKeys(section, items) {
+        return items.map(function(event) {
+            if (section === "announcements") return JSON.stringify([event.id, event.revision])
+            // Explanations and display labels can change without creating a new event.
+            return JSON.stringify([event.provider, event.observedAt, event.bucket || "",
+                event.kind, event.source || "", event.groupId || ""])
+        })
+    }
+
+    function unreadSectionCount(keys, readKeys) {
+        return keys.filter(function(key) { return readKeys.indexOf(key) < 0 }).length
+    }
+
+    function markSectionRead(section, keys) {
+        if (section !== "history" && section !== "announcements") return
+        var property = section + "ReadKeys"
+        var previous = root[property]
+        if (unreadSectionCount(keys, previous) === 0) return
+        var retained = previous.filter(function(key) { return keys.indexOf(key) < 0 })
+        var updated = normalizedReadKeys(retained.concat(keys))
+        root[property] = updated
+        if (pluginService && pluginService.savePluginState)
+            pluginService.savePluginState(pluginId, property, updated)
+    }
+
     function setDropdownMode(mode) {
         if (mode !== "simple" && mode !== "advanced") return
         dropdownMode = mode
@@ -192,10 +245,21 @@ PluginComponent {
             pluginService.savePluginState(pluginId, "dropdownMode", mode)
     }
 
-    function resetControlsVisible() {
-        return advancedDropdown || codexResetStatus.armed === true
+    function resetControlsVisible(provider) {
+        return (advancedDropdown && hasSpendableCodexReset(provider)) || codexResetStatus.armed === true
                 || codexResetStatus.stateKnown === false || !!codexResetStatus.error
                 || codexResetStatus.state === "attempted"
+    }
+
+    function hasSpendableCodexReset(provider) {
+        if (!provider || !provider.meta || !(provider.meta.availableResetCount > 0)) return false
+        var resets = providerResets(provider)
+        for (var i = 0; i < resets.length; i++) {
+            var reset = resets[i]
+            if (reset && reset.id && reset.resetType === "codexRateLimits"
+                    && Date.parse(reset.expiresAt || "") > resetClock) return true
+        }
+        return false
     }
 
     // The status line stays quiet while the control is simply off and settled.
@@ -685,6 +749,10 @@ PluginComponent {
 
     function historyEventNeedsNoPrompt(event) {
         if (event.timingNoise === true) return true
+        if (typeof event.pluginResetAt === "string" && event.pluginResetAt
+                && (event.kind === "allowance_increased_unknown"
+                || event.kind === "reset_redeemed_inferred" || event.kind === "credits_changed"))
+            return true
         var before = event.before || {}
         var after = event.after || {}
         var clearRefill = typeof before.usedPercent === "number" && isFinite(before.usedPercent)
@@ -704,7 +772,7 @@ PluginComponent {
     }
 
     function visibleHistoryGroups() {
-        // Keep ADR-0011's latest-eight-event scope, but hydrate any selected
+        // Keep the ADR-0011 latest-eight-event scope, but hydrate any selected
         // group from retained history so its related-change count and edit
         // target describe the matching changes in that observation group.
         var recentGroups = historyGroups(visibleHistory())
@@ -717,7 +785,106 @@ PluginComponent {
             if (recentGroups[j].groupId && fullByKey[recentGroups[j].key])
                 recentGroups[j] = fullByKey[recentGroups[j].key]
         }
-        return recentGroups
+        return mergePluginResetHistoryGroups(recentGroups, fullGroups)
+    }
+
+    function mergePluginResetHistoryGroups(groups, retainedGroups) {
+        // A confirmed action and its effects can be observed in separate
+        // samples. Join them only when the helper supplied an exact action
+        // timestamp and that action identifies one observation group.
+        var actionsByTime = ({})
+        for (var i = 0; i < retainedGroups.length; i++) {
+            var retained = retainedGroups[i]
+            for (var j = 0; j < retained.events.length; j++) {
+                var action = retained.events[j]
+                if (action.provider !== "codex" || action.kind !== "plugin_reset_reset"
+                        || action.source !== "plugin_reset" || action.confidence !== "confirmed"
+                        || typeof action.observedAt !== "string" || !action.observedAt) continue
+                if (!actionsByTime[action.observedAt]) actionsByTime[action.observedAt] = []
+                actionsByTime[action.observedAt].push(action)
+            }
+        }
+
+        var linksByTime = ({})
+        for (var g = 0; g < retainedGroups.length; g++) {
+            var candidate = retainedGroups[g]
+            for (var e = 0; e < candidate.events.length; e++) {
+                var event = candidate.events[e]
+                if (event.provider !== "codex" || typeof event.pluginResetAt !== "string"
+                        || !event.pluginResetAt || (event.kind !== "allowance_increased_unknown"
+                        && event.kind !== "reset_redeemed_inferred" && event.kind !== "credits_changed")) continue
+                if (!linksByTime[event.pluginResetAt]) linksByTime[event.pluginResetAt] = []
+                linksByTime[event.pluginResetAt].push({group: candidate, event: event})
+            }
+        }
+
+        var plansByTime = ({})
+        var linkTimes = Object.keys(linksByTime)
+        for (var t = 0; t < linkTimes.length; t++) {
+            var at = linkTimes[t]
+            var links = linksByTime[at]
+            if (!actionsByTime[at] || actionsByTime[at].length !== 1) continue
+            var observedAt = links[0].event.observedAt
+            var namedGroups = []
+            var linkGroups = []
+            for (var l = 0; l < links.length; l++) {
+                if (links[l].event.observedAt !== observedAt) {
+                    observedAt = ""
+                    break
+                }
+                if (linkGroups.indexOf(links[l].group) < 0) linkGroups.push(links[l].group)
+                if (links[l].group.groupId && namedGroups.indexOf(links[l].group) < 0)
+                    namedGroups.push(links[l].group)
+            }
+            if (!observedAt || namedGroups.length > 1 || (namedGroups.length === 0 && linkGroups.length !== 1))
+                continue
+            var anchorGroup = namedGroups.length === 1 ? namedGroups[0] : linkGroups[0]
+            var anchorEvent = null
+            var linkedEvents = []
+            for (var p = 0; p < links.length; p++) {
+                linkedEvents.push(links[p].event)
+                if (!anchorEvent && links[p].group === anchorGroup) anchorEvent = links[p].event
+            }
+            plansByTime[at] = {action: actionsByTime[at][0], anchorEvent: anchorEvent,
+                linkedEvents: linkedEvents}
+        }
+
+        var merged = []
+        var movedEvents = []
+        var mergedGroups = []
+        for (var k = 0; k < groups.length; k++) {
+            var group = groups[k]
+            var plan = null
+            for (var q = 0; q < linkTimes.length && !plan; q++) {
+                var possible = plansByTime[linkTimes[q]]
+                if (possible && group.events.indexOf(possible.anchorEvent) >= 0) plan = possible
+            }
+            if (plan) {
+                var combinedEvents = [plan.action]
+                for (var c = 0; c < group.events.length; c++) {
+                    if (combinedEvents.indexOf(group.events[c]) < 0) combinedEvents.push(group.events[c])
+                }
+                for (var a = 0; a < plan.linkedEvents.length; a++) {
+                    if (combinedEvents.indexOf(plan.linkedEvents[a]) < 0)
+                        combinedEvents.push(plan.linkedEvents[a])
+                    if (movedEvents.indexOf(plan.linkedEvents[a]) < 0)
+                        movedEvents.push(plan.linkedEvents[a])
+                }
+                movedEvents.push(plan.action)
+                group = Object.assign({}, group, {events: combinedEvents})
+                mergedGroups.push(group)
+            }
+            merged.push(group)
+        }
+        return merged.filter(function(group) {
+            // Legacy no-groupId keys depend on array position, so identify the
+            // exact retained event objects. Preserve any card that also has an
+            // unrelated row rather than dropping that row during display merge.
+            if (mergedGroups.indexOf(group) >= 0) return true
+            for (var i = 0; i < group.events.length; i++)
+                if (movedEvents.indexOf(group.events[i]) < 0) return true
+            return false
+        })
     }
 
     function historyGroupsForDisplay() {
@@ -1070,6 +1237,12 @@ PluginComponent {
 
     function historyEventTitle(event) {
         if (historyTimeOnlyChange(event)) return "Reset time changed · usage unchanged"
+        if (typeof event.pluginResetAt === "string" && event.pluginResetAt
+                && (event.kind === "allowance_increased_unknown"
+                || event.kind === "reset_redeemed_inferred")) return "Refill observed after plugin reset"
+        if (typeof event.pluginResetAt === "string" && event.pluginResetAt
+                && event.kind === "credits_changed")
+            return "Reset credit decrease after plugin reset"
         switch (event.kind) {
         case "scheduled_window": return "Scheduled window change"
         case "allowance_increased_unknown": return "Unexpected replenishment"
@@ -1109,7 +1282,14 @@ PluginComponent {
         if (before.resetAt && after.resetAt && before.resetAt !== after.resetAt)
             lines.push("Reset time: " + formatShortDateTime(before.resetAt)
                     + " → " + formatShortDateTime(after.resetAt))
-        if (event.message) lines.push(event.message)
+        if (typeof event.pluginResetAt === "string" && event.pluginResetAt
+                && (event.kind === "allowance_increased_unknown"
+                || event.kind === "reset_redeemed_inferred" || event.kind === "credits_changed")) {
+            lines.push(event.kind === "credits_changed"
+                    ? "The available reset count changed after the plugin applied a reset."
+                    : "The allowance refill was observed after the plugin applied a reset.")
+            lines.push("Plugin reset applied " + formatShortDateTime(event.pluginResetAt))
+        } else if (event.message) lines.push(event.message)
         return lines.join("\n")
     }
 
@@ -1251,9 +1431,20 @@ PluginComponent {
         var minutes = Math.ceil(ms / 60000)
         var days = Math.floor(minutes / 1440)
         var hours = Math.floor((minutes % 1440) / 60)
-        if (days > 0) return days + "d" + (hours ? " " + hours + "h" : "")
+        if (days > 0) return days + "d " + hours + "h" + (minutes % 60 ? " " + (minutes % 60) + "m" : "")
         if (hours > 0) return hours + "h" + (minutes % 60 ? " " + (minutes % 60) + "m" : "")
         return minutes + "m"
+    }
+
+    // Whole time units, with at most seven internal ticks for unusual windows.
+    function resetTimeScale(allowance) {
+        var minutes = allowance ? allowance.windowMinutes : 0
+        if (typeof minutes !== "number" || !isFinite(minutes) || minutes <= 0)
+            return { count: 0, stepMinutes: 0, label: "" }
+        var unit = minutes < 60 ? 15 : (minutes <= 1440 ? 60 : 1440)
+        var step = Math.ceil(minutes / (8 * unit)) * unit
+        return { count: Math.max(0, Math.ceil(minutes / step) - 1),
+            stepMinutes: step, label: step >= 1440 ? (step / 1440) + "d" : resetDuration(step * 60000) }
     }
 
     function resetCountdown(allowance, now, used) {
@@ -1283,9 +1474,8 @@ PluginComponent {
             if (showUsed && bucket.valueLabel) return bucket.valueLabel + " used"
             if (!showUsed && bucket.detail) return bucket.detail
         }
-        if (bucket.detail) return bucket.detail
         var countdown = resetCountdown(bucket.allowance, resetClock, showUsed)
-        return countdown || allowanceDetail(bucket.allowance)
+        return countdown || bucket.detail || allowanceDetail(bucket.allowance)
     }
 
     function quotaProgress(bucket) {
@@ -1850,6 +2040,7 @@ PluginComponent {
         Item {
             id: popoutRoot
             property var parentPopout: null
+            readonly property bool popoutVisible: parentPopout ? parentPopout.shouldBeVisible : false
             implicitHeight: Math.min(popoutColumn.implicitHeight, root.popoutMaxHeight(parentPopout))
 
             DankFlickable {
@@ -2320,7 +2511,7 @@ PluginComponent {
                                     Column {
                                         width: parent.width
                                         spacing: Theme.spacingXS
-                                        visible: modelData.id === "codex" && root.resetControlsVisible()
+                                        visible: modelData.id === "codex" && root.resetControlsVisible(modelData)
 
                                         DankToggle {
                                             id: codexAutoResetToggle
@@ -2426,7 +2617,7 @@ PluginComponent {
                         SectionHeader {
                             width: parent.width
                             title: "Reset history"
-                            badge: root.visibleHistory().length ? "" + root.visibleHistory().length : ""
+                            badge: historySection.unreadCount ? "" + historySection.unreadCount : ""
                             expanded: root.historyOpen || (root.historyExplanationGroup !== null
                                     && root.historyExplanationLocation !== "prompt")
                             onClicked: {
@@ -2437,6 +2628,19 @@ PluginComponent {
                         }
 
                         Column {
+                            id: historySection
+                            readonly property var groups: root.historyGroupsForDisplay()
+                            readonly property var readKeys: root.sectionReadKeys("history", groups.reduce(function(events, group) {
+                                return events.concat(group.events)
+                            }, []))
+                            readonly property int unreadCount: root.unreadSectionCount(readKeys, root.historyReadKeys)
+                            readonly property bool reading: popoutRoot.popoutVisible && visible
+                            onReadingChanged: if (reading) Qt.callLater(markRead)
+                            onReadKeysChanged: if (reading) Qt.callLater(markRead)
+                            function markRead() {
+                                if (reading) root.markSectionRead("history", readKeys)
+                            }
+
                             width: parent.width
                             spacing: Theme.spacingS
                             visible: root.historyOpen || (root.historyExplanationGroup !== null
@@ -2481,7 +2685,7 @@ PluginComponent {
                             }
 
                             Repeater {
-                                model: root.historyGroupsForDisplay()
+                                model: historySection.groups
 
                                 StyledRect {
                                     id: historyGroupCard
@@ -2599,13 +2803,24 @@ PluginComponent {
                         SectionHeader {
                             width: parent.width
                             title: "Public reset announcements (Alpha)"
-                            badge: root.visibleAnnouncements().length ? "" + root.visibleAnnouncements().length : ""
+                            badge: announcementsSection.unreadCount ? "" + announcementsSection.unreadCount : ""
                             expanded: root.announcementsOpen
                             visible: root.advancedDropdown && root.publicResetAnnouncements
                             onClicked: root.announcementsOpen = !root.announcementsOpen
                         }
 
                         Column {
+                            id: announcementsSection
+                            readonly property var items: root.visibleAnnouncements()
+                            readonly property var readKeys: root.sectionReadKeys("announcements", items)
+                            readonly property int unreadCount: root.unreadSectionCount(readKeys, root.announcementsReadKeys)
+                            readonly property bool reading: popoutRoot.popoutVisible && visible
+                            onReadingChanged: if (reading) Qt.callLater(markRead)
+                            onReadKeysChanged: if (reading) Qt.callLater(markRead)
+                            function markRead() {
+                                if (reading) root.markSectionRead("announcements", readKeys)
+                            }
+
                             width: parent.width
                             spacing: Theme.spacingS
                             visible: root.advancedDropdown && root.publicResetAnnouncements && root.announcementsOpen
@@ -2621,7 +2836,7 @@ PluginComponent {
                             }
 
                             Repeater {
-                                model: root.visibleAnnouncements()
+                                model: announcementsSection.items
                                 delegate: StyledRect {
                                     required property var modelData
                                     width: parent.width
@@ -3188,7 +3403,7 @@ PluginComponent {
         height: 32
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
-        Accessible.name: title + (badge !== "" ? " (" + badge + ")" : "") + (expanded ? "; expanded" : "; collapsed")
+        Accessible.name: title + (badge !== "" ? " (" + badge + " unread)" : "") + (expanded ? "; expanded" : "; collapsed")
         Accessible.onPressAction: clicked()
         Keys.onSpacePressed: clicked()
         Keys.onReturnPressed: clicked()
@@ -3452,6 +3667,7 @@ PluginComponent {
         property real timeProgress: bucket && bucket.kind !== "credits"
                 ? root.resetTimeProgress(bucket.allowance, root.resetClock, root.showUsed) : -1
         readonly property bool showTime: root.advancedDropdown && timeProgress >= 0
+        readonly property var timeScale: root.resetTimeScale(bucket ? bucket.allowance : null)
         readonly property color severityColor: root.allowanceColor(bucket ? bucket.allowance : null)
         height: root.quotaRowHeight(bucket)
 
@@ -3461,10 +3677,13 @@ PluginComponent {
             visible: resetHover.hovered && !!root.resetTiming(bucket ? bucket.allowance : null, root.resetClock)
             delay: 400
             text: bucket && bucket.allowance
-                    ? "Reset: " + root.formatShortDateTime(bucket.allowance.resetAt)
+                    ? root.resetCountdown(bucket.allowance, root.resetClock, root.showUsed)
+                        + "\nReset: " + root.formatShortDateTime(bucket.allowance.resetAt)
                         + (quotaBar.showTime
                            ? "\nThin bar: window time " + (root.showUsed ? "elapsed" : "remaining")
-                             + " (not quota usage)" : "") : ""
+                             + " (not quota usage)"
+                             + (quotaBar.timeScale.count > 0
+                                ? "\nTicks: every " + quotaBar.timeScale.label : "") : "") : ""
             contentItem: StyledText {
                 text: resetTooltip.text
                 textFormat: Text.PlainText
@@ -3542,6 +3761,7 @@ PluginComponent {
         }
 
         StyledRect {
+            id: timeTrack
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: quotaTrack.bottom
@@ -3556,6 +3776,19 @@ PluginComponent {
                 radius: parent.radius
                 color: Theme.surfaceVariantText
                 opacity: 0.6
+            }
+            Repeater {
+                model: quotaBar.showTime ? quotaBar.timeScale.count : 0
+                delegate: Rectangle {
+                    required property int index
+                    x: Math.round(timeTrack.width * (index + 1)
+                                  * quotaBar.timeScale.stepMinutes / quotaBar.bucket.allowance.windowMinutes) - width / 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 1
+                    height: 4
+                    color: Theme.surfaceVariantText
+                    opacity: 0.45
+                }
             }
         }
     }

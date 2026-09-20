@@ -27,9 +27,15 @@ monitoring app.
 - **Left / Used** switch for all percentages and bars at once.
 - **Opt-in automation**: a one-shot Codex reset that fires once near expiry
   or exhaustion, and Claude prime as a session-window scheduler. Both are off
-  by default.
+  by default. The Codex control is always accessible in plugin settings and
+  appears in Advanced when a spendable reset is available. Armed controls and
+  recovery messages remain visible even with no resets. Arming with no eligible
+  reset leaves the control off; it does not automatically use future credits.
 - **Local reset history** with an optional "What changed?" prompt, and an
-  optional, alpha-quality public reset feed.
+  optional, alpha-quality public reset feed. Section badges count unread items
+  and clear when viewed; read state survives restarts.
+  Confirmed plugin resets are linked to matching later refill and credit
+  observations, preserving the action and observation timestamps.
 
 The scope is deliberately two providers. Token history covers local CLI
 transcripts only, so it is not a complete account ledger. Subscription
@@ -43,23 +49,53 @@ process's `PATH`.
 **Nix**
 
 ```sh
-nix profile install github:alcxyz/DankAIUsage/main
+nix profile install github:alcxyz/DankAIUsage/dev
 ```
 
-For a declarative setup, this flake exposes `packages.<system>.default` for
-the helper; use the source directory as the DMS plugin. The maintained
-`dms-plugins` aggregate exports it as `srcs.aiusage`.
+The default package contains both the helper and a stamped plugin directory at
+`share/dms-plugins/DankAIUsage`. Use that directory as the DMS plugin source,
+so DMS and the helper display the same build version. For example:
 
-**Manual** (Go 1.22 or newer)
+```nix
+let
+  source = inputs.dms-plugins.srcs.aiusage;
+  package = pkgs.callPackage "${source}/default.nix" {
+    revision = source.rev or source.dirtyRev or null;
+  };
+in {
+  home.packages = [ package ];
+  programs.dank-material-shell.plugins.DankAIUsage.src =
+    "${package}/share/dms-plugins/DankAIUsage";
+}
+```
+
+Use your DMS module's plugin-source option for the last assignment. Release
+packaging is explicit: build `github:alcxyz/DankAIUsage/v1.1.0#release` (replace
+the tag with the desired published release). An untagged branch build uses the
+development package by default, even when its manifest base version matches a
+release.
+
+**Manual** (Go version from `go.mod`, plus Python 3)
 
 ```sh
-go build -o dankaiusage ./cmd/dankaiusage
-install -Dm755 dankaiusage ~/.local/bin/dankaiusage
+python3 scripts/package.py --output dist/dev
+install -Dm755 dist/dev/bin/dankaiusage ~/.local/bin/dankaiusage
+mkdir -p ~/.config/DankMaterialShell/plugins/DankAIUsage
+cp -R dist/dev/share/dms-plugins/DankAIUsage/. ~/.config/DankMaterialShell/plugins/DankAIUsage/
 ```
 
-Copy `plugin.json`, `DankAIUsageWidget.qml`, `DankAIUsageSettings.qml`, and
-`assets/` into `~/.config/DankMaterialShell/plugins/DankAIUsage/`. Make sure
-`~/.local/bin` is on the shell's `PATH` before starting DMS.
+Choose a fresh output directory for each build. Make sure `~/.local/bin` is on
+the shell's `PATH` before starting DMS. To package an official release, check
+out its `vX.Y.Z` tag in a clean checkout and add `--release` to the packaging
+command; it refuses a mismatched tag or modified checkout.
+
+Development packages show `X.Y.Z-dev.<12-character-commit>`, with `.dirty` for
+local modifications. Nix source-only imports use `X.Y.Z-dev.source.<fingerprint>`
+when Git metadata is unavailable; manual source archives use `X.Y.Z-dev.unknown`.
+Both installed `plugin.json` and the helper receive this same version. The
+tracked `plugin.json` stays `X.Y.Z` for official release tagging. An ordinary
+`go build` still works for helper-only development and reports `dev-<commit>`
+(or `dev` without Git metadata); use the packaging command when installing DMS.
 
 Then enable **AI Usage** in DMS plugin settings and add it to your bar.
 

@@ -1,29 +1,31 @@
-{ lib, buildGoModule, version ? "dev", revision ? null }:
+{ lib, buildGoModule, python3
+, version ? (builtins.fromJSON (builtins.readFile ./plugin.json)).version
+, revision ? null, release ? false
+}:
 
 let
-  # Flake-less consumers do not carry Git metadata. Fingerprint only public
-  # source files so their reports still distinguish builds without local paths.
-  sourceFiles = lib.filesystem.listFilesRecursive (lib.cleanSource ./.);
-  fingerprintFiles = builtins.filter (path:
-    let name = baseNameOf path;
-    in lib.hasSuffix ".go" name || lib.hasSuffix ".qml" name
-      || name == "plugin.json" || name == "go.mod"
-  ) sourceFiles;
-  sourceRevision = "source-" + builtins.hashString "sha256"
-    (lib.concatMapStrings (path: builtins.hashFile "sha256" path) fingerprintFiles);
+  metadata = import ./build-metadata.nix { inherit lib version revision release; };
+  source = metadata.source;
+  buildRevision = metadata.revision;
+  buildVersion = metadata.version;
 in
-
 buildGoModule {
   pname = "dankaiusage";
-  inherit version;
+  version = buildVersion;
 
-  src = ./.;
+  src = source;
 
   vendorHash = null;
 
   subPackages = [ "cmd/dankaiusage" ];
 
-  ldflags = [ "-s" "-w" "-X main.version=${version}" "-X main.revision=${if revision == null then sourceRevision else revision}" ];
+  ldflags = [ "-s" "-w" "-X main.version=${buildVersion}" "-X main.revision=${buildRevision}" ];
+  nativeBuildInputs = [ python3 ];
+  postInstall = ''
+    python3 scripts/package.py --stage-only --output "$out" \
+      --revision ${lib.escapeShellArg buildRevision} ${lib.optionalString release "--release"}
+    test "$($out/bin/dankaiusage version)" = ${lib.escapeShellArg buildVersion}
+  '';
 
   meta = with lib; {
     description = "Local Codex and Claude usage collector for DankMaterialShell";

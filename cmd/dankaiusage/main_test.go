@@ -4,10 +4,42 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestResolveBuildVersion(t *testing.T) {
+	revision := "ABCDEF0123456789ABCDEF0123456789ABCDEF01"
+	clean := &debug.BuildInfo{Settings: []debug.BuildSetting{
+		{Key: "vcs.revision", Value: revision},
+		{Key: "vcs.modified", Value: "false"},
+	}}
+	dirtyOutOfOrder := &debug.BuildInfo{Settings: []debug.BuildSetting{
+		{Key: "vcs.modified", Value: "true"},
+		{Key: "vcs.revision", Value: revision},
+	}}
+	for _, test := range []struct {
+		name       string
+		configured string
+		info       *debug.BuildInfo
+		want       string
+	}{
+		{name: "clean checkout", configured: "dev", info: clean, want: "dev-abcdef012345"},
+		{name: "dirty checkout", configured: "dev", info: dirtyOutOfOrder, want: "dev-abcdef012345-dirty"},
+		{name: "no metadata", configured: "dev", want: "dev"},
+		{name: "short revision", configured: "dev", info: &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "abcdef0"}}}, want: "dev"},
+		{name: "release override", configured: "1.2.3", info: dirtyOutOfOrder, want: "1.2.3"},
+		{name: "packaged dev override", configured: "1.2.3-dev.abcdef0.dirty", info: clean, want: "1.2.3-dev.abcdef0.dirty"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := resolveBuildVersion(test.configured, test.info); got != test.want {
+				t.Fatalf("resolveBuildVersion(%q) = %q, want %q", test.configured, got, test.want)
+			}
+		})
+	}
+}
 
 func TestParseLogFields(t *testing.T) {
 	fields := parseLogFields(`event.name="codex.sse_event" input_token_count=123 output_token_count=45 cached_token_count=100 conversation.id=abc`)

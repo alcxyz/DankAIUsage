@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,43 @@ import (
 )
 
 var version = "dev"
+
+func buildVersion() string {
+	info, _ := debug.ReadBuildInfo()
+	return resolveBuildVersion(version, info)
+}
+
+func resolveBuildVersion(configured string, info *debug.BuildInfo) string {
+	if configured != "dev" {
+		return configured
+	}
+	revision, modified := vcsBuildRevision(info)
+	if len(revision) < 12 || !isHex(revision) {
+		return configured
+	}
+	resolved := "dev-" + strings.ToLower(revision[:12])
+	if modified {
+		resolved += "-dirty"
+	}
+	return resolved
+}
+
+func vcsBuildRevision(info *debug.BuildInfo) (string, bool) {
+	if info == nil {
+		return "", false
+	}
+	var revision string
+	modified := false
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	return revision, modified
+}
 
 type PeriodTotals struct {
 	Input         int64  `json:"input"`
@@ -147,7 +185,7 @@ type options struct {
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Println(version)
+		fmt.Println(buildVersion())
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "claude-statusline" {
@@ -226,7 +264,7 @@ func collect(opts options) Summary {
 	opts.RefreshInterval = normalizeUsageRefreshInterval(opts.RefreshInterval)
 	now := time.Now()
 	out := Summary{
-		Version:     version,
+		Version:     buildVersion(),
 		GeneratedAt: now.Format(time.RFC3339),
 		PeriodDays:  opts.PeriodDays,
 		History:     []UsageHistoryEvent{},
@@ -862,7 +900,7 @@ func fetchCodexRateLimits() (codexRateLimitsResult, error) {
 		return codexRateLimitsResult{}, errors.New("Codex usage protocol is unavailable")
 	}
 
-	_, _ = io.WriteString(stdin, `{"id":1,"method":"initialize","params":{"clientInfo":{"name":"dankaiusage","title":"DankAIUsage","version":"`+version+`"},"capabilities":null}}`+"\n")
+	_, _ = io.WriteString(stdin, `{"id":1,"method":"initialize","params":{"clientInfo":{"name":"dankaiusage","title":"DankAIUsage","version":"`+buildVersion()+`"},"capabilities":null}}`+"\n")
 	_, _ = io.WriteString(stdin, `{"id":2,"method":"account/rateLimits/read","params":null}`+"\n")
 	defer stdin.Close()
 
