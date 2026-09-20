@@ -36,6 +36,8 @@ function bindQmlFunction(name, scope) {
 function makeScope() {
     const scope = {Date, isFinite, Math};
     scope.root = scope;
+    scope.resetTimeScale = bindQmlFunction("resetTimeScale", scope);
+    scope.quotaDetail = bindQmlFunction("quotaDetail", scope);
     scope.resetTiming = bindQmlFunction("resetTiming", scope);
     scope.resetDuration = bindQmlFunction("resetDuration", scope);
     scope.resetCountdown = bindQmlFunction("resetCountdown", scope);
@@ -67,8 +69,9 @@ test("duration formatting rounds up minutes and keeps useful day and hour units"
         [60_001, "2m"],
         [60 * 60_000, "1h"],
         [61 * 60_000, "1h 1m"],
-        [24 * 60 * 60_000, "1d"],
-        [(24 * 60 + 61) * 60_000, "1d 1h"],
+        [24 * 60 * 60_000, "1d 0h"],
+        [(24 * 60 + 61) * 60_000, "1d 1h 1m"],
+        [(3 * 1440 + 25) * 60_000, "3d 0h 25m"],
     ]) assert.equal(scope.resetDuration(milliseconds), expected);
 });
 
@@ -124,4 +127,32 @@ test("UTC instants use elapsed duration across the DST fallback", () => {
     assert.equal(scope.resetCountdown(value, beforeFallback, true), "Window elapsed: 2h");
     assert.equal(scope.resetTimeProgress(value, beforeFallback, false), 0.5);
     assert.equal(scope.resetTimeProgress(value, beforeFallback, true), 0.5);
+});
+
+
+test("live weekly countdown takes priority over stale helper detail", () => {
+    const scope = makeScope();
+    scope.resetClock = now;
+    scope.showUsed = false;
+    const bucket = {kind: "window", detail: "Resets in 3d", allowance:
+        allowance(new Date(now + (3 * 1440 + 125) * 60000).toISOString(), 10080)};
+    assert.equal(scope.quotaDetail(bucket), "Resets in 3d 2h 5m");
+    scope.resetClock += 60000;
+    assert.equal(scope.quotaDetail(bucket), "Resets in 3d 2h 4m");
+    scope.showUsed = true;
+    assert.equal(scope.quotaDetail(bucket), "Window elapsed: 3d 21h 56m");
+    assert.equal(scope.quotaDetail({kind: "credits", detail: "12 credits left"}), "12 credits left");
+    assert.equal(scope.quotaDetail({kind: "window", detail: "Unavailable"}), "Unavailable");
+});
+
+test("time scale marks whole hours and days without crowding unusual windows", () => {
+    const scope = makeScope();
+    for (const [minutes, count, step] of [[300, 4, 60], [10080, 6, 1440], [330, 5, 60], [43200, 7, 5760]]) {
+        const scale = scope.resetTimeScale({windowMinutes: minutes});
+        assert.equal(scale.count, count);
+        assert.equal(scale.stepMinutes, step);
+        assert.ok(count * step < minutes);
+    }
+    for (const value of [null, {}, {windowMinutes: 0}, {windowMinutes: Infinity}, {windowMinutes: "300"}])
+        assert.equal(scope.resetTimeScale(value).count, 0);
 });
