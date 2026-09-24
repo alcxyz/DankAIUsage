@@ -66,6 +66,10 @@
       "type": "boolean",
       "default": false
     },
+    "barShowCodexCredits": {
+      "type": "boolean",
+      "default": false
+    },
     "enableClaudePrime": {
       "type": "boolean",
       "default": false

@@ -24,6 +24,11 @@ both `spend` and `extra_usage` forms.
 - Parse Claude's `spend` object as the authoritative extra-usage representation
   and fall back to `extra_usage`. Monetary amounts remain integer minor units;
   currency and exponent metadata determine their display.
+- Treat a reported prepaid balance as a credits bucket for either provider:
+  Claude's `spend.balance`, and the optional `credits` object on the Codex
+  rate-limit snapshot. A balance with no monthly limit has an unknown
+  allowance, renders its formatted amount instead of a percentage, has no
+  progress bar, and never counts as the most constrained quota.
 - Render every bucket with the same label/value/detail/progress-bar component.
 - Use the lowest remaining bucket for provider summaries, the compact pill,
   and the overall "Most constrained" summary.

@@ -31,6 +31,7 @@ PluginComponent {
     property bool barShowClaudeWeekly: true
     property var barClaudeWeeklyOverrides: ({})
     property bool barShowClaudeCredits: false
+    property bool barShowCodexCredits: false
     property bool includeCachedTokens: false
     property bool compactPill: false
     property bool showUsed: false
@@ -174,6 +175,7 @@ PluginComponent {
         var weeklyOverrides = pluginService.loadPluginData(pluginId, "barClaudeWeeklyOverrides", {})
         barClaudeWeeklyOverrides = weeklyOverrides && typeof weeklyOverrides === "object" && !Array.isArray(weeklyOverrides) ? weeklyOverrides : {}
         barShowClaudeCredits = pluginService.loadPluginData(pluginId, "barShowClaudeCredits", false) === true
+        barShowCodexCredits = pluginService.loadPluginData(pluginId, "barShowCodexCredits", false) === true
         includeCachedTokens = pluginService.loadPluginData(pluginId, "includeCachedTokens", false) === true
         compactPill = pluginService.loadPluginData(pluginId, "compactPill", false) === true
         showUsed = pluginService.loadPluginData(pluginId, "showUsed", false) === true
@@ -1622,13 +1624,26 @@ PluginComponent {
         return used ? 1 - left : left
     }
 
+    // A prepaid balance has no window or limit; the provider's formatted
+    // amount is the value and there is no percentage to show.
+    function balanceOnlyBucket(bucket) {
+        return !!bucket && bucket.kind === "credits" && !knownAllowance(bucket.allowance) && !!bucket.valueLabel
+    }
+
     function quotaValue(bucket) {
         if (!bucket) return "--"
+        if (balanceOnlyBucket(bucket)) return bucket.valueLabel
         return allowanceLabel(bucket.allowance)
+    }
+
+    function bucketBarValue(bucket) {
+        if (balanceOnlyBucket(bucket)) return bucket.valueLabel
+        return allowanceLabel(bucket.allowance, false)
     }
 
     function quotaDetail(bucket) {
         if (!bucket) return "Limit unavailable"
+        if (balanceOnlyBucket(bucket)) return bucket.detail || "Prepaid balance"
         if (bucket.kind === "credits") {
             if (showUsed && bucket.valueLabel) return bucket.valueLabel + " used"
             if (!showUsed && bucket.detail) return bucket.detail
@@ -1753,7 +1768,14 @@ PluginComponent {
         if (!provider) return []
         if (provider.id !== "claude") {
             var weakest = weakestProviderQuota(provider)
-            return weakest ? [weakest] : []
+            var shown = weakest ? [weakest] : []
+            if (provider.id === "codex" && barShowCodexCredits) {
+                var all = providerQuotaBuckets(provider)
+                for (var c = 0; c < all.length; c++) {
+                    if (all[c].kind === "credits" && all[c] !== weakest) shown.push(all[c])
+                }
+            }
+            return shown
         }
 
         var out = []
@@ -1768,7 +1790,7 @@ PluginComponent {
         var buckets = providerTopBarBuckets(provider)
         var parts = []
         for (var i = 0; i < buckets.length; i++) {
-            parts.push(quotaShortLabel(buckets[i]) + " " + allowanceLabel(buckets[i].allowance, false))
+            parts.push(quotaShortLabel(buckets[i]) + " " + bucketBarValue(buckets[i]))
         }
         return parts.join(" · ")
     }
@@ -1791,7 +1813,7 @@ PluginComponent {
                     segments.push({
                         provider: list[i],
                         allowance: compactWeakest.allowance,
-                        text: (barShowProviderLogos ? "" : list[i].name + " ") + quotaShortLabel(compactWeakest) + " " + allowanceLabel(compactWeakest.allowance, false)
+                        text: (barShowProviderLogos ? "" : list[i].name + " ") + quotaShortLabel(compactWeakest) + " " + bucketBarValue(compactWeakest)
                     })
                 }
             }
@@ -3921,6 +3943,7 @@ PluginComponent {
             height: 6
             radius: 3
             color: Theme.withAlpha(Theme.surfaceVariantText, 0.18)
+            visible: !root.balanceOnlyBucket(bucket)
 
             StyledRect {
                 width: parent.width * root.quotaProgress(bucket) / 100

@@ -302,6 +302,13 @@ PluginSettings {
         defaultValue: false
     }
 
+    ToggleSetting {
+        settingKey: "barShowCodexCredits"
+        label: "Codex credits"
+        description: "Include Codex's prepaid credit balance in the top-bar overview when the account reports one"
+        defaultValue: false
+    }
+
     StyledText {
         text: "Collection and automation"
         font.pixelSize: Theme.fontSizeLarge

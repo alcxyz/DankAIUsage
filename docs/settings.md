@@ -20,6 +20,11 @@ in the dropdown; everything persistent about the bar lives here.
 Choose the plugin icon, provider logos, both, or neither. **Compact mode**
 keeps one selected quota per enabled provider rather than hiding a provider.
 
+## Codex credits in the top bar
+
+**Codex credits** adds the prepaid credit balance next to the most constrained
+Codex quota when the account reports one. Off by default.
+
 ## Claude quotas in the top bar
 
 Select session, weekly, and credits independently. Each reported weekly limit

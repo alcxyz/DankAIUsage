@@ -132,3 +132,36 @@ test("date labels delegate ordering and clock conventions to the Qt locale", () 
         assert.doesNotMatch(source, /getMonth|getDate|\["Sun",\s*"Mon"/);
     }
 });
+
+function makeQuotaScope(overrides = {}) {
+    const scope = {Math, showUsed: false, resetClock: 0, ...overrides};
+    scope.root = scope;
+    scope.resetCountdown = () => "";
+    for (const name of [
+        "knownAllowance", "displayPercent", "allowanceLabel", "allowanceDetail",
+        "balanceOnlyBucket", "quotaValue", "bucketBarValue", "quotaDetail",
+    ]) scope[name] = bindQmlFunction(name, scope);
+    return scope;
+}
+
+test("a prepaid credit balance renders its amount instead of a percentage", () => {
+    const scope = makeQuotaScope();
+    const balance = {kind: "credits", allowance: {known: false, unit: "currency"}, valueLabel: "$12.50", detail: "$12.50 prepaid balance"};
+    assert.equal(scope.balanceOnlyBucket(balance), true);
+    assert.equal(scope.quotaValue(balance), "$12.50");
+    assert.equal(scope.bucketBarValue(balance), "$12.50");
+    assert.equal(scope.quotaDetail(balance), "$12.50 prepaid balance");
+    scope.showUsed = true;
+    assert.equal(scope.quotaDetail(balance), "$12.50 prepaid balance");
+
+    const limited = {kind: "credits", allowance: {known: true, percentUsed: 41, percentRemaining: 59}, valueLabel: "$41.00 / $100.00", detail: "$59.00 remaining"};
+    assert.equal(scope.balanceOnlyBucket(limited), false);
+    assert.equal(scope.quotaValue(limited), "41% used");
+    assert.equal(scope.quotaDetail(limited), "$41.00 / $100.00 used");
+    scope.showUsed = false;
+    assert.equal(scope.bucketBarValue(limited), "59%");
+
+    const unknown = {kind: "weekly", allowance: {known: false}};
+    assert.equal(scope.balanceOnlyBucket(unknown), false);
+    assert.equal(scope.quotaValue(unknown), "--");
+});

@@ -101,8 +101,9 @@ assert 'root.historyEventDetail(modelData)' in component_text
 
 # Both bar layouts omit the mode suffix; dropdown labels retain it by default.
 assert 'includeMode === false ? "%"' in component_text
-assert 'allowanceLabel(buckets[i].allowance, false)' in component_text
-assert 'allowanceLabel(compactWeakest.allowance, false)' in component_text
+assert 'quotaShortLabel(buckets[i]) + " " + bucketBarValue(buckets[i])' in component_text
+assert 'quotaShortLabel(compactWeakest) + " " + bucketBarValue(compactWeakest)' in component_text
+assert 'return allowanceLabel(bucket.allowance, false)' in component_text
 assert 'return allowanceLabel(bucket.allowance)' in component_text
 assert 'component TokenHistoryRow: StyledRect' in component_text
 assert component_text.count('TokenHistoryRow {') == 1, 'only the overview owns a range selector'
@@ -351,10 +352,20 @@ weeklyScope.barShowProviderLogos = true;
 weeklyScope.knownAllowance = () => true;
 weeklyScope.quotaShortLabel = bucket => bucket.id;
 weeklyScope.allowanceLabel = () => "50%";
+weeklyScope.balanceOnlyBucket = () => false;
+weeklyScope.bucketBarValue = bindQmlFunction("bucketBarValue", weeklyScope);
 const compactSegments = bindQmlFunction("topBarSegments", weeklyScope);
 equal(compactSegments()[0].text, "fable-weekly 50%", "compact ignores deselected general weekly");
 weeklyScope.barClaudeWeeklyOverrides = {"general-weekly": false, "fable-weekly": false};
 equal(compactSegments().length, 0, "no weekly segment when neither selected");
+const codexWeekly = {id: "general-weekly", kind: "weekly", allowance: {known: true, window: "weekly"}};
+const codexCredits = {id: "codex-credits", kind: "credits", allowance: {known: false}, valueLabel: "$12.50"};
+const codexProvider = {id: "codex", quotaBuckets: [codexWeekly, codexCredits]};
+weeklyScope.weakestProviderQuota = () => codexWeekly;
+weeklyScope.barShowCodexCredits = false;
+equal(weeklyScope.providerTopBarBuckets(codexProvider).length, 1, "codex credits stay out of the bar by default");
+weeklyScope.barShowCodexCredits = true;
+equal(weeklyScope.providerTopBarBuckets(codexProvider).map(b => b.id).join(","), "general-weekly,codex-credits", "codex credits follow their bar switch");
 equal(resolve("simple", {providers: []}), "simple", "persisted simple wins");
 equal(resolve("advanced", null), "advanced", "persisted advanced wins");
 equal(resolve("", {providers: []}), "advanced", "existing cached user migrates to advanced");
