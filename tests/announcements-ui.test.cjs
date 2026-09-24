@@ -72,6 +72,7 @@ function makeScope(overrides = {}) {
         announcementReceipts: {},
         announcementClock: Date.parse("2026-09-12T12:00:00Z"),
         advancedDropdown: false,
+        announcementsVisibleLimit: 4,
         showCodex: true,
         showClaude: true,
         pluginId: "dankAIUsage",
@@ -84,6 +85,7 @@ function makeScope(overrides = {}) {
     scope.historyProviderVisible = bindQmlFunction("historyProviderVisible", scope);
     scope.historyEventNeedsNoPrompt = bindQmlFunction("historyEventNeedsNoPrompt", scope);
     scope.announcementUpcoming = bindQmlFunction("announcementUpcoming", scope);
+    scope.matchingAnnouncements = bindQmlFunction("matchingAnnouncements", scope);
     scope.visibleAnnouncements = bindQmlFunction("visibleAnnouncements", scope);
     scope.notifyUpcomingAnnouncements = bindQmlFunction("notifyUpcomingAnnouncements", scope);
     scope.matchingPublicAnnouncement = bindQmlFunction("matchingPublicAnnouncement", scope);

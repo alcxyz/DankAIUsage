@@ -1,7 +1,8 @@
 # Reset history
 
 Expand **Reset history** at the bottom of the Advanced dropdown to see the
-latest eight observed events for your enabled providers. The helper keeps at
+latest four observed events for your enabled providers. **Show more** reveals
+the next four; closing the dropdown returns to the first page. The helper keeps at
 most 200 events for 30 days, locally, without a separate service or database.
 History starts with the first observation; it cannot reconstruct earlier
 resets.
@@ -56,8 +57,8 @@ Its separate **Scheduled 5-hour resets** and **Scheduled weekly resets**
 checkboxes remember your choices. **Other reset events** is checked by default
 and includes unexpected refills, redemptions, timing changes, and unclassified
 windows. Uncheck all three to hide all events. Recording and retention are
-unchanged; the latest eight matching events are shown, so routine events do
-not crowd out unexpected refills or reset redemptions. Unknown window types
+unchanged; the latest four matching events are shown first, so routine events
+do not crowd out unexpected refills or reset redemptions. Unknown window types
 follow Other.
 
 ## Explain an unexpected change
@@ -136,7 +137,7 @@ Explicit upcoming resets marked verified by TokenResets can generate a DMS
 toast (or a desktop notification when **Desktop notifications** is enabled)
 and appear in either dropdown mode. Times are displayed locally;
 unknown timing and eligibility stay unknown. Advanced also shows recent
-reports and links to the evidence. Corrections replace the previous snapshot;
+reports and links to the evidence, four at a time with a **Show more** control. Corrections replace the previous snapshot;
 stale feeds cannot trigger alerts or matching. Completed historical reports do
 not generate notifications on installation or restart.
 

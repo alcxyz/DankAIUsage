@@ -50,6 +50,11 @@ PluginComponent {
     property bool _announcementInvalid: false
     property var announcementReceipts: ({})
     property bool systemNotifications: true
+    // Both disclosure sections show one page at a time; "Show more" reveals
+    // the next page and closing the dropdown returns to the first page.
+    readonly property int sectionPageSize: 4
+    property int historyVisibleLimit: 4
+    property int announcementsVisibleLimit: 4
     property double announcementClock: Date.now()
     property bool diagnosticsOpen: false
     property string diagnosticReport: ""
@@ -670,13 +675,17 @@ PluginComponent {
                 && !event.effectiveAt && (!event.expiresAt || Date.parse(event.expiresAt) > now)
     }
 
-    function visibleAnnouncements() {
+    function matchingAnnouncements() {
         if (!publicResetAnnouncements) return []
         return publicAnnouncements.filter(function(event) {
             if (!root.historyProviderVisible(event)) return false
             if (event.expiresAt && Date.parse(event.expiresAt) <= root.announcementClock) return false
             return root.advancedDropdown || (!root.announcementsStale && root.announcementUpcoming(event, root.announcementClock))
-        }).slice(0, 4)
+        })
+    }
+
+    function visibleAnnouncements() {
+        return matchingAnnouncements().slice(0, announcementsVisibleLimit)
     }
 
     function announcementSummary(event) {
@@ -904,7 +913,7 @@ PluginComponent {
     }
 
     function visibleHistoryGroups() {
-        // Keep the ADR-0011 latest-eight-event scope, but hydrate any selected
+        // Keep the ADR-0011 paged display scope, but hydrate any selected
         // group from retained history so its related-change count and edit
         // target describe the matching changes in that observation group.
         var recentGroups = historyGroups(visibleHistory())
@@ -1346,14 +1355,32 @@ PluginComponent {
             pluginService.savePluginState(pluginId, key, root[key])
     }
 
-    function visibleHistory() {
+    function matchingHistory() {
         return usageHistory.filter(function(event) {
             return event && ((event.provider === "codex" && root.showCodex)
                     || (event.provider === "claude" && root.showClaude))
                     && historyMatchesFilters(event)
         }).sort(function(a, b) {
             return Date.parse(b.observedAt) - Date.parse(a.observedAt)
-        }).slice(0, 8)
+        })
+    }
+
+    function visibleHistory() {
+        return matchingHistory().slice(0, historyVisibleLimit)
+    }
+
+    function showMoreSection(section) {
+        if (section === "history") historyVisibleLimit += sectionPageSize
+        else if (section === "announcements") announcementsVisibleLimit += sectionPageSize
+    }
+
+    function resetSectionLimits() {
+        historyVisibleLimit = sectionPageSize
+        announcementsVisibleLimit = sectionPageSize
+    }
+
+    function showMoreLabel(hidden) {
+        return "Show " + Math.min(sectionPageSize, hidden) + " more (" + hidden + " hidden)"
     }
 
     function historyTimeOnlyChange(event) {
@@ -2173,6 +2200,7 @@ PluginComponent {
             id: popoutRoot
             property var parentPopout: null
             readonly property bool popoutVisible: parentPopout ? parentPopout.shouldBeVisible : false
+            onPopoutVisibleChanged: if (!popoutVisible) root.resetSectionLimits()
             implicitHeight: Math.min(popoutColumn.implicitHeight, root.popoutMaxHeight(parentPopout))
 
             DankFlickable {
@@ -2930,6 +2958,13 @@ PluginComponent {
                                     }
                                 }
                             }
+
+                            CompactAction {
+                                readonly property int hidden: root.matchingHistory().length - root.visibleHistory().length
+                                text: root.showMoreLabel(hidden)
+                                visible: hidden > 0
+                                onClicked: root.showMoreSection("history")
+                            }
                         }
 
                         SectionHeader {
@@ -3010,6 +3045,13 @@ PluginComponent {
                                         }
                                     }
                                 }
+                            }
+
+                            CompactAction {
+                                readonly property int hidden: root.matchingAnnouncements().length - announcementsSection.items.length
+                                text: root.showMoreLabel(hidden)
+                                visible: hidden > 0
+                                onClicked: root.showMoreSection("announcements")
                             }
                         }
 

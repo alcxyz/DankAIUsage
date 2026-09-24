@@ -5,10 +5,12 @@ const qml = fs.readFileSync(`${__dirname}/../DankAIUsageWidget.qml`, 'utf8');
 
 function scope() {
     const s = { historyShowOther: true, historyShowScheduledShort: false, historyShowScheduledWeekly: false,
-        showCodex: true, showClaude: true, usageHistory: [], pluginId: 'test', saved: [] };
+        showCodex: true, showClaude: true, usageHistory: [], pluginId: 'test', saved: [],
+        sectionPageSize: 4, historyVisibleLimit: 4, announcementsVisibleLimit: 4 };
     s.root = s;
     s.pluginService = { savePluginState: (...args) => s.saved.push(args) };
-    for (const name of ['historyMatchesFilters', 'visibleHistory', 'setHistoryFilter']) {
+    for (const name of ['historyMatchesFilters', 'matchingHistory', 'visibleHistory', 'setHistoryFilter',
+        'showMoreSection', 'resetSectionLimits', 'showMoreLabel']) {
         const source = qml.match(new RegExp(`    function ${name}\\([^]*?\\n    }`))[0];
         s[name] = new Function('scope', `with(scope) { return (${source.trim()}); }`)(s);
     }
@@ -35,7 +37,7 @@ test('independent checkboxes hide only known scheduled windows', () => {
     assert.equal(s.showClaude, true);
 });
 
-test('filtering precedes the eight-event limit and never mutates retained history', () => {
+test('filtering precedes the paged display limit and never mutates retained history', () => {
     const s = scope();
     s.usageHistory = Array.from({length: 12}, (_, i) => ({provider: 'claude',
         bucket: 'general-5-hour', kind: i < 9 ? 'scheduled_window' : 'allowance_increased_unknown',
@@ -43,10 +45,32 @@ test('filtering precedes the eight-event limit and never mutates retained histor
     const before = JSON.stringify(s.usageHistory);
     assert.equal(s.visibleHistory().length, 3);
     s.setHistoryFilter('historyShowScheduledShort', true);
-    assert.equal(s.visibleHistory().length, 8);
+    assert.equal(s.matchingHistory().length, 12);
+    assert.equal(s.visibleHistory().length, 4);
     s.showClaude = false;
     assert.equal(s.visibleHistory().length, 0);
     assert.equal(JSON.stringify(s.usageHistory), before);
+});
+
+test('show more reveals the next page in order and closing the dropdown returns to the first page', () => {
+    const s = scope();
+    s.usageHistory = Array.from({length: 10}, (_, i) => ({provider: 'codex',
+        bucket: 'general-weekly', kind: 'allowance_increased_unknown',
+        observedAt: new Date(Date.UTC(2026, 8, 13, 12, 59-i)).toISOString()}));
+    assert.equal(s.visibleHistory().length, 4);
+    assert.equal(s.showMoreLabel(s.matchingHistory().length - s.visibleHistory().length), 'Show 4 more (6 hidden)');
+    s.showMoreSection('history');
+    assert.equal(s.visibleHistory().length, 8);
+    assert.deepEqual(s.visibleHistory(), s.matchingHistory().slice(0, 8));
+    assert.equal(s.showMoreLabel(s.matchingHistory().length - s.visibleHistory().length), 'Show 2 more (2 hidden)');
+    s.showMoreSection('history');
+    assert.equal(s.visibleHistory().length, 10);
+    s.showMoreSection('announcements');
+    assert.equal(s.announcementsVisibleLimit, 8);
+    s.resetSectionLimits();
+    assert.equal(s.historyVisibleLimit, 4);
+    assert.equal(s.announcementsVisibleLimit, 4);
+    assert.equal(s.visibleHistory().length, 4);
 });
 
 test('Other is enabled by default and all categories can be independently hidden', () => {
