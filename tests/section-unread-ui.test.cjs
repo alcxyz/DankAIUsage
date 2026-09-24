@@ -293,3 +293,124 @@ Item {
         fs.rmSync(directory, {recursive: true, force: true});
     }
 });
+
+function makeSharedScope(state, overrides = {}) {
+    const notifications = [];
+    const scope = makeScope({
+        systemNotifications: true,
+        Quickshell: {
+            execDetached(command) {
+                notifications.push(command);
+            },
+        },
+        Qt: {resolvedUrl(asset) { return `file:///plugins/DankAIUsage/${asset}`; }},
+        pluginService: {
+            loadPluginState(_plugin, key, defaultValue) {
+                return key in state ? structuredClone(state[key]) : defaultValue;
+            },
+            savePluginState(_plugin, key, value) {
+                state[key] = structuredClone(value);
+            },
+        },
+        ...overrides,
+    });
+    scope.notifications = notifications;
+    for (const name of [
+        "syncSharedState",
+        "desktopNotify",
+        "providerNotificationIcon",
+        "notifyNewSectionItems",
+    ]) scope[name] = bindQmlFunction(name, scope);
+    return scope;
+}
+
+test("a widget instance reloads read keys and receipts saved by another instance", () => {
+    const state = {};
+    const first = makeSharedScope(state);
+    const second = makeSharedScope(state);
+    const keys = first.sectionReadKeys("history", [historyEvent(), historyEvent({groupId: "observation-2"})]);
+
+    first.markSectionRead("history", keys);
+    assert.equal(second.unreadSectionCount(keys, second.historyReadKeys), 2);
+
+    second.syncSharedState();
+    assert.equal(second.unreadSectionCount(keys, second.historyReadKeys), 0);
+    assert.deepEqual(second.historyReadKeys, keys);
+
+    state.announcementReceipts = {"reset-a:1": 1};
+    second.syncSharedState();
+    assert.deepEqual(second.announcementReceipts, {"reset-a:1": 1});
+
+    // Unchanged state keeps the same array identity so bindings do not churn.
+    const before = second.historyReadKeys;
+    second.syncSharedState();
+    assert.strictEqual(second.historyReadKeys, before);
+});
+
+test("first tracked refresh records existing items without notifying", () => {
+    const state = {};
+    const scope = makeSharedScope(state);
+    const group = {keys: ["h1", "h2"], title: "Codex · Unexpected replenishment", body: "Observed", icon: ""};
+
+    assert.equal(scope.notifyNewSectionItems("history", [group]), 0);
+    assert.deepEqual(scope.notifications, []);
+    assert.deepEqual(state.historyNotifiedKeys, ["h1", "h2"]);
+});
+
+test("new items notify once across refreshes, restarts, and instances", () => {
+    const state = {historyNotifiedKeys: []};
+    const scope = makeSharedScope(state);
+    const group = {keys: ["h1"], title: "Codex · Likely reset redeemed", body: "Observed now", icon: "/icon.svg"};
+
+    assert.equal(scope.notifyNewSectionItems("history", [group]), 1);
+    assert.deepEqual(scope.notifications, [[
+        "notify-send", "-a", "AI Usage", "-u", "normal", "-i", "/icon.svg",
+        "Codex · Likely reset redeemed", "Observed now",
+    ]]);
+
+    assert.equal(scope.notifyNewSectionItems("history", [group]), 0);
+    const other = makeSharedScope(state);
+    assert.equal(other.notifyNewSectionItems("history", [group]), 0);
+    assert.deepEqual(other.notifications, []);
+});
+
+test("items already read in the dropdown are tracked but never notified", () => {
+    const state = {historyNotifiedKeys: []};
+    const scope = makeSharedScope(state, {historyReadKeys: ["h1"]});
+
+    assert.equal(scope.notifyNewSectionItems("history", [{keys: ["h1"], title: "t", body: "b", icon: ""}]), 0);
+    assert.deepEqual(scope.notifications, []);
+    assert.deepEqual(state.historyNotifiedKeys, ["h1"]);
+});
+
+test("disabled desktop notifications still track keys so enabling later does not replay", () => {
+    const state = {announcementsNotifiedKeys: []};
+    const scope = makeSharedScope(state, {systemNotifications: false});
+    const group = {keys: ["a1"], title: "t", body: "b", icon: ""};
+
+    assert.equal(scope.notifyNewSectionItems("announcements", [group]), 0);
+    assert.deepEqual(scope.notifications, []);
+    assert.deepEqual(state.announcementsNotifiedKeys, ["a1"]);
+
+    scope.systemNotifications = true;
+    assert.equal(scope.notifyNewSectionItems("announcements", [group]), 0);
+    assert.deepEqual(scope.notifications, []);
+});
+
+test("more than three new items collapse into one summary notification", () => {
+    const state = {historyNotifiedKeys: []};
+    const scope = makeSharedScope(state);
+    const groups = ["h1", "h2", "h3", "h4"].map(key => ({keys: [key], title: key, body: key, icon: ""}));
+
+    assert.equal(scope.notifyNewSectionItems("history", groups), 4);
+    assert.equal(scope.notifications.length, 1);
+    assert.equal(scope.notifications[0][5], "AI Usage · 4 new reset history changes");
+    assert.deepEqual(state.historyNotifiedKeys, ["h1", "h2", "h3", "h4"]);
+});
+
+test("provider icons resolve to plugin asset paths", () => {
+    const scope = makeSharedScope({});
+    assert.equal(scope.providerNotificationIcon("codex"), "/plugins/DankAIUsage/assets/openai.svg");
+    assert.equal(scope.providerNotificationIcon("claude"), "/plugins/DankAIUsage/assets/claude.svg");
+    assert.equal(scope.providerNotificationIcon("other"), "");
+});

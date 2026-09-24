@@ -38,6 +38,7 @@ assert plugin["settings_schema"]["refreshInterval"]["minimum"] == 180
 assert plugin["settings_schema"]["refreshInterval"]["maximum"] == 3600
 assert plugin["settings_schema"]["refreshInterval"]["default"] == 300
 assert plugin["settings_schema"]["publicResetAnnouncements"] == {"type": "boolean", "default": False}
+assert plugin["settings_schema"]["systemNotifications"] == {"type": "boolean", "default": True}
 
 component = pathlib.Path(plugin["component"].removeprefix("./"))
 settings = pathlib.Path(plugin["settings"].removeprefix("./"))

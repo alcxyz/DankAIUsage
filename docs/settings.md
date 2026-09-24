@@ -37,6 +37,9 @@ remain visible in the dropdown.
 - **Public reset announcements (Alpha):** off by default; reads a third-party
   public feed. See
   [Public reset announcements](reset-history.md#public-reset-announcements-alpha-optional).
+- **Desktop notifications:** on by default; sends a `notify-send` notification
+  for new reset history changes and new public reset announcements. See
+  [Notifications](reset-history.md#notifications).
 
 ## Reset history filters
 

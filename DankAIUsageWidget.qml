@@ -49,6 +49,7 @@ PluginComponent {
     property string _announcementOutput: ""
     property bool _announcementInvalid: false
     property var announcementReceipts: ({})
+    property bool systemNotifications: true
     property double announcementClock: Date.now()
     property bool diagnosticsOpen: false
     property string diagnosticReport: ""
@@ -116,6 +117,7 @@ PluginComponent {
 
         function onPluginStateChanged(changedPluginId) {
             if (changedPluginId !== root.pluginId) return
+            root.syncSharedState()
             var revision = root.pluginService.loadPluginState(root.pluginId, "codexResetRevision", 0)
             if (revision === root._codexResetRevision) return
             root._codexResetRevision = revision
@@ -143,6 +145,7 @@ PluginComponent {
         var wasEnabled = enableClaudePrime
         var announcementsWereEnabled = publicResetAnnouncements
         publicResetAnnouncements = pluginService.loadPluginData(pluginId, "publicResetAnnouncements", false) === true
+        systemNotifications = pluginService.loadPluginData(pluginId, "systemNotifications", true) !== false
         if (publicResetAnnouncements && !announcementsWereEnabled) {
             var savedReceipts = pluginService.loadPluginState(pluginId, "announcementReceipts", {})
             announcementReceipts = savedReceipts && typeof savedReceipts === "object" && !Array.isArray(savedReceipts) ? savedReceipts : {}
@@ -223,6 +226,132 @@ PluginComponent {
 
     function unreadSectionCount(keys, readKeys) {
         return keys.filter(function(key) { return readKeys.indexOf(key) < 0 }).length
+    }
+
+    function syncSharedState() {
+        // Every bar instance keeps its own copy of the read and receipt state.
+        // Reload from the shared plugin state so viewing a section in one
+        // dropdown clears the badge in every other instance.
+        if (!pluginService || !pluginService.loadPluginState) return
+        var sections = ["history", "announcements"]
+        for (var i = 0; i < sections.length; i++) {
+            var property = sections[i] + "ReadKeys"
+            var stored = normalizedReadKeys(pluginService.loadPluginState(pluginId, property, []))
+            if (JSON.stringify(stored) !== JSON.stringify(root[property])) root[property] = stored
+        }
+        var receipts = pluginService.loadPluginState(pluginId, "announcementReceipts", {})
+        if (receipts && typeof receipts === "object" && !Array.isArray(receipts)
+                && JSON.stringify(receipts) !== JSON.stringify(announcementReceipts))
+            announcementReceipts = receipts
+    }
+
+    function desktopNotify(title, body, icon) {
+        if (!systemNotifications) return false
+        var command = ["notify-send", "-a", "AI Usage", "-u", "normal"]
+        if (icon) command.push("-i", icon)
+        command.push(title, body)
+        Quickshell.execDetached(command)
+        return true
+    }
+
+    function providerNotificationIcon(provider) {
+        var asset = provider === "codex" ? "assets/openai.svg" : provider === "claude" ? "assets/claude.svg" : ""
+        if (!asset) return ""
+        return Qt.resolvedUrl(asset).toString().replace(/^file:\/\//, "")
+    }
+
+    function notifyNewSectionItems(section, groups) {
+        // groups: [{ keys, title, body, icon }]. Each key is notified at most
+        // once across restarts and bar instances; keys already read in the
+        // dropdown never notify. Tracking continues while notifications are
+        // off so enabling them later does not replay old items.
+        if (section !== "history" && section !== "announcements") return 0
+        if (!pluginService || !pluginService.loadPluginState || !pluginService.savePluginState) return 0
+        var property = section + "NotifiedKeys"
+        var stored = pluginService.loadPluginState(pluginId, property, null)
+        var currentKeys = []
+        for (var i = 0; i < groups.length; i++) currentKeys = currentKeys.concat(groups[i].keys)
+        if (!Array.isArray(stored)) {
+            // First run: existing items are not news.
+            pluginService.savePluginState(pluginId, property, normalizedReadKeys(currentKeys))
+            return 0
+        }
+        var notified = normalizedReadKeys(stored)
+        var readKeys = root[section + "ReadKeys"]
+        var pending = []
+        var added = []
+        for (var g = 0; g < groups.length; g++) {
+            var group = groups[g]
+            var fresh = group.keys.filter(function(key) { return notified.indexOf(key) < 0 })
+            if (fresh.length === 0) continue
+            added = added.concat(group.keys)
+            if (fresh.some(function(key) { return readKeys.indexOf(key) < 0 })) pending.push(group)
+        }
+        if (added.length > 0) {
+            var retained = notified.filter(function(key) { return added.indexOf(key) < 0 })
+            pluginService.savePluginState(pluginId, property, normalizedReadKeys(retained.concat(added)))
+        }
+        if (pending.length === 0 || !systemNotifications) return 0
+        if (pending.length > 3) {
+            var label = section === "history" ? "reset history changes" : "public reset announcements"
+            desktopNotify("AI Usage · " + pending.length + " new " + label,
+                    "Open the AI Usage dropdown to review them.", "")
+            return pending.length
+        }
+        for (var n = 0; n < pending.length; n++)
+            desktopNotify(pending[n].title, pending[n].body, pending[n].icon)
+        return pending.length
+    }
+
+    function historyNotificationTitle(group) {
+        var event = null
+        for (var i = 0; i < group.events.length; i++) {
+            if (historyEventEligible(group.events[i]) && group.events[i].timingNoise !== true) {
+                event = group.events[i]
+                break
+            }
+        }
+        if (!event) event = group.events[0]
+        if (!event) return "Reset history"
+        return historyProviderName(event.provider) + " · " + historyEventTitle(event)
+                + (event.label ? " · " + event.label : "")
+    }
+
+    function notifyHistoryUpdates() {
+        var now = Date.now()
+        var groups = historyGroupsForDisplay().map(function(group) {
+            var observed = Date.parse(group.observedAt)
+            // Changes older than a day are history, not news; still track them.
+            var recent = isFinite(observed) && now - observed <= 24 * 3600000
+            return {
+                keys: recent ? sectionReadKeys("history", group.events) : [],
+                title: historyNotificationTitle(group),
+                body: "Observed " + formatShortDateTime(group.observedAt) + " · " + group.events.length
+                        + (group.events.length === 1 ? " change" : " related changes")
+                        + ". Open the AI Usage dropdown for details.",
+                icon: providerNotificationIcon(group.provider)
+            }
+        }).filter(function(group) { return group.keys.length > 0 })
+        return notifyNewSectionItems("history", groups)
+    }
+
+    function notifyAnnouncementUpdates() {
+        // ADR-0017: a stale feed cannot alert. Do not record keys either, so
+        // the items notify once the feed recovers.
+        if (!publicResetAnnouncements || announcementsStale) return 0
+        var groups = visibleAnnouncements().map(function(event) {
+            var body = announcementSummary(event)
+            if (announcementUpcoming(event, announcementClock))
+                body += "\nExpected by " + formatShortDateTime(event.expectedBy) + "."
+            body += "\nReported via TokenResets (Alpha); check eligibility in the dropdown."
+            return {
+                keys: sectionReadKeys("announcements", [event]),
+                title: historyProviderName(event.provider) + " · " + (event.title || "Public reset announcement"),
+                body: body,
+                icon: providerNotificationIcon(event.provider)
+            }
+        })
+        return notifyNewSectionItems("announcements", groups)
     }
 
     function markSectionRead(section, keys) {
@@ -443,6 +572,7 @@ PluginComponent {
             try {
                 var summary = JSON.parse(root._pendingOutput.trim())
                 root.applySummary(summary, true)
+                root.notifyHistoryUpdates()
                 if (root.pluginService && root.pluginService.savePluginState) {
                     // Keep the bounded helper history in one store, not in the DMS cache too.
                     var cachedSummary = Object.assign({}, summary)
@@ -514,6 +644,7 @@ PluginComponent {
                         : "Public reports via TokenResets; account eligibility is not verified."
                 root.announcementClock = Date.now()
                 root.notifyUpcomingAnnouncements()
+                root.notifyAnnouncementUpdates()
             } catch (e) { /* No remote errors enter quota status or diagnostics. */ }
         }
     }
@@ -570,6 +701,7 @@ PluginComponent {
             receipts[key] = now
             announcementReceipts = receipts
             pluginService.savePluginState(pluginId, "announcementReceipts", receipts)
+            if (systemNotifications) continue
             ToastService.showInfo("Public reset announcement (Alpha)",
                     (event.provider === "codex" ? "Codex" : "Claude") + " reset announced by "
                     + formatShortDateTime(event.expectedBy) + ". Reported via TokenResets; check eligibility in the dropdown.")

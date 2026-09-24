@@ -96,6 +96,22 @@ silently erasing notes.
 See [ADR-0014](adr/ADR-0014-user-reported-history-explanations.md) for the
 grouping and attribution policy.
 
+## Notifications
+
+The **Reset history** and **Public reset announcements** disclosure rows show
+an unread badge. Viewing a section while the dropdown is open marks its
+displayed items read. Read state is stored in plugin state and shared by every
+bar instance, so a badge cleared on one monitor clears everywhere.
+
+With **Desktop notifications** enabled (the default), a new history change
+observed within the last day raises one desktop notification per observation
+group, and a new public announcement raises one per report. More than three
+new items in one refresh collapse into a single summary notification. Each
+item notifies at most once across restarts and bar instances; items already
+viewed in the dropdown, items that existed before the setting was first
+tracked, and a stale public feed never notify. Turning the setting off keeps
+tracking, so enabling it later does not replay old items.
+
 ## Public reset announcements (Alpha, optional)
 
 Enable **Public reset announcements (Alpha)** in settings to read the
@@ -117,7 +133,8 @@ notification receipts use durable state. No additional application or login
 is required.
 
 Explicit upcoming resets marked verified by TokenResets can generate a DMS
-notification and appear in either dropdown mode. Times are displayed locally;
+toast (or a desktop notification when **Desktop notifications** is enabled)
+and appear in either dropdown mode. Times are displayed locally;
 unknown timing and eligibility stay unknown. Advanced also shows recent
 reports and links to the evidence. Corrections replace the previous snapshot;
 stale feeds cannot trigger alerts or matching. Completed historical reports do
