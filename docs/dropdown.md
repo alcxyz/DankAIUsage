@@ -36,6 +36,11 @@ weekly-only window alongside separate model-scoped limits. Claude exposes
 five-hour, weekly, model-scoped, and extra-usage credit limits. Missing buckets
 are omitted instead of inferred from their position in an API response.
 
+Prepaid credits appear as a **Credits** bucket for either provider when the
+account reports a balance: Codex from its rate-limit snapshot, Claude from
+extra-usage spend. A balance without a monthly limit shows the amount instead
+of a percentage and has no progress bar, because there is no window to fill.
+
 Bar and percentage colors follow remaining allowance: the theme's primary color
 while healthy, warning at or below 25% remaining, and error at or below 10% or
 on failure. The provider header shows its most constrained limit in the same
@@ -137,7 +142,8 @@ scope and checkpoint policy.
 ## Top bar
 
 The top bar uses provider logos. Claude's five-hour, weekly, and extra-usage
-credit values can each be enabled independently in plugin settings; these
+credit values can each be enabled independently in plugin settings, and the
+Codex prepaid credit balance has its own switch; these
 choices do not remove any quota bars from the dropdown. Compact mode retains
 one selected quota for each enabled provider rather than hiding a provider.
 The generic plugin icon and provider logos are independently configurable, so

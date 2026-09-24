@@ -66,11 +66,13 @@ function makeScope(overrides = {}) {
         Date,
         isFinite,
         publicResetAnnouncements: true,
+        systemNotifications: false,
         publicAnnouncements: [],
         announcementsStale: false,
         announcementReceipts: {},
         announcementClock: Date.parse("2026-09-12T12:00:00Z"),
         advancedDropdown: false,
+        announcementsVisibleLimit: 4,
         showCodex: true,
         showClaude: true,
         pluginId: "dankAIUsage",
@@ -83,6 +85,7 @@ function makeScope(overrides = {}) {
     scope.historyProviderVisible = bindQmlFunction("historyProviderVisible", scope);
     scope.historyEventNeedsNoPrompt = bindQmlFunction("historyEventNeedsNoPrompt", scope);
     scope.announcementUpcoming = bindQmlFunction("announcementUpcoming", scope);
+    scope.matchingAnnouncements = bindQmlFunction("matchingAnnouncements", scope);
     scope.visibleAnnouncements = bindQmlFunction("visibleAnnouncements", scope);
     scope.notifyUpcomingAnnouncements = bindQmlFunction("notifyUpcomingAnnouncements", scope);
     scope.matchingPublicAnnouncement = bindQmlFunction("matchingPublicAnnouncement", scope);
@@ -238,6 +241,21 @@ test("notification receipts deduplicate restarts but permit corrected revisions"
     assert.equal(toasts.length, 2);
     assert.deepEqual(Object.keys(restarted.announcementReceipts).sort(), ["reset-a:1", "reset-a:2"]);
     assert.equal(saves.length, 2);
+});
+
+test("desktop notifications replace the upcoming-reset toast but still record receipts", () => {
+    const now = Date.parse("2026-09-12T12:00:00Z");
+    const saves = [];
+    const toasts = [];
+    const scope = makeScope({
+        Date: fakeDate(now), systemNotifications: true, publicAnnouncements: [announcement()],
+        pluginService: {savePluginState(_plugin, _key, value) { saves.push({...value}); }},
+        ToastService: {showInfo(_title, body) { toasts.push(body); }},
+    });
+    scope.notifyUpcomingAnnouncements();
+    assert.deepEqual(toasts, []);
+    assert.deepEqual(Object.keys(scope.announcementReceipts), ["reset-a:1"]);
+    assert.equal(saves.length, 1);
 });
 
 test("matching a public reset preserves local history and requires clear, prompt-free evidence", () => {

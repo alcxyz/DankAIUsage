@@ -6,10 +6,16 @@
   Windows are classified by their returned duration, and available banked
   resets are shown with their expiry
   ([ADR-0008](adr/ADR-0008-codex-duration-based-windows-and-banked-resets.md)).
+  When the snapshot carries a `credits` object, its prepaid balance (or
+  unlimited flag) becomes a **Credits** bucket. Accounts without credits omit
+  the object and the bucket.
 - **Claude limits:** Anthropic's OAuth usage endpoint, using the local Claude
   Code sign-in ([ADR-0001](adr/ADR-0001-claude-limits-from-oauth-usage-api.md)).
   The helper prefers the structured `spend` object for extra-usage credits and
   falls back to `extra_usage`, deduplicating both into one monetary quota bar.
+  A `spend.balance` amount is shown as a prepaid balance: appended to the
+  monthly-limit bar when there is one, or as a balance-only bucket without a
+  percentage when extra usage is enabled with no monthly limit.
   The statusline JSON cached by `dankaiusage claude-statusline` is the
   fallback source (see below).
 - **Token history:** Codex session/archived-session JSONL and Claude project

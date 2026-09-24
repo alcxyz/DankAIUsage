@@ -33,7 +33,8 @@ monitoring app.
   reset leaves the control off; it does not automatically use future credits.
 - **Local reset history** with an optional "What changed?" prompt, and an
   optional, alpha-quality public reset feed. Section badges count unread items
-  and clear when viewed; read state survives restarts.
+  and clear when viewed; read state survives restarts and is shared across
+  bar instances. New items also raise a desktop notification (optional).
   Confirmed plugin resets are linked to matching later refill and credit
   observations, preserving the action and observation timestamps.
 
@@ -70,7 +71,7 @@ in {
 ```
 
 Use your DMS module's plugin-source option for the last assignment. Release
-packaging is explicit: build `github:alcxyz/DankAIUsage/v1.1.0#release` (replace
+packaging is explicit: build `github:alcxyz/DankAIUsage/v1.2.0#release` (replace
 the tag with the desired published release). An untagged branch build uses the
 development package by default, even when its manifest base version matches a
 release.

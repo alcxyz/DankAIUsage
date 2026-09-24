@@ -304,11 +304,11 @@ func collectCodex(now time.Time, opts options) ProviderUsage {
 	root := codexHome()
 	provider.DataPath = root
 	provider.historyObservedAt = time.Now()
-	if sessionLeft, weeklyLeft, extraLimits, resets, meta, observedAt, err := collectCodexSubscriptionLimitsWithClock(now, opts.RefreshInterval, time.Now); err == nil {
+	if sessionLeft, weeklyLeft, extraLimits, additionalBuckets, resets, meta, observedAt, err := collectCodexSubscriptionLimitsWithClock(now, opts.RefreshInterval, time.Now); err == nil {
 		provider.SessionLeft = sessionLeft
 		provider.WeeklyLeft = weeklyLeft
 		provider.ExtraLimits = extraLimits
-		provider.QuotaBuckets = makeQuotaBuckets(sessionLeft, weeklyLeft, extraLimits, nil)
+		provider.QuotaBuckets = makeQuotaBuckets(sessionLeft, weeklyLeft, extraLimits, additionalBuckets)
 		provider.Resets = resets
 		provider.Meta = meta
 		provider.historyObservedAt = observedAt
@@ -803,6 +803,66 @@ type codexRateLimitSnapshot struct {
 	Secondary            *codexRateLimitWindow `json:"secondary"`
 	PlanType             string                `json:"planType"`
 	RateLimitReachedType any                   `json:"rateLimitReachedType"`
+	Credits              *codexCreditsSnapshot `json:"credits,omitempty"`
+}
+
+// codexCreditsSnapshot is the optional prepaid-credit balance the Codex app
+// server attaches to a rate-limit snapshot. The balance is a decimal amount
+// in dollars; the server sends it as a string or a number.
+type codexCreditsSnapshot struct {
+	HasCredits bool            `json:"hasCredits"`
+	Unlimited  bool            `json:"unlimited"`
+	Balance    json.RawMessage `json:"balance,omitempty"`
+}
+
+func (credits *codexCreditsSnapshot) balanceLabel() string {
+	if credits == nil || len(credits.Balance) == 0 {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(credits.Balance, &text); err != nil {
+		var number float64
+		if err := json.Unmarshal(credits.Balance, &number); err != nil {
+			return ""
+		}
+		text = strconv.FormatFloat(number, 'f', -1, 64)
+	}
+	text = strings.TrimSpace(strings.TrimPrefix(text, "$"))
+	value, err := strconv.ParseFloat(text, 64)
+	if err != nil || value < 0 {
+		return ""
+	}
+	return "$" + strconv.FormatFloat(value, 'f', 2, 64)
+}
+
+func codexCreditsBucket(snapshot codexRateLimitSnapshot) (QuotaBucket, bool) {
+	credits := snapshot.Credits
+	if credits == nil || (!credits.HasCredits && !credits.Unlimited) {
+		return QuotaBucket{}, false
+	}
+	allowance := makeUnknownAllowance("credits", time.Time{})
+	allowance.Unit = "currency"
+	allowance.Source = "codex app-server"
+	bucket := QuotaBucket{
+		ID:        "codex-credits",
+		Label:     "Credits",
+		Kind:      "credits",
+		Allowance: allowance,
+	}
+	if credits.Unlimited {
+		bucket.ValueLabel = "Unlimited"
+		bucket.Detail = "Unlimited credits"
+		return bucket, true
+	}
+	balance := credits.balanceLabel()
+	if balance == "" {
+		bucket.ValueLabel = "Available"
+		bucket.Detail = "Prepaid credits available; balance not reported"
+		return bucket, true
+	}
+	bucket.ValueLabel = balance
+	bucket.Detail = balance + " prepaid balance"
+	return bucket, true
 }
 
 type codexRateLimitWindow struct {
@@ -858,10 +918,10 @@ type codexRateLimitResetCredit struct {
 	Description string `json:"description"`
 }
 
-func collectCodexSubscriptionLimitsWithClock(now time.Time, refreshInterval time.Duration, clock usageRefreshClock) (Allowance, Allowance, []ExtraLimit, []UsageReset, map[string]any, time.Time, error) {
+func collectCodexSubscriptionLimitsWithClock(now time.Time, refreshInterval time.Duration, clock usageRefreshClock) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, []UsageReset, map[string]any, time.Time, error) {
 	limits, refresh, err := collectCachedCodexRateLimitsWithClock(codexUsageCachePath(), refreshInterval, false, fetchCodexRateLimits, clock)
 	if err != nil {
-		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, usageRefreshMeta(refresh), refresh.FetchedAt, err
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, usageRefreshMeta(refresh), refresh.FetchedAt, err
 	}
 	snapshot := limits.RateLimits
 	if byID := limits.RateLimitsByLimitID["codex"]; byID.LimitID != "" {
@@ -874,7 +934,15 @@ func collectCodexSubscriptionLimitsWithClock(now time.Time, refreshInterval time
 	if limits.RateLimitResetCredits.AvailableCountKnown {
 		meta["availableResetCount"] = limits.RateLimitResetCredits.AvailableCount
 	}
-	return session, weekly, codexSnapshotExtraLimits(limits.RateLimitsByLimitID, snapshot.LimitID, now), resets, meta, refresh.FetchedAt, nil
+	var additional []QuotaBucket
+	if bucket, ok := codexCreditsBucket(snapshot); ok {
+		additional = append(additional, bucket)
+		meta["creditsUnlimited"] = snapshot.Credits.Unlimited
+		if balance := snapshot.Credits.balanceLabel(); balance != "" {
+			meta["creditsBalance"] = balance
+		}
+	}
+	return session, weekly, codexSnapshotExtraLimits(limits.RateLimitsByLimitID, snapshot.LimitID, now), additional, resets, meta, refresh.FetchedAt, nil
 }
 
 func fetchCodexRateLimits() (codexRateLimitsResult, error) {
@@ -1827,19 +1895,42 @@ func parseClaudeSpendBucket(spend map[string]any) (QuotaBucket, bool) {
 	}
 	usedMap := firstMap(spend, "used")
 	limitMap := firstMap(spend, "limit")
+	balanceMap := firstMap(spend, "balance")
 	used, usedOK := firstFloat(usedMap, "amount_minor", "amountMinor")
 	limit, limitOK := firstFloat(limitMap, "amount_minor", "amountMinor")
-	if !usedOK || !limitOK || limit <= 0 {
-		return QuotaBucket{}, false
-	}
-	currency := firstNonEmpty(stringValue(usedMap["currency"]), stringValue(limitMap["currency"]), "USD")
+	balance, balanceOK := firstFloat(balanceMap, "amount_minor", "amountMinor")
+	currency := firstNonEmpty(stringValue(usedMap["currency"]), stringValue(limitMap["currency"]), stringValue(balanceMap["currency"]), "USD")
 	exponent := float64(2)
 	if value, ok := firstFloat(usedMap, "exponent"); ok {
 		exponent = value
 	} else if value, ok := firstFloat(limitMap, "exponent"); ok {
 		exponent = value
+	} else if value, ok := firstFloat(balanceMap, "exponent"); ok {
+		exponent = value
 	}
-	return makeClaudeSpendBucket(int64(used), int64(limit), currency, int(exponent)), true
+	if usedOK && limitOK && limit > 0 {
+		bucket := makeClaudeSpendBucket(int64(used), int64(limit), currency, int(exponent))
+		if balanceOK && balance >= 0 {
+			bucket.Detail += " · " + formatMinorMoney(int64(balance), currency, int(exponent)) + " prepaid balance"
+		}
+		return bucket, true
+	}
+	if !balanceOK || balance < 0 {
+		return QuotaBucket{}, false
+	}
+	// Prepaid credits without a monthly spend limit: a balance, not a window.
+	allowance := makeUnknownAllowance("credits", time.Time{})
+	allowance.Unit = "currency"
+	allowance.Source = claudeOAuthUsageSource
+	label := formatMinorMoney(int64(balance), currency, int(exponent))
+	return QuotaBucket{
+		ID:         "claude-extra-usage",
+		Label:      "Extra usage credits",
+		Kind:       "credits",
+		Allowance:  allowance,
+		ValueLabel: label,
+		Detail:     label + " prepaid balance",
+	}, true
 }
 
 func parseClaudeExtraUsageBucket(extra map[string]any) (QuotaBucket, bool) {

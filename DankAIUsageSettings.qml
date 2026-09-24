@@ -302,6 +302,13 @@ PluginSettings {
         defaultValue: false
     }
 
+    ToggleSetting {
+        settingKey: "barShowCodexCredits"
+        label: "Codex credits"
+        description: "Include Codex's prepaid credit balance in the top-bar overview when the account reports one"
+        defaultValue: false
+    }
+
     StyledText {
         text: "Collection and automation"
         font.pixelSize: Theme.fontSizeLarge
@@ -527,5 +534,12 @@ PluginSettings {
         label: "Public reset announcements (Alpha)"
         description: "Experimental third-party reports, advance alerts, and reset matching via TokenResets. May be incomplete or incorrect; do not rely on them to spend quota or redeem resets. The feed host sees your IP address and ordinary request metadata; no account data is sent. Checks every 15 minutes. Announcements are not guarantees for your account."
         defaultValue: false
+    }
+
+    ToggleSetting {
+        settingKey: "systemNotifications"
+        label: "Desktop notifications"
+        description: "Send a desktop notification for new reset history changes and, when enabled, new public reset announcements. Items already viewed in the dropdown are not announced."
+        defaultValue: true
     }
 }

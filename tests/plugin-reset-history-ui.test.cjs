@@ -42,13 +42,14 @@ function makeScope() {
         historyShowScheduledShort: false,
         historyShowScheduledWeekly: false,
         usageHistory: [],
+        historyVisibleLimit: 4,
         formatShortDateTime: value => value,
     };
     scope.root = scope;
     for (const name of [
         "historyGroupKey", "historyEventEligible", "explanationChoicesForGroup", "historyGroups",
         "historyProviderVisible", "hasHistoryExplanation", "historyEventNeedsNoPrompt", "latestExplanationPrompt",
-        "historyMatchesFilters", "visibleHistory",
+        "historyMatchesFilters", "matchingHistory", "visibleHistory",
         "mergePluginResetHistoryGroups", "visibleHistoryGroups", "historyTimeOnlyChange", "historyEventTitle",
         "historyPercent", "historyEventDetail",
     ]) scope[name] = bindQmlFunction(name, scope);
@@ -112,7 +113,7 @@ test("linked refill and inferred redemption never prompt, without revealing an o
     assert.equal(scope.latestExplanationPrompt(Date.parse("2026-09-19T14:30:00Z")), null);
 });
 
-test("display grouping pulls an exact confirmed action from outside the latest eight", () => {
+test("display grouping pulls an exact confirmed action from outside the displayed page", () => {
     const scope = makeScope();
     const explanation = {reason: "not_sure", note: "Kept on observation"};
     const observation = linked("allowance_increased_unknown", {explanation});
@@ -148,7 +149,7 @@ test("display grouping pulls an exact confirmed action from outside the latest e
         && group.events[0] === expiryExplainedCredit), false);
 });
 
-test("a realistic no-groupId action in the latest eight loses only its standalone card", () => {
+test("a realistic no-groupId action on the displayed page loses only its standalone card", () => {
     const scope = makeScope();
     const confirmedAction = action();
     const unrelated = linked("window_changed_unknown", {

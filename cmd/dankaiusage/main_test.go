@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -727,4 +728,81 @@ func mustParseTime(t *testing.T, value string) time.Time {
 		t.Fatal(err)
 	}
 	return parsed
+}
+
+func TestCodexCreditsBucket(t *testing.T) {
+	var limits codexRateLimitsResult
+	if err := json.Unmarshal([]byte(`{"rateLimits":{"limitId":"codex","primary":{"usedPercent":21,"windowDurationMins":10080,"resetsAt":1790775838},"planType":"pro","credits":{"hasCredits":true,"unlimited":false,"balance":"12.5"}}}`), &limits); err != nil {
+		t.Fatal(err)
+	}
+	bucket, ok := codexCreditsBucket(limits.RateLimits)
+	if !ok || bucket.ID != "codex-credits" || bucket.Kind != "credits" || bucket.Allowance.Known {
+		t.Fatalf("credits bucket = %+v ok=%v", bucket, ok)
+	}
+	if bucket.ValueLabel != "$12.50" || bucket.Detail != "$12.50 prepaid balance" {
+		t.Fatalf("credits labels = %+v", bucket)
+	}
+
+	// Cached snapshots keep the credits object across round trips.
+	encoded, err := json.Marshal(limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"credits":{"hasCredits":true,"unlimited":false,"balance":"12.5"}`) {
+		t.Fatalf("credits not retained: %s", encoded)
+	}
+
+	numeric := codexRateLimitSnapshot{Credits: &codexCreditsSnapshot{HasCredits: true, Balance: json.RawMessage(`3`)}}
+	if bucket, ok := codexCreditsBucket(numeric); !ok || bucket.ValueLabel != "$3.00" {
+		t.Fatalf("numeric balance = %+v ok=%v", bucket, ok)
+	}
+	unlimited := codexRateLimitSnapshot{Credits: &codexCreditsSnapshot{Unlimited: true}}
+	if bucket, ok := codexCreditsBucket(unlimited); !ok || bucket.ValueLabel != "Unlimited" {
+		t.Fatalf("unlimited = %+v ok=%v", bucket, ok)
+	}
+	for _, snapshot := range []codexRateLimitSnapshot{
+		{},
+		{Credits: &codexCreditsSnapshot{}},
+		{Credits: &codexCreditsSnapshot{HasCredits: false, Balance: json.RawMessage(`"0"`)}},
+	} {
+		if _, ok := codexCreditsBucket(snapshot); ok {
+			t.Fatalf("unexpected credits bucket for %+v", snapshot)
+		}
+	}
+	malformed := codexRateLimitSnapshot{Credits: &codexCreditsSnapshot{HasCredits: true, Balance: json.RawMessage(`"lots"`)}}
+	if bucket, ok := codexCreditsBucket(malformed); !ok || bucket.ValueLabel != "Available" {
+		t.Fatalf("malformed balance = %+v ok=%v", bucket, ok)
+	}
+}
+
+func TestParseClaudeSpendPrepaidBalance(t *testing.T) {
+	balanceOnly := map[string]any{"spend": map[string]any{
+		"enabled": true,
+		"used":    map[string]any{"amount_minor": float64(0), "currency": "USD", "exponent": float64(2)},
+		"limit":   nil,
+		"balance": map[string]any{"amount_minor": float64(2500), "currency": "USD", "exponent": float64(2)},
+	}}
+	buckets := parseClaudeSpendBuckets(balanceOnly)
+	if len(buckets) != 1 || buckets[0].Allowance.Known || buckets[0].ValueLabel != "$25.00" || buckets[0].Detail != "$25.00 prepaid balance" {
+		t.Fatalf("balance-only buckets = %+v", buckets)
+	}
+
+	withLimit := map[string]any{"spend": map[string]any{
+		"enabled": true,
+		"used":    map[string]any{"amount_minor": float64(4092), "currency": "USD", "exponent": float64(2)},
+		"limit":   map[string]any{"amount_minor": float64(10000), "currency": "USD", "exponent": float64(2)},
+		"balance": map[string]any{"amount_minor": float64(2500), "currency": "USD", "exponent": float64(2)},
+	}}
+	buckets = parseClaudeSpendBuckets(withLimit)
+	if len(buckets) != 1 || !buckets[0].Allowance.Known || buckets[0].Detail != "$59.08 remaining · $25.00 prepaid balance" {
+		t.Fatalf("limit-and-balance buckets = %+v", buckets)
+	}
+
+	disabled := map[string]any{"spend": map[string]any{
+		"enabled": false,
+		"balance": map[string]any{"amount_minor": float64(2500), "currency": "USD", "exponent": float64(2)},
+	}}
+	if buckets := parseClaudeSpendBuckets(disabled); len(buckets) != 0 {
+		t.Fatalf("disabled spend produced %+v", buckets)
+	}
 }

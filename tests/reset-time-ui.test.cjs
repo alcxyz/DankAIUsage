@@ -37,6 +37,8 @@ function makeScope() {
     const scope = {Date, isFinite, Math};
     scope.root = scope;
     scope.resetTimeScale = bindQmlFunction("resetTimeScale", scope);
+    scope.knownAllowance = bindQmlFunction("knownAllowance", scope);
+    scope.balanceOnlyBucket = bindQmlFunction("balanceOnlyBucket", scope);
     scope.quotaDetail = bindQmlFunction("quotaDetail", scope);
     scope.resetTiming = bindQmlFunction("resetTiming", scope);
     scope.resetDuration = bindQmlFunction("resetDuration", scope);
