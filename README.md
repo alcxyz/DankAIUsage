@@ -71,7 +71,7 @@ in {
 ```
 
 Use your DMS module's plugin-source option for the last assignment. Release
-packaging is explicit: build `github:alcxyz/DankAIUsage/v1.1.0#release` (replace
+packaging is explicit: build `github:alcxyz/DankAIUsage/v1.2.0#release` (replace
 the tag with the desired published release). An untagged branch build uses the
 development package by default, even when its manifest base version matches a
 release.
