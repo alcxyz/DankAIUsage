@@ -160,4 +160,4 @@ percentage takes the warning or error color when its most constrained shown
 quota runs low.
 
 An optional quota-bar mode replaces the text with small stacked bars per
-provider; see [Settings](settings.md#top-bar-layout-and-icons).
+provider; see [Settings](settings.md#top-bar).

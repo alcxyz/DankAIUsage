@@ -476,7 +476,10 @@ const migrationScope = {
         saveValue(key, value) { migrationSaves.push([key, value]); }
     }
 };
-bindQmlFunction("loadValue", migrationScope, settingsQml)();
+// Grouped settings expose their own loadValue forwarders; extract the
+// refresh-interval one specifically.
+const refreshSettingQml = settingsQml.slice(settingsQml.indexOf("id: refreshIntervalSetting"));
+bindQmlFunction("loadValue", migrationScope, refreshSettingQml)();
 equal(migrationScope.refreshSeconds, 180, "settings load migrates legacy interval");
 equal(JSON.stringify(migrationSaves), JSON.stringify([["refreshInterval", 180]]), "settings migration persists clamped seconds");
 
@@ -859,6 +862,11 @@ if command -v node >/dev/null 2>&1; then
         pass "top-bar quota bars, tags, and labels"
     else
         fail "top-bar quota bars" "bar selection, colors, tags, or labels are inconsistent"
+    fi
+    if node --test tests/settings-ui.test.cjs; then
+        pass "settings page grouping, value reload, and disclosure safety"
+    else
+        fail "settings page grouping" "grouping, reload forwarding, or disclosure invariants failed"
     fi
 fi
 VERSION="$(python3 -c 'import json; print(json.load(open("plugin.json", encoding="utf-8"))["version"])')"
