@@ -37,6 +37,7 @@ assert {"settings_read", "settings_write", "process"} <= set(plugin["permissions
 assert plugin["settings_schema"]["refreshInterval"]["minimum"] == 180
 assert plugin["settings_schema"]["refreshInterval"]["maximum"] == 3600
 assert plugin["settings_schema"]["refreshInterval"]["default"] == 300
+assert plugin["settings_schema"]["refreshOnOpen"] == {"type": "boolean", "default": False}
 assert plugin["settings_schema"]["publicResetAnnouncements"] == {"type": "boolean", "default": False}
 assert plugin["settings_schema"]["systemNotifications"] == {"type": "boolean", "default": True}
 
@@ -382,6 +383,43 @@ equal(normalizeRefresh(210), 240, "half minute snaps to nearest minute");
 equal(normalizeRefresh(900), 900, "valid whole-minute interval is preserved");
 equal(normalizeRefresh(3599), 3600, "interval snaps at upper bound");
 equal(normalizeRefresh(7200), 3600, "interval clamps to maximum");
+
+let openClock = 1000000;
+let openRefreshes = 0;
+const openScope = {
+    refreshOnOpen: false, _lastOpenRefresh: 0,
+    Date: { now() { return openClock; } },
+    refreshCycle() { openRefreshes++; }
+};
+const refreshOnOpen = bindQmlFunction("refreshOnPopoutOpen", openScope);
+refreshOnOpen();
+equal(openRefreshes, 0, "opening the dropdown does not refresh by default");
+openScope.refreshOnOpen = true;
+refreshOnOpen();
+equal(openRefreshes, 1, "enabled setting refreshes when the dropdown opens");
+openClock += 29000;
+refreshOnOpen();
+equal(openRefreshes, 1, "reopening within 30 s does not refresh again");
+openClock += 1000;
+refreshOnOpen();
+equal(openRefreshes, 2, "reopening after 30 s refreshes again");
+const popoutVisibilityHandler = qml.match(/onPopoutVisibleChanged:\s*\{([^}]+)\}/);
+if (!popoutVisibilityHandler) throw new Error("missing popout visibility handler");
+const onPopoutVisibleChanged = new Function("popoutVisible", "root", popoutVisibilityHandler[1]);
+let sectionResets = 0;
+const popoutActions = {
+    refreshOnPopoutOpen: refreshOnOpen,
+    resetSectionLimits() { sectionResets++; }
+};
+openClock += 30000;
+onPopoutVisibleChanged(true, popoutActions);
+equal(openRefreshes, 3, "opening dispatches the optional refresh");
+equal(sectionResets, 0, "opening preserves the current section limits");
+onPopoutVisibleChanged(false, popoutActions);
+equal(openRefreshes, 3, "closing does not refresh");
+equal(sectionResets, 1, "closing still resets history and announcement pagination");
+if (!/function refreshOnPopoutOpen\(\) \{[^}]*refreshCycle\(\)/.test(qml))
+    throw new Error("open refresh must use refreshCycle so armed reset checks keep their order");
 
 const primeProvider = { available: true, meta: {} };
 let primeCalls = 0;

@@ -42,7 +42,8 @@ information.
 
 The helper shares a per-provider cooldown across refresh paths and processes
 ([ADR-0015](adr/ADR-0015-shared-usage-refresh-cooldown.md)). Manual Refresh
-can reuse cached quotas; it does not bypass the minimum. An already scheduled
+can reuse cached quotas; it does not bypass the minimum, and neither does the
+optional refresh when the dropdown opens. An already scheduled
 cooldown is not shortened by changing the slider; subsequent requests use the
 new interval. Provider error backoff may extend the wait. Three minutes is a
 conservative minimum, not a guarantee against account restrictions. Claude's
