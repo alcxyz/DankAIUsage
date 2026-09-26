@@ -109,6 +109,14 @@
     "barPaceMarker": {
       "type": "boolean",
       "default": false
+    },
+    "brandLogoColors": {
+      "type": "boolean",
+      "default": false
+    },
+    "barUsageColors": {
+      "type": "boolean",
+      "default": false
     }
   },
   "permissions": ["settings_read", "settings_write", "process"],

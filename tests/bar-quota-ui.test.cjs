@@ -35,17 +35,21 @@ function bindQmlFunction(name, scope) {
 
 
 const now = Date.parse("2026-09-23T18:00:00Z");
-const Theme = {primary: "primary", warning: "warning", error: "error", surfaceVariantText: "muted"};
+const gradientStops = new Function(`return ${qml.match(/readonly property var usageColorStops: (\[[\s\S]*?\n    \])/)[1]}`)();
+const Theme = {isLightMode: false, primary: "primary", warning: "warning", error: "error", surfaceVariantText: "muted"};
 
 function makeScope(overrides = {}) {
     const scope = Object.assign({Date, isFinite, Math, Theme, resetClock: now, showUsed: false,
+        brandLogoColors: false, barUsageColors: false, usageColorStops: gradientStops,
+        Qt: {rgba: (r, g, b) => [r, g, b].map(v => Math.round(v * 100) / 100).join(",")},
         hasError: false, barShowClaudeSession: true, barShowClaudeWeekly: true,
         barShowClaudeCredits: false, barClaudeWeeklyOverrides: {}, providers: []}, overrides);
     scope.root = scope;
     for (const name of ["knownAllowance", "displayPercent", "allowanceLabel", "allowanceSeverity",
             "allowanceColor", "resetTiming", "barFillColor", "providerQuotaBuckets", "claudeBucketShownInBar",
             "providerBarBuckets", "barProviderGroups", "barLabelKind", "barLabelText", "barWindowTag",
-            "barQuotaTags", "barLabelTemplate", "barTimeLabel"])
+            "barQuotaTags", "barLabelTemplate", "barTimeLabel", "usageGradientColor", "providerLogoColor",
+            "providerBrandColor"])
         scope[name] = bindQmlFunction(name, scope);
     scope.visibleProviders = () => scope.providers;
     return scope;
@@ -165,4 +169,46 @@ test("bar mode is off by default and leaves the text pill unchanged", () => {
     assert.match(qml, /elide: Text\.ElideNone/);
     const vertical = qml.split("verticalBarPill: Component {", 2)[1].split("popoutContent: Component {", 1)[0];
     assert.doesNotMatch(vertical, /barQuotaBars/, "vertical pill is unchanged");
+});
+
+test("brand logo colors and the usage gradient are off by default", () => {
+    const scope = makeScope();
+    assert.match(qml, /property bool brandLogoColors: false/);
+    assert.match(qml, /property bool barUsageColors: false/);
+    assert.equal(scope.providerLogoColor({id: "claude", available: true}), "primary");
+    assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 80)), "primary");
+});
+
+test("brand logo colors apply only to healthy providers", () => {
+    const scope = makeScope({brandLogoColors: true});
+    assert.equal(scope.providerLogoColor({id: "claude", available: true}), "#D97757");
+    assert.equal(scope.providerLogoColor({id: "codex", available: true}), "#FFFFFF");
+    Theme.isLightMode = true;
+    try {
+        assert.equal(scope.providerLogoColor({id: "codex", available: true}), "#000000");
+        assert.equal(scope.providerLogoColor({id: "claude", available: true}), "#D97757");
+    } finally {
+        Theme.isLightMode = false;
+    }
+    assert.equal(scope.providerLogoColor({id: "claude", available: false}), "error");
+    assert.equal(scope.providerLogoColor({id: "codex", available: true, error: "x"}), "error");
+});
+
+test("usage gradient runs green, yellow, orange, dark red over percent used", () => {
+    const scope = makeScope({barUsageColors: true});
+    const used = percentUsed => scope.usageGradientColor({known: true, percentUsed});
+    assert.equal(used(0), "0.26,0.63,0.28");
+    assert.equal(used(50), "0.99,0.85,0.21");
+    assert.equal(used(75), "0.98,0.55,0");
+    assert.equal(used(100), "0.55,0,0");
+    assert.equal(used(25), "0.63,0.74,0.25", "interpolates between stops");
+    assert.equal(used(-10), used(0), "clamps below 0");
+    assert.equal(used(150), used(100), "clamps above 100");
+    assert.equal(used(undefined), used(0));
+    assert.equal(scope.usageGradientColor({known: false}), "muted");
+    assert.equal(scope.usageGradientColor(null), "muted");
+    assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 25)), used(75),
+        "enabled gradient replaces severity colors");
+    scope.hasError = true;
+    assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 80)), "error");
 });

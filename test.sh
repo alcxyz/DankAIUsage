@@ -43,6 +43,9 @@ assert plugin["settings_schema"]["systemNotifications"] == {"type": "boolean", "
 # Quota-bar mode is opt-in; its label keys only accept known kinds.
 assert plugin["settings_schema"]["barQuotaBars"] == {"type": "boolean", "default": False}
 assert plugin["settings_schema"]["barPaceMarker"] == {"type": "boolean", "default": False}
+# Fixed brand and gradient colors are opt-in exceptions to ADR-0018.
+assert plugin["settings_schema"]["brandLogoColors"] == {"type": "boolean", "default": False}
+assert plugin["settings_schema"]["barUsageColors"] == {"type": "boolean", "default": False}
 assert plugin["settings_schema"]["barQuotaBarWidth"] == {"type": "integer", "default": 40, "minimum": 16, "maximum": 120}
 for side in ("barLabelLeft", "barLabelRight"):
     assert plugin["settings_schema"][side] == {"type": "string", "enum": ["none", "tag", "time", "percent"], "default": "none"}
