@@ -221,9 +221,23 @@ PluginSettings {
     }
 
     ToggleSetting {
+        settingKey: "brandLogoColors"
+        label: "Brand-colored logos"
+        description: "Color the Claude (orange) and OpenAI (white, or black on light themes) logos in their brand colors instead of the theme accent."
+        defaultValue: false
+    }
+
+    ToggleSetting {
         settingKey: "barQuotaBars"
         label: "Quota bars instead of text"
         description: "Show small stacked bars per provider (5-hour on top, then weekly and model limits) instead of percentages. Horizontal bars only; Compact pill does not apply. Credits stay in the dropdown."
+        defaultValue: false
+    }
+
+    ToggleSetting {
+        settingKey: "barUsageColors"
+        label: "Color quota bars by usage"
+        description: "Quota bars go from green through yellow and orange to dark red as usage approaches 100%, instead of the theme accent with warning and error colors when low"
         defaultValue: false
     }
 

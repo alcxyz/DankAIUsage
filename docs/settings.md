@@ -26,6 +26,10 @@ keeps one selected quota per enabled provider rather than hiding a provider.
 When provider logos are off, provider names identify each group in both text
 and quota-bar modes.
 
+**Brand-colored logos** (off by default) draws the Claude logo orange and the
+OpenAI logo white (black on light themes) instead of the theme accent, in both
+the bar and dropdown. Unavailable providers still use the theme's error color.
+
 **Quota bars instead of text** (off by default) replaces the percentages in the
 horizontal bar with small stacked bars per provider: five-hour on top, then
 weekly and model-scoped limits. Bars follow Left / Used and turn warning or
@@ -36,6 +40,11 @@ switches retain their saved values for text mode.
 Compact mode does not apply, and the vertical bar is unchanged. Options:
 
 - **Quota bar width:** 16–120 px, default 40.
+- **Color quota bars by usage:** off by default. Fills go from green through
+  yellow (50% used) and orange (75%) to dark red (100%) instead of the theme's
+  severity colors. This only affects horizontal quota bars; dropdown quota
+  colors stay unchanged, and errors still use the theme's error color. Fixed
+  colors may have lower contrast with some light or custom themes.
 - **Quota bar label: left / right:** none, a quota tag (`5h`, `w`, or the
   model initial such as `f` for Fable weekly; longer only when two would
   clash), the reset countdown (`2h05`, `4d23h`; elapsed window time with

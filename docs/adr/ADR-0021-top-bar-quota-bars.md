@@ -1,9 +1,10 @@
 # ADR-0021: Optional quota bars in the horizontal top bar
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-23
 **Applies to:** `DankAIUsageWidget.qml`, settings
 **Builds on:** ADR-0009, ADR-0013 and ADR-0018
+**Amends:** ADR-0018 with the opt-in color exceptions below.
 
 ## Context
 
@@ -37,6 +38,17 @@ The dropdown already has allowance bars and, in Advanced, window-time bars.
   It uses theme colors with contrasting edges so it stays visible on any fill.
 - Width is configurable (16–120 px, default 40). All of this is presentation
   only: no extra provider requests and no change to collection.
+
+## Opt-in color exceptions
+
+ADR-0018 derives all status colors from the theme and rejects per-provider
+brand colors. Two off-by-default settings deliberately step outside that for
+users who prefer them: **Brand-colored logos** (Claude `#D97757`, OpenAI
+white on dark themes, black on light) and **Color quota bars by usage** (a fixed
+green, yellow, orange, dark red gradient over percent used). Defaults keep
+ADR-0018 behaviour, errors still use the theme's error color, and the dropdown's
+quota colors are unchanged. The fixed gradient can clash with light or custom
+themes; that is the user's trade-off when enabling them.
 
 ## Consequences
 

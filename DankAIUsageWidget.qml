@@ -42,6 +42,8 @@ PluginComponent {
     property string barLabelLeft: "none"
     property string barLabelRight: "none"
     property bool barPaceMarker: false
+    property bool brandLogoColors: false
+    property bool barUsageColors: false
     property bool historyShowScheduledShort: false
     property bool historyShowOther: true
     property bool historyShowScheduledWeekly: false
@@ -192,6 +194,8 @@ PluginComponent {
         barLabelLeft = barLabelKind(pluginService.loadPluginData(pluginId, "barLabelLeft", "none"))
         barLabelRight = barLabelKind(pluginService.loadPluginData(pluginId, "barLabelRight", "none"))
         barPaceMarker = pluginService.loadPluginData(pluginId, "barPaceMarker", false) === true
+        brandLogoColors = pluginService.loadPluginData(pluginId, "brandLogoColors", false) === true
+        barUsageColors = pluginService.loadPluginData(pluginId, "barUsageColors", false) === true
         enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
         if (!wasEnabled && enableClaudePrime) {
             lastClaudeAutoPrimeFailed = false
@@ -2075,14 +2079,42 @@ PluginComponent {
 
     function providerLogoColor(provider) {
         if (!provider || !provider.available || provider.error) return Theme.error
-        return Theme.primary
+        return brandLogoColors ? providerBrandColor(provider) : Theme.primary
+    }
+
+    // Opt-in exception to ADR-0018: fixed brand colors for the logos. OpenAI's
+    // mark is monochrome, so it follows the theme: white on dark, black on light.
+    function providerBrandColor(provider) {
+        if (provider && provider.id === "claude") return "#D97757"
+        return Theme.isLightMode ? "#000000" : "#FFFFFF"
+    }
+
+    // Opt-in exception to ADR-0018: fixed gradient over percent used for
+    // quota-bar fills. Stops: green, yellow at 50, orange at 75, dark red at 100.
+    readonly property var usageColorStops: [
+        [0, 0.26, 0.63, 0.28], [50, 0.99, 0.85, 0.21], [75, 0.98, 0.55, 0.0], [100, 0.55, 0.0, 0.0]
+    ]
+
+    function usageGradientColor(allowance) {
+        if (!knownAllowance(allowance)) return Theme.surfaceVariantText
+        var p = Math.max(0, Math.min(100, allowance.percentUsed || 0))
+        var s = usageColorStops
+        for (var i = 1; i < s.length; i++) {
+            if (p > s[i][0]) continue
+            var t = (p - s[i - 1][0]) / (s[i][0] - s[i - 1][0])
+            return Qt.rgba(s[i - 1][1] + (s[i][1] - s[i - 1][1]) * t,
+                           s[i - 1][2] + (s[i][2] - s[i - 1][2]) * t,
+                           s[i - 1][3] + (s[i][3] - s[i - 1][3]) * t, 1)
+        }
+        return Qt.rgba(s[s.length - 1][1], s[s.length - 1][2], s[s.length - 1][3], 1)
     }
 
     // Quota-bar mode (ADR-0021): fill uses the same severity colors as the
-    // text pill.
+    // text pill unless the usage gradient is enabled.
     function barFillColor(bucket) {
         if (hasError) return Theme.error
-        return allowanceColor(bucket ? bucket.allowance : null)
+        var allowance = bucket ? bucket.allowance : null
+        return barUsageColors ? usageGradientColor(allowance) : allowanceColor(allowance)
     }
 
     // Non-credit quotas in helper order (5-hour, weekly, model-scoped). Claude
