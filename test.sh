@@ -40,6 +40,12 @@ assert plugin["settings_schema"]["refreshInterval"]["default"] == 300
 assert plugin["settings_schema"]["refreshOnOpen"] == {"type": "boolean", "default": False}
 assert plugin["settings_schema"]["publicResetAnnouncements"] == {"type": "boolean", "default": False}
 assert plugin["settings_schema"]["systemNotifications"] == {"type": "boolean", "default": True}
+# Quota-bar mode is opt-in; its label keys only accept known kinds.
+assert plugin["settings_schema"]["barQuotaBars"] == {"type": "boolean", "default": False}
+assert plugin["settings_schema"]["barPaceMarker"] == {"type": "boolean", "default": False}
+assert plugin["settings_schema"]["barQuotaBarWidth"] == {"type": "integer", "default": 40, "minimum": 16, "maximum": 120}
+for side in ("barLabelLeft", "barLabelRight"):
+    assert plugin["settings_schema"][side] == {"type": "string", "enum": ["none", "tag", "time", "percent"], "default": "none"}
 
 component = pathlib.Path(plugin["component"].removeprefix("./"))
 settings = pathlib.Path(plugin["settings"].removeprefix("./"))
@@ -845,6 +851,11 @@ if command -v node >/dev/null 2>&1; then
         pass "token component display and locale formatting behavior"
     else
         fail "token display" "token components or locale formatting are inconsistent"
+    fi
+    if node --test tests/bar-quota-ui.test.cjs; then
+        pass "top-bar quota bars, tags, and labels"
+    else
+        fail "top-bar quota bars" "bar selection, colors, tags, or labels are inconsistent"
     fi
 fi
 VERSION="$(python3 -c 'import json; print(json.load(open("plugin.json", encoding="utf-8"))["version"])')"

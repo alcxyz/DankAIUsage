@@ -85,6 +85,30 @@
     "compactPill": {
       "type": "boolean",
       "default": false
+    },
+    "barQuotaBars": {
+      "type": "boolean",
+      "default": false
+    },
+    "barQuotaBarWidth": {
+      "type": "integer",
+      "default": 40,
+      "minimum": 16,
+      "maximum": 120
+    },
+    "barLabelLeft": {
+      "type": "string",
+      "enum": ["none", "tag", "time", "percent"],
+      "default": "none"
+    },
+    "barLabelRight": {
+      "type": "string",
+      "enum": ["none", "tag", "time", "percent"],
+      "default": "none"
+    },
+    "barPaceMarker": {
+      "type": "boolean",
+      "default": false
     }
   },
   "permissions": ["settings_read", "settings_write", "process"],
