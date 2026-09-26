@@ -14,6 +14,8 @@ PluginComponent {
     pluginId: "dankAIUsage"
 
     property int refreshInterval: 300
+    property bool refreshOnOpen: false
+    property double _lastOpenRefresh: 0
     property double resetClock: Date.now()
 
     Timer {
@@ -165,6 +167,7 @@ PluginComponent {
         refreshInterval = normalizedRefreshInterval(savedRefreshInterval)
         if (refreshInterval !== Number(savedRefreshInterval) && pluginService.savePluginData)
             pluginService.savePluginData(pluginId, "refreshInterval", refreshInterval)
+        refreshOnOpen = pluginService.loadPluginData(pluginId, "refreshOnOpen", false) === true
         periodDays = pluginService.loadPluginData(pluginId, "periodDays", 7) || 7
         showCodex = pluginService.loadPluginData(pluginId, "showCodex", true) !== false
         showClaude = pluginService.loadPluginData(pluginId, "showClaude", true) !== false
@@ -454,6 +457,16 @@ PluginComponent {
         refreshUsage()
         // Hiding Codex pauses automatic consumption, but still updates status.
         runCodexReset("status")
+    }
+
+    // Opening the dropdown runs the same cycle as the Refresh button, at most
+    // every 30 s. The helper cooldown still limits provider requests.
+    function refreshOnPopoutOpen() {
+        if (!refreshOnOpen) return
+        var now = Date.now()
+        if (now - _lastOpenRefresh < 30000) return
+        _lastOpenRefresh = now
+        refreshCycle()
     }
 
     function runCodexReset(action) {
@@ -2250,7 +2263,10 @@ PluginComponent {
             id: popoutRoot
             property var parentPopout: null
             readonly property bool popoutVisible: parentPopout ? parentPopout.shouldBeVisible : false
-            onPopoutVisibleChanged: if (!popoutVisible) root.resetSectionLimits()
+            onPopoutVisibleChanged: {
+                if (popoutVisible) root.refreshOnPopoutOpen()
+                else root.resetSectionLimits()
+            }
             implicitHeight: Math.min(popoutColumn.implicitHeight, root.popoutMaxHeight(parentPopout))
 
             DankFlickable {

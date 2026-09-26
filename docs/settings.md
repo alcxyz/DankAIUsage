@@ -9,6 +9,10 @@ in the dropdown; everything persistent about the bar lives here.
   with a reset-to-default action. See
   [Refresh interval and cooldown](data-sources.md#refresh-interval-and-cooldown)
   for how the shared cooldown behaves.
+- **Refresh when the dropdown opens:** off by default. Opening the dropdown
+  runs the same refresh as its Refresh button, at most every 30 seconds. The
+  shared cooldown still applies, so inside the refresh interval this reloads
+  cached quotas and local token history without contacting providers.
 - **Show Codex / Show Claude:** disable providers you do not use.
 - **Token history period:** the configured range stays available in the
   dropdown's range selector when it differs from the presets.

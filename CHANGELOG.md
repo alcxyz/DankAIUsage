@@ -7,6 +7,7 @@ as its GitHub release notes.
 ## [Unreleased]
 
 - Advanced view lists every available Codex reset with its expiry date and countdown, soonest first. Thanks to @TheFacc for the contribution (#12).
+- Added an optional refresh when opening the dropdown, limited to once every 30 seconds and subject to the shared provider cooldown. Thanks to @TheFacc for the contribution (#13).
 
 ## [1.2.0] - 2026-09-24
 

@@ -28,6 +28,10 @@
       "minimum": 180,
       "maximum": 3600
     },
+    "refreshOnOpen": {
+      "type": "boolean",
+      "default": false
+    },
     "periodDays": {
       "type": "integer",
       "default": 7,

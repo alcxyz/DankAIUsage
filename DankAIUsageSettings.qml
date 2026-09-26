@@ -458,6 +458,13 @@ PluginSettings {
         }
     }
 
+    ToggleSetting {
+        settingKey: "refreshOnOpen"
+        label: "Refresh when the dropdown opens"
+        description: "Runs the same refresh as the Refresh button, at most every 30 seconds. Providers are still only contacted once the refresh interval has passed; until then cached quotas and local token history are reloaded."
+        defaultValue: false
+    }
+
     Column {
         id: codexResetSetting
 
