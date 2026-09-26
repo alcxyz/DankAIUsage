@@ -9,6 +9,13 @@ PluginSettings {
 
     pluginId: "dankAIUsage"
 
+    readonly property var barLabelOptions: [
+        { label: "None", value: "none" },
+        { label: "Quota (5h / w / model initial)", value: "tag" },
+        { label: "Reset time", value: "time" },
+        { label: "Percent", value: "percent" }
+    ]
+
     property var barClaudeWeeklyOverrides: ({})
     property bool barShowClaudeWeeklyValue: true
     property var cachedClaudeWeeklyChoices: []
@@ -209,8 +216,48 @@ PluginSettings {
     ToggleSetting {
         settingKey: "barShowProviderLogos"
         label: "Provider logos"
-        description: "Show the OpenAI and Claude logos beside their top-bar quota values"
+        description: "Show the OpenAI and Claude logos beside their top-bar quotas. When off, provider names are shown instead."
         defaultValue: true
+    }
+
+    ToggleSetting {
+        settingKey: "barQuotaBars"
+        label: "Quota bars instead of text"
+        description: "Show small stacked bars per provider (5-hour on top, then weekly and model limits) instead of percentages. Horizontal bars only; Compact pill does not apply. Credits stay in the dropdown."
+        defaultValue: false
+    }
+
+    SliderSetting {
+        settingKey: "barQuotaBarWidth"
+        label: "Quota bar width"
+        description: "Width of each quota bar in the top bar"
+        minimum: 16
+        maximum: 120
+        defaultValue: 40
+        unit: "px"
+    }
+
+    SelectionSetting {
+        settingKey: "barLabelLeft"
+        label: "Quota bar label: left"
+        description: "Text left of each quota bar. Reset time counts down to the reset (elapsed window time with Used); percent follows Left / Used."
+        options: root.barLabelOptions
+        defaultValue: "none"
+    }
+
+    SelectionSetting {
+        settingKey: "barLabelRight"
+        label: "Quota bar label: right"
+        description: "Text right of each quota bar"
+        options: root.barLabelOptions
+        defaultValue: "none"
+    }
+
+    ToggleSetting {
+        settingKey: "barPaceMarker"
+        label: "Quota bar pace marker"
+        description: "Tick on each quota bar at the even-pace point for the time passed in its window. With Left, fill short of the tick means you are ahead of pace; with Used, fill beyond it."
+        defaultValue: false
     }
 
     StyledText {
@@ -298,14 +345,14 @@ PluginSettings {
     ToggleSetting {
         settingKey: "barShowClaudeCredits"
         label: "Claude extra-use credits"
-        description: "Include Claude's paid extra-usage credit balance in the top-bar overview"
+        description: "Include Claude's paid extra-usage credit balance in the text pill. Quota-bar mode keeps credits in the dropdown, even when this is enabled."
         defaultValue: false
     }
 
     ToggleSetting {
         settingKey: "barShowCodexCredits"
         label: "Codex credits"
-        description: "Include Codex's prepaid credit balance in the top-bar overview when the account reports one"
+        description: "Include Codex's prepaid credit balance in the text pill when reported. Quota-bar mode keeps credits in the dropdown, even when this is enabled."
         defaultValue: false
     }
 

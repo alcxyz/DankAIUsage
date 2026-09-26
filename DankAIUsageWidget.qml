@@ -37,6 +37,11 @@ PluginComponent {
     property bool includeCachedTokens: false
     property bool compactPill: false
     property bool showUsed: false
+    property bool barQuotaBars: false
+    property int barQuotaBarWidth: 40
+    property string barLabelLeft: "none"
+    property string barLabelRight: "none"
+    property bool barPaceMarker: false
     property bool historyShowScheduledShort: false
     property bool historyShowOther: true
     property bool historyShowScheduledWeekly: false
@@ -182,6 +187,11 @@ PluginComponent {
         includeCachedTokens = pluginService.loadPluginData(pluginId, "includeCachedTokens", false) === true
         compactPill = pluginService.loadPluginData(pluginId, "compactPill", false) === true
         showUsed = pluginService.loadPluginData(pluginId, "showUsed", false) === true
+        barQuotaBars = pluginService.loadPluginData(pluginId, "barQuotaBars", false) === true
+        barQuotaBarWidth = Math.max(16, Math.min(120, Math.round(Number(pluginService.loadPluginData(pluginId, "barQuotaBarWidth", 40)) || 40)))
+        barLabelLeft = barLabelKind(pluginService.loadPluginData(pluginId, "barLabelLeft", "none"))
+        barLabelRight = barLabelKind(pluginService.loadPluginData(pluginId, "barLabelRight", "none"))
+        barPaceMarker = pluginService.loadPluginData(pluginId, "barPaceMarker", false) === true
         enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
         if (!wasEnabled && enableClaudePrime) {
             lastClaudeAutoPrimeFailed = false
@@ -2068,6 +2078,129 @@ PluginComponent {
         return Theme.primary
     }
 
+    // Quota-bar mode (ADR-0021): fill uses the same severity colors as the
+    // text pill.
+    function barFillColor(bucket) {
+        if (hasError) return Theme.error
+        return allowanceColor(bucket ? bucket.allowance : null)
+    }
+
+    // Non-credit quotas in helper order (5-hour, weekly, model-scoped). Claude
+    // still honours the per-quota top-bar choices.
+    function providerBarBuckets(provider) {
+        var out = []
+        var buckets = providerQuotaBuckets(provider)
+        for (var i = 0; i < buckets.length; i++) {
+            if (buckets[i].kind === "credits") continue
+            if (provider.id === "claude" && !claudeBucketShownInBar(buckets[i])) continue
+            out.push(buckets[i])
+        }
+        return out
+    }
+
+    function barProviderGroups() {
+        var list = visibleProviders()
+        var groups = []
+        for (var i = 0; i < list.length; i++) {
+            var buckets = providerBarBuckets(list[i])
+            if (buckets.length > 0) groups.push({ provider: list[i], buckets: buckets, tags: barQuotaTags(buckets) })
+        }
+        return groups
+    }
+
+    readonly property int barMaxRows: {
+        var rows = 1
+        var groups = barProviderGroups()
+        for (var i = 0; i < groups.length; i++) rows = Math.max(rows, groups[i].buckets.length)
+        return rows
+    }
+    readonly property int barRowPitch: Math.max(4, Math.min(10, Math.floor((widgetThickness - 4) / barMaxRows)))
+    readonly property int barTrackHeight: Math.max(2, Math.round(barRowPitch * 0.5))
+    readonly property int barLabelSize: Math.max(7, barRowPitch + 1)
+
+    function barLabelKind(value) {
+        return ["none", "tag", "time", "percent"].indexOf(value) >= 0 ? value : "none"
+    }
+
+    function barLabelText(kind, bucket, tag) {
+        if (!bucket) return ""
+        if (kind === "tag") return tag || ""
+        if (kind === "time") return barTimeLabel(bucket.allowance)
+        if (kind === "percent") return allowanceLabel(bucket.allowance, false)
+        return ""
+    }
+
+    // Window tag from its length: 5h, 1d, w (six days or longer).
+    function barWindowTag(allowance) {
+        var minutes = allowance ? allowance.windowMinutes : 0
+        if (typeof minutes === "number" && isFinite(minutes) && minutes > 0) {
+            if (minutes >= 6 * 1440) return "w"
+            if (minutes % 1440 === 0) return (minutes / 1440) + "d"
+            if (minutes % 60 === 0) return (minutes / 60) + "h"
+            return Math.round(minutes) + "m"
+        }
+        if (allowance && allowance.window === "weekly") return "w"
+        return allowance && allowance.window === "session" ? "s" : "?"
+    }
+
+    // One tag per bucket: general quotas by window (5h, w), model-scoped
+    // quotas by the model initial, plus the window unless weekly (f, f5h).
+    // Clashing scoped tags use more of the model name (fa, fo).
+    function barQuotaTags(buckets) {
+        var prefix = []
+        for (var i = 0; i < buckets.length; i++) prefix.push(1)
+        function tagAt(k) {
+            var bucket = buckets[k]
+            var window = barWindowTag(bucket ? bucket.allowance : null)
+            if (!bucket || bucket.kind !== "scoped") return window
+            var name = (bucket.label || "").split("·")[0].replace(/\s+/g, "").toLowerCase() || "?"
+            return name.slice(0, prefix[k]) + (window === "w" ? "" : window)
+        }
+        while (true) {
+            var tags = []
+            for (var j = 0; j < buckets.length; j++) tags.push(tagAt(j))
+            var grown = false
+            for (var m = 0; m < buckets.length; m++) {
+                if (buckets[m].kind !== "scoped" || tags.indexOf(tags[m]) === tags.lastIndexOf(tags[m])) continue
+                var full = (buckets[m].label || "").split("·")[0].replace(/\s+/g, "").length
+                if (prefix[m] < full) {
+                    prefix[m]++
+                    grown = true
+                }
+            }
+            if (!grown) return tags
+        }
+    }
+
+    // Widest expected text per label kind, so a group's column keeps one width.
+    function barLabelTemplate(kind, buckets, tags) {
+        var template = kind === "time" ? "00h00" : (kind === "percent" ? "100%" : "5h")
+        var candidates = []
+        for (var i = 0; i < buckets.length; i++)
+            candidates.push(kind === "tag" ? (tags[i] || "") : (kind === "percent" ? barLabelText(kind, buckets[i], "") : ""))
+        for (var j = 0; j < candidates.length; j++) {
+            if (candidates[j].length > template.length) template = candidates[j]
+        }
+        return template
+    }
+
+    // Compact reset countdown for the bar: 45m, 2h05, 4d23h. Used mode shows
+    // elapsed window time, or nothing when the window length is unknown.
+    function barTimeLabel(allowance) {
+        var timing = resetTiming(allowance, resetClock)
+        if (!timing) return ""
+        if (timing.remainingMs <= 0) return "now"
+        if (showUsed && !timing.progressKnown) return ""
+        var ms = showUsed ? timing.durationMs - timing.remainingMs : timing.remainingMs
+        var minutes = Math.max(0, Math.ceil(ms / 60000))
+        var days = Math.floor(minutes / 1440)
+        var hours = Math.floor((minutes % 1440) / 60)
+        var mins = minutes % 60
+        if (days > 0) return days + "d" + (hours > 0 ? hours + "h" : "")
+        if (hours > 0) return hours + "h" + (mins < 10 ? "0" : "") + mins
+        return mins + "m"
+    }
+
     function providerColor(provider) {
         if (!provider || !provider.available || provider.error) return Theme.error
         var weakest = weakestProviderQuota(provider)
@@ -2203,7 +2336,7 @@ PluginComponent {
             }
 
             Repeater {
-                model: root.topBarSegments()
+                model: root.barQuotaBars ? [] : root.topBarSegments()
 
                 Row {
                     spacing: Theme.spacingXS
@@ -2226,9 +2359,132 @@ PluginComponent {
                 }
             }
 
+            // Quota-bar mode: stacked bars per provider (ADR-0021).
+            Repeater {
+                model: root.barQuotaBars ? root.barProviderGroups() : []
+
+                Row {
+                    id: barGroup
+                    property var groupProvider: modelData.provider
+                    property var groupBuckets: modelData.buckets
+                    property var groupTags: modelData.tags
+                    spacing: Theme.spacingXS
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    ProviderLogo {
+                        provider: barGroup.groupProvider
+                        size: Theme.fontSizeMedium
+                        visible: root.barShowProviderLogos
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    StyledText {
+                        id: barProviderName
+                        text: barGroup.groupProvider.name
+                        visible: !root.barShowProviderLogos
+                        font.pixelSize: Theme.fontSizeMedium
+                        color: Theme.surfaceText
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Column {
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Repeater {
+                            model: modelData.buckets
+
+                            Row {
+                                height: root.barRowPitch
+                                spacing: 3
+
+                                StyledText {
+                                    visible: root.barLabelLeft !== "none"
+                                    text: root.barLabelText(root.barLabelLeft, modelData, barGroup.groupTags[index])
+                                    width: Math.ceil(Math.max(barLeftMetrics.width, implicitWidth))
+                                    wrapMode: Text.NoWrap
+                                    elide: Text.ElideNone
+                                    horizontalAlignment: Text.AlignRight
+                                    font.pixelSize: root.barLabelSize
+                                    color: Theme.surfaceVariantText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Rectangle {
+                                    width: root.barQuotaBarWidth
+                                    height: root.barTrackHeight
+                                    radius: height / 2
+                                    color: Theme.withAlpha(Theme.surfaceVariantText, 0.25)
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Rectangle {
+                                        width: parent.width * root.quotaProgress(modelData) / 100
+                                        height: parent.height
+                                        radius: parent.radius
+                                        color: root.barFillColor(modelData)
+                                    }
+
+                                    // Even-pace point: window time left (Left) or elapsed (Used).
+                                    // A 1px line with 1px contrasting edges stays visible on any fill.
+                                    Item {
+                                        property real pace: root.resetTimeProgress(modelData.allowance, root.resetClock, root.showUsed)
+                                        visible: root.barPaceMarker && modelData.kind !== "credits" && pace >= 0
+                                        width: 3
+                                        height: parent.height + 2
+                                        x: Math.round(Math.max(0, Math.min(1, pace)) * (parent.width - 1)) - 1
+                                        anchors.verticalCenter: parent.verticalCenter
+
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            color: Theme.withAlpha(Theme.surface, 0.6)
+                                        }
+
+                                        Rectangle {
+                                            x: 1
+                                            width: 1
+                                            height: parent.height
+                                            color: Theme.surfaceText
+                                        }
+                                    }
+                                }
+
+                                StyledText {
+                                    visible: root.barLabelRight !== "none"
+                                    text: root.barLabelText(root.barLabelRight, modelData, barGroup.groupTags[index])
+                                    width: Math.ceil(Math.max(barRightMetrics.width, implicitWidth))
+                                    wrapMode: Text.NoWrap
+                                    elide: Text.ElideNone
+                                    font.pixelSize: root.barLabelSize
+                                    color: Theme.surfaceVariantText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+                        }
+                    }
+
+                    // Labels measure with the theme font, not the TextMetrics default.
+                    StyledText {
+                        id: barFontProbe
+                        visible: false
+                        font.pixelSize: root.barLabelSize
+                    }
+
+                    TextMetrics {
+                        id: barLeftMetrics
+                        font: barFontProbe.font
+                        text: root.barLabelTemplate(root.barLabelLeft, barGroup.groupBuckets, barGroup.groupTags)
+                    }
+
+                    TextMetrics {
+                        id: barRightMetrics
+                        font: barFontProbe.font
+                        text: root.barLabelTemplate(root.barLabelRight, barGroup.groupBuckets, barGroup.groupTags)
+                    }
+                }
+            }
+
             StyledText {
                 text: root.isLoading && root.providers.length === 0 ? "..." : "--"
-                visible: root.topBarSegments().length === 0
+                visible: root.barQuotaBars ? root.barProviderGroups().length === 0 : root.topBarSegments().length === 0
                 font.pixelSize: Theme.fontSizeMedium
                 color: root.hasError ? Theme.error : Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter

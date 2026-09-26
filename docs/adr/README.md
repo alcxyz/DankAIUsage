@@ -22,3 +22,4 @@
 | [ADR-0018](ADR-0018-dropdown-hierarchy-and-semantic-colors.md) | Dropdown information hierarchy and semantic status colors | widget |
 | [ADR-0019](ADR-0019-link-plugin-reset-observations.md) | Link delayed observations to a confirmed plugin reset | helper + widget |
 | [ADR-0020](ADR-0020-package-build-identity.md) | Stamp development identities into installed packages | packaging + helper |
+| [ADR-0021](ADR-0021-top-bar-quota-bars.md) | Optional quota bars in the horizontal top bar | widget + settings |

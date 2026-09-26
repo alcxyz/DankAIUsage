@@ -158,3 +158,6 @@ The generic plugin icon and provider logos are independently configurable, so
 the bar can show either icon style, both styles, or text only. Each provider's
 percentage takes the warning or error color when its most constrained shown
 quota runs low.
+
+An optional quota-bar mode replaces the text with small stacked bars per
+provider; see [Settings](settings.md#top-bar-layout-and-icons).

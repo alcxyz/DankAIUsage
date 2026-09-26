@@ -6,6 +6,7 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+- Added optional quota bars in the horizontal top bar, with provider names when logos are hidden, configurable labels and width, and a pace marker. Credit switches apply to text mode; quota-bar mode keeps credits in the dropdown. Thanks to @TheFacc for the contribution (#14).
 - Advanced view lists every available Codex reset with its expiry date and countdown, soonest first. Thanks to @TheFacc for the contribution (#12).
 - Added an optional refresh when opening the dropdown, limited to once every 30 seconds and subject to the shared provider cooldown. Thanks to @TheFacc for the contribution (#13).
 
