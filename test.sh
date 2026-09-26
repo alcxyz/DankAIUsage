@@ -793,6 +793,11 @@ if command -v node >/dev/null 2>&1; then
     else
         fail "public announcements" "selection or notification behavior failed"
     fi
+    if node --test tests/codex-resets-ui.test.cjs; then
+        pass "available Codex reset expiry list"
+    else
+        fail "Codex reset expiries" "ordering or expiry lines are inconsistent"
+    fi
     if node --test tests/reset-time-ui.test.cjs; then
         pass "reset countdown and progress behavior"
     else

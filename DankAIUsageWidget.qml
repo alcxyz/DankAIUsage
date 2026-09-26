@@ -1720,6 +1720,34 @@ PluginComponent {
         return resets.length + " usage resets available"
     }
 
+    // Available resets, soonest expiry first; unknown expiries last.
+    function providerResetsByExpiry(provider) {
+        return providerResets(provider).slice().sort(function(a, b) {
+            var ta = Date.parse(a.expiresAt || ""), tb = Date.parse(b.expiresAt || "")
+            return (isFinite(ta) ? ta : Infinity) - (isFinite(tb) ? tb : Infinity)
+        })
+    }
+
+    // Shared title of all available resets, or "" when they differ.
+    function providerResetCommonTitle(provider) {
+        var resets = providerResets(provider)
+        if (resets.length === 0) return ""
+        var title = resets[0].title || ""
+        for (var i = 1; i < resets.length; i++) {
+            if ((resets[i].title || "") !== title) return ""
+        }
+        return title
+    }
+
+    function resetExpiryLine(reset, showTitle) {
+        var title = showTitle && reset.title ? " · " + reset.title : ""
+        var at = Date.parse(reset.expiresAt || "")
+        if (!isFinite(at)) return "Expiry not reported" + title
+        var left = at - resetClock
+        return "Expires " + formatShortDateTime(reset.expiresAt) + " · "
+                + (left <= 0 ? "expired" : "in " + resetDuration(left)) + title
+    }
+
     function providerResetDetail(provider) {
         var resets = providerResets(provider)
         if (resets.length === 0) return ""
@@ -2681,12 +2709,36 @@ PluginComponent {
                                             anchors.leftMargin: Theme.spacingXS
                                             anchors.right: parent.right
                                             anchors.verticalCenter: parent.verticalCenter
-                                            text: "· " + root.providerResetDetail(modelData)
+                                            // Several resets: their shared title here, expiries listed below.
+                                            text: "· " + (root.providerResets(modelData).length < 2
+                                                    ? root.providerResetDetail(modelData) : root.providerResetCommonTitle(modelData))
                                             font.pixelSize: Theme.fontSizeSmall
                                             color: Theme.surfaceVariantText
                                             elide: Text.ElideRight
                                             maximumLineCount: 1
-                                            visible: width > 24
+                                            visible: width > 24 && (root.providerResets(modelData).length < 2
+                                                    || root.providerResetCommonTitle(modelData) !== "")
+                                        }
+                                    }
+
+                                    Column {
+                                        id: resetExpiryList
+                                        property bool showTitles: root.providerResetCommonTitle(modelData) === ""
+                                        width: parent.width
+                                        visible: root.advancedDropdown && root.providerResets(modelData).length > 1
+
+                                        Repeater {
+                                            model: root.advancedDropdown ? root.providerResetsByExpiry(modelData) : []
+
+                                            StyledText {
+                                                x: resetsIcon.width + Theme.spacingXS
+                                                width: parent.width - x
+                                                text: root.resetExpiryLine(modelData, resetExpiryList.showTitles)
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                color: Theme.surfaceVariantText
+                                                elide: Text.ElideRight
+                                                maximumLineCount: 1
+                                            }
                                         }
                                     }
 

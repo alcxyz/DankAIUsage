@@ -6,6 +6,8 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+- Advanced view lists every available Codex reset with its expiry date and countdown, soonest first. Thanks to @TheFacc for the contribution (#12).
+
 ## [1.2.0] - 2026-09-24
 
 - Prepaid credit balances now appear as a **Credits** bucket for Codex and Claude. A balance without a monthly limit shows its amount instead of a percentage, has no progress bar, and never counts as the most constrained quota. A new **Codex credits** switch adds the balance to the top bar.
