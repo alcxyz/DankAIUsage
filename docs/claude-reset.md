@@ -15,13 +15,16 @@ fifteen seconds sends the request. **Keep it** cancels. Simple mode only notes
 that a reset is available.
 
 The outcome appears under the card. `Limits reset` means Claude confirmed it
-and the quotas refresh right away. If the request could not be confirmed (a
-timeout, a rate-limit answer, a sign-in problem), the line says so and a
-**Retry unconfirmed reset** action replaces the use button in both modes. The
-retry repeats the same request for the same grant, so it cannot spend a second
-reset; Claude answers with the earlier outcome. Only the provider decides
-whether a reset is eligible, so a `not available` answer leaves the reset
-untouched. A reset that can only be used at a limit is offered as-is; Claude
+and the quotas refresh right away. Answers such as `not available`, a
+rate-limit response, or a sign-in problem leave the reset untouched; the line
+says so and the use button stays. If no answer arrived (a timeout, or a reply
+the helper could not read), the attempt is **unconfirmed**: a **Retry
+unconfirmed reset** action replaces the use button in both modes. The retry
+repeats the same request for the same grant, so it cannot spend a second reset;
+only `Limits reset` or `already used` settle it. If it keeps failing, check
+Settings → Usage on claude.ai and then use **Forget attempt** (two clicks); it
+drops only the local record. Only the provider decides whether a reset is
+eligible. A reset that can only be used at a limit is offered as-is; Claude
 keeps it if you are not at one, and the confirmation says so beforehand.
 
 Nothing uses a reset automatically. There is no setting to arm, and refreshing
@@ -40,8 +43,9 @@ dankaiusage claude-reset forget         # drop an unconfirmed attempt record
 `status` reads the cached usage data and the helper's own attempt record; it
 contacts no server. `use` sends one redemption request and prints the result;
 while an attempt is unconfirmed it always retries that attempt first, and
-`retry` does only that, refusing when nothing is pending. An attempt is bound to the Claude account that made it. After switching accounts,
-sign back in to retry it, or run `forget` once you have checked the outcome on
+`retry` does only that, refusing when nothing is pending. An attempt is bound to the Claude account that made it, and cached grants are
+offered only to the sign-in that fetched them. After switching accounts, sign
+back in to retry it, or run `forget` once you have checked the outcome on
 claude.ai; `forget` never contacts Claude. All commands print JSON.
 
 ## Why it may be missing

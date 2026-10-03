@@ -1593,6 +1593,7 @@ type claudeOAuthUsageCache struct {
 	DiagnosticCooldownSeconds int64           `json:"diagnosticCooldownSeconds,omitempty"`
 	ClaudeVersion             string          `json:"claudeVersion,omitempty"`
 	Invalidated               bool            `json:"invalidated,omitempty"`
+	OrganizationID            string          `json:"organizationId,omitempty"`
 }
 
 func claudeOAuthUsageCachePath() string {
@@ -2174,6 +2175,9 @@ func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Du
 		}
 		recovered = cache.LastError != "" || cache.DiagnosticCategory != ""
 		cache.Body = body
+		// Remember whose usage this is, so limit resets listed from the cache
+		// are never redeemed under a different sign-in (ADR-0022).
+		cache.OrganizationID, _ = claudeOrganizationID()
 		cache.FetchedAt = now.UTC().Format(time.RFC3339Nano)
 		cache.NextAttemptAt = now.Add(interval).UTC().Format(time.RFC3339Nano)
 		cache.LastError = ""

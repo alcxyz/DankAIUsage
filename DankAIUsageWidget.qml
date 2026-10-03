@@ -129,6 +129,7 @@ PluginComponent {
     property string _claudeResetOutput: ""
     property string _claudeResetAction: ""
     property bool claudeResetConfirm: false
+    property bool claudeResetForgetConfirm: false
 
     Connections {
         target: root.pluginService
@@ -433,14 +434,21 @@ PluginComponent {
         return false
     }
 
+    // The offered grant, if it is still an unexpired listed reset; otherwise
+    // the first unexpired Claude reset.
     function claudeResetGrantId(provider) {
         var meta = provider && provider.meta ? provider.meta.claudeReset : null
-        if (meta && meta.nextGrantId) return meta.nextGrantId
+        var preferred = meta && meta.nextGrantId ? meta.nextGrantId : ""
         var resets = providerResets(provider)
+        var fallback = ""
         for (var i = 0; i < resets.length; i++) {
-            if (resets[i] && resets[i].id && resets[i].resetType === "claudeLimitReset") return resets[i].id
+            var reset = resets[i]
+            if (!reset || !reset.id || reset.resetType !== "claudeLimitReset") continue
+            if (reset.expiresAt && !(Date.parse(reset.expiresAt) > resetClock)) continue
+            if (reset.id === preferred) return reset.id
+            if (fallback === "") fallback = reset.id
         }
-        return ""
+        return fallback
     }
 
     function claudeResetControlsVisible(provider) {
@@ -451,8 +459,16 @@ PluginComponent {
     // Uncertain or failed attempts and the result of this session's use stay
     // visible in either dropdown mode; a settled idle state stays quiet.
     function claudeResetNeedsAttention() {
-        return claudeResetStatus.state === "attempted" || claudeResetStatus.state === "failed"
-                || !!claudeResetStatus.error || claudeResetStatus.justUsed === true
+        return claudeResetStatus.state === "attempted" || !!claudeResetStatus.error
+                || claudeResetStatus.justUsed === true || claudeResetRecentlyFailed()
+    }
+
+    // A saved failed outcome is worth showing for an hour after the attempt,
+    // not forever: nothing was spent, and the use button is back anyway.
+    function claudeResetRecentlyFailed() {
+        if (claudeResetStatus.state !== "failed") return false
+        var at = Date.parse(claudeResetStatus.lastAttemptAt || "")
+        return isFinite(at) && resetClock - at < 3600000
     }
 
     // A grant that needs a limit is offered as-is; Claude answers not_limited
@@ -629,6 +645,7 @@ PluginComponent {
         _claudeResetOutput = ""
         _claudeResetAction = action
         if (action === "use" || action === "retry") claudeResetConfirm = false
+        if (action !== "status") claudeResetForgetConfirm = false
         var command = ["dankaiusage", "claude-reset", action, "--refresh-interval", "" + root.refreshInterval]
         if (action === "use" && grantId) command.push("--grant", grantId)
         claudeResetProcess.command = command
@@ -655,7 +672,7 @@ PluginComponent {
                 }
             }
             status.justUsed = root._claudeResetAction === "use" || root._claudeResetAction === "retry"
-                    || (root.claudeResetStatus.justUsed === true
+                    || (root.claudeResetStatus.justUsed === true && !!status.lastAttemptAt
                         && status.lastAttemptAt === root.claudeResetStatus.lastAttemptAt)
             root.claudeResetStatus = status
             // A use attempt may have refilled the windows; fetch them again.
@@ -3300,11 +3317,35 @@ PluginComponent {
 
                                         // The retry resends the saved grant and request id, so it
                                         // cannot spend a second reset and needs no second click.
-                                        CompactAction {
-                                            text: claudeResetProcess.running && root._claudeResetAction === "retry" ? "Retrying reset..." : "Retry unconfirmed reset"
-                                            enabled: !claudeResetProcess.running && !usageProcess.running
+                                        Flow {
+                                            width: parent.width
+                                            spacing: Theme.spacingXS
                                             visible: root.claudeResetStatus.state === "attempted"
-                                            onClicked: root.runClaudeReset("retry", "")
+
+                                            CompactAction {
+                                                text: claudeResetProcess.running && root._claudeResetAction === "retry" ? "Retrying reset..." : "Retry unconfirmed reset"
+                                                enabled: !claudeResetProcess.running && !usageProcess.running
+                                                onClicked: root.runClaudeReset("retry", "")
+                                            }
+
+                                            // Forget contacts nothing; it only drops the local record once the
+                                            // user has checked the outcome elsewhere.
+                                            CompactAction {
+                                                text: root.claudeResetForgetConfirm ? "Confirm: forget attempt" : "Forget attempt"
+                                                enabled: !claudeResetProcess.running
+                                                warning: root.claudeResetForgetConfirm
+                                                onClicked: {
+                                                    if (root.claudeResetForgetConfirm) root.runClaudeReset("forget", "")
+                                                    else root.claudeResetForgetConfirm = true
+                                                }
+                                            }
+                                        }
+
+                                        NoticeRow {
+                                            width: parent.width
+                                            level: "warning"
+                                            text: "Forget only drops the local record of this attempt. Check Settings → Usage on claude.ai first: if the reset was applied, the next use would spend another one."
+                                            visible: root.claudeResetForgetConfirm
                                         }
 
                                         NoticeRow {
@@ -4047,6 +4088,12 @@ PluginComponent {
         interval: 15000
         running: root.claudeResetConfirm
         onTriggered: root.claudeResetConfirm = false
+    }
+
+    Timer {
+        interval: 15000
+        running: root.claudeResetForgetConfirm
+        onTriggered: root.claudeResetForgetConfirm = false
     }
 
     component TrackingPanel: StyledRect {

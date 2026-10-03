@@ -595,6 +595,52 @@ func TestRunClaudeResetActionPendingAttemptIsBoundToOrganization(t *testing.T) {
 	}
 }
 
+func TestCachedGrantsAreBoundToTheirSignIn(t *testing.T) {
+	dir := t.TempDir()
+	path := writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
+	cache, err := loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.OrganizationID = "org-test"
+	if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
+		t.Fatal(err)
+	}
+	now := mustParseTime(t, "2026-10-03T05:01:00Z")
+	if _, ok := claudeResetAvailabilityForUse(path, now, 5*time.Minute, "org-test"); !ok {
+		t.Fatal("the fetching sign-in may use its grants")
+	}
+	if _, ok := claudeResetAvailabilityForUse(path, now, 5*time.Minute, ""); !ok {
+		t.Fatal("an unknown current organization does not block listing")
+	}
+	if _, ok := claudeResetAvailabilityForUse(path, now, 5*time.Minute, "org-other"); ok {
+		t.Fatal("another sign-in must not see cached grants")
+	}
+	calls := 0
+	deps, _ := testClaudeResetDeps(t, dir, func(claudeResetClaimRequest) (claudeResetClaimResult, error) {
+		calls++
+		return claudeResetClaimResult{Result: "reset"}, nil
+	})
+	deps.OrganizationID = func() (string, error) { return "org-other", nil }
+	if status, err := runClaudeResetAction("use", "", deps); err == nil || calls != 0 || !strings.Contains(status.Message, "another sign-in") {
+		t.Fatalf("use under another sign-in must refuse: %+v %v", status, err)
+	}
+}
+
+func TestClaudeUsageFetchRecordsOrganization(t *testing.T) {
+	transport, now := setupClaudeRefreshTest(t)
+	if err := os.WriteFile(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), ".claude.json"), []byte(`{"oauthAccount":{"organizationUuid":"org-synthetic-2"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now, time.Minute, false); err != nil || transport.calls.Load() != 1 {
+		t.Fatal(err)
+	}
+	cache, err := loadClaudeOAuthUsageCacheStrict(claudeOAuthUsageCachePath())
+	if err != nil || cache.OrganizationID != "org-synthetic-2" {
+		t.Fatalf("cache must record the fetching organization: %+v %v", cache, err)
+	}
+}
+
 func TestClaimUsesCachedClaudeVersion(t *testing.T) {
 	dir := t.TempDir()
 	writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)

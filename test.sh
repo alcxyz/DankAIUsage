@@ -84,6 +84,9 @@ assert component_text.count('root.runClaudeReset("use", root.claudeResetGrantId(
 assert component_text.count('onClicked: root.runClaudeReset("retry", "")') == 1, 'one retry action for an unconfirmed attempt'
 assert 'runClaudeReset("use", "")' not in component_text, 'the widget never sends an unqualified use'
 assert 'visible: root.claudeResetStatus.state === "attempted"' in component_text
+assert component_text.count('root.runClaudeReset("forget", "")') == 1
+assert 'if (root.claudeResetForgetConfirm) root.runClaudeReset("forget", "")' in component_text
+assert 'running: root.claudeResetForgetConfirm' in component_text
 assert 'if (action === "use" || action === "retry") claudeResetConfirm = false' in component_text
 assert 'if (root.claudeResetConfirm) root.runClaudeReset("use"' in component_text
 assert 'else root.claudeResetConfirm = true' in component_text
@@ -581,9 +584,10 @@ equal(resetVisible(false, {armed: false, stateKnown: true, state: "attempted"}),
 const claudeReset = {id: "grant-1", resetType: "claudeLimitReset", expiresAt: "2026-09-20T12:00:00Z"};
 const claudeProvider = {id: "claude", meta: {availableResetCount: 1, claudeReset: {eligible: true, nextGrantId: "grant-1"}}, resets: [claudeReset]};
 function claudeVisible(advancedDropdown, claudeResetStatus, provider = claudeProvider) {
-    const scope = {advancedDropdown, claudeResetStatus, resetClock};
+    const scope = {advancedDropdown, claudeResetStatus, resetClock, Date, isFinite};
     scope.providerResets = bindQmlFunction("providerResets", scope);
     scope.hasSpendableClaudeReset = bindQmlFunction("hasSpendableClaudeReset", scope);
+    scope.claudeResetRecentlyFailed = bindQmlFunction("claudeResetRecentlyFailed", scope);
     scope.claudeResetNeedsAttention = bindQmlFunction("claudeResetNeedsAttention", scope);
     return bindQmlFunction("claudeResetControlsVisible", scope)(provider);
 }
@@ -601,13 +605,26 @@ for (const provider of [null, {id: "codex", meta: {availableResetCount: 1, claud
 }
 equal(claudeVisible(false, {stateKnown: true, state: "attempted"}), true, "uncertain Claude reset attempt stays visible");
 equal(claudeVisible(false, {stateKnown: true, state: "failed", error: "failed"}), true, "Claude reset errors stay visible");
-equal(claudeVisible(false, {stateKnown: true, state: "failed"}), true, "a saved failed outcome stays visible after a status reload");
+const failedScope = (status) => {
+    const scope = {advancedDropdown: false, claudeResetStatus: status, resetClock, Date, isFinite};
+    scope.providerResets = bindQmlFunction("providerResets", scope);
+    scope.hasSpendableClaudeReset = bindQmlFunction("hasSpendableClaudeReset", scope);
+    scope.claudeResetRecentlyFailed = bindQmlFunction("claudeResetRecentlyFailed", scope);
+    scope.claudeResetNeedsAttention = bindQmlFunction("claudeResetNeedsAttention", scope);
+    return bindQmlFunction("claudeResetControlsVisible", scope)(claudeProvider);
+};
+equal(failedScope({stateKnown: true, state: "failed", lastAttemptAt: "2026-09-19T11:30:00Z"}), true, "a recent saved failure stays visible after a status reload");
+equal(failedScope({stateKnown: true, state: "failed", lastAttemptAt: "2026-09-19T10:30:00Z"}), false, "an old saved failure no longer demands attention");
+equal(failedScope({stateKnown: true, state: "failed"}), false, "a failure without a timestamp does not stick forever");
 equal(claudeVisible(false, {stateKnown: true, state: "used", justUsed: true}), true, "this session's result stays visible");
-const grantScope = {providerResets: bindQmlFunction("providerResets", {})};
+const grantScope = {providerResets: bindQmlFunction("providerResets", {}), resetClock, Date};
 const grantId = bindQmlFunction("claudeResetGrantId", grantScope);
 equal(grantId(claudeProvider), "grant-1", "grant id prefers the offered grant");
 equal(grantId({id: "claude", meta: {claudeReset: {}}, resets: [claudeReset]}), "grant-1", "grant id falls back to the listed reset");
 equal(grantId({id: "claude", meta: {}, resets: [{...claudeReset, resetType: "codexRateLimits"}]}), "", "no Claude grant yields no id");
+const expiredFirst = {id: "claude", meta: {claudeReset: {nextGrantId: "grant-1"}},
+    resets: [{...claudeReset, expiresAt: "2026-09-19T11:00:00Z"}, {...claudeReset, id: "grant-2"}]};
+equal(grantId(expiredFirst), "grant-2", "an expired offered grant is skipped for a live one");
 JS
     then
         pass "dropdown JavaScript behavior"
