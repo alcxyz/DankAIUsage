@@ -38,6 +38,7 @@ func (transport *claudeRefreshTransport) RoundTrip(request *http.Request) (*http
 func setupClaudeRefreshTest(t *testing.T) (*claudeRefreshTransport, time.Time) {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	config := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", config)
 	t.Setenv("PATH", t.TempDir())

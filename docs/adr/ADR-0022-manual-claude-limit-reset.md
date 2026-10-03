@@ -55,8 +55,10 @@ this endpoint (ADR-0001); this is the same identity, stated precisely.
   made the attempt; another account cannot resend it, and an explicit `forget`
   exists for that case. The server, not the helper, decides whether the
   earlier request was already applied. The usage cache records the
-  organization that fetched it; grants are listed and redeemed only under that
-  same sign-in.
+  organization read with the token before the fetch; grants are listed only
+  under that same sign-in and redeemed only from a cache bound to it. The key
+  is the organization because the claim endpoint is per organization; members
+  of one Team organization are not told apart.
   `reset` and `already_used` count as success and expire the usage cache so the
   next summary fetches the refilled windows immediately; every other outcome
   leaves the grant untouched and says so.

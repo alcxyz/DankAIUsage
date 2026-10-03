@@ -51,10 +51,11 @@ func writeClaudeResetUsageFixture(t *testing.T, dir string, body string) string 
 	t.Helper()
 	path := filepath.Join(dir, "claude-oauth-usage.json")
 	cache := claudeOAuthUsageCache{
-		FetchedAt:     "2026-10-03T05:00:00Z",
-		NextAttemptAt: "2026-10-03T05:05:00Z",
-		Body:          json.RawMessage(body),
-		ClaudeVersion: "0.0.0-test",
+		FetchedAt:      "2026-10-03T05:00:00Z",
+		NextAttemptAt:  "2026-10-03T05:05:00Z",
+		Body:           json.RawMessage(body),
+		ClaudeVersion:  "0.0.0-test",
+		OrganizationID: "org-test",
 	}
 	data, err := json.Marshal(cache)
 	if err != nil {
@@ -183,6 +184,9 @@ func TestRunClaudeResetActionUseSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("use: %+v error=%v", status, err)
 	}
+	if !status.Requested {
+		t.Fatal("a sent request must be reported")
+	}
 	if len(requests) != 1 || requests[0].GrantID != "launch-grant-1" || requests[0].OrganizationID != "org-test" || requests[0].Token != "synthetic-test-only" {
 		t.Fatalf("unexpected claim requests: %+v", requests)
 	}
@@ -302,7 +306,7 @@ func TestRunClaudeResetActionRefusesWithoutEligibleGrant(t *testing.T) {
 	empty := deps
 	empty.StatePath = filepath.Join(t.TempDir(), "claude-reset.json")
 	empty.UsageCachePath = filepath.Join(filepath.Dir(empty.StatePath), "claude-oauth-usage.json")
-	if status, err := runClaudeResetAction("use", "", empty); err == nil || calls != 0 || !strings.Contains(status.Message, "unknown") {
+	if status, err := runClaudeResetAction("use", "", empty); err == nil || calls != 0 || !strings.Contains(status.Message, "refresh usage first") {
 		t.Fatalf("missing usage cache must refuse: %+v %v", status, err)
 	}
 	if status, err := runClaudeResetAction("retry", "", deps); err == nil || calls != 0 || !strings.Contains(status.Message, "no unconfirmed") {
@@ -499,6 +503,9 @@ func TestExpireClaudeUsageCacheKeepsProviderBackoff(t *testing.T) {
 }
 
 func TestClaudeResetsFromUsageCacheIgnoreStaleFailedBody(t *testing.T) {
+	// Listing reads the current organization; keep it unknown and synthetic.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	dir := t.TempDir()
 	path := writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
 	fetchedAt := mustParseTime(t, "2026-10-03T05:00:00Z")
@@ -607,14 +614,31 @@ func TestCachedGrantsAreBoundToTheirSignIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := mustParseTime(t, "2026-10-03T05:01:00Z")
-	if _, ok := claudeResetAvailabilityForUse(path, now, 5*time.Minute, "org-test"); !ok {
+	if _, ok := claudeResetAvailabilityForUse(path, now, 5*time.Minute, "org-test", true); !ok {
 		t.Fatal("the fetching sign-in may use its grants")
 	}
-	if _, ok := claudeResetAvailabilityForUse(path, now, 5*time.Minute, ""); !ok {
+	if _, ok := claudeResetAvailabilityForUse(path, now, 5*time.Minute, "", false); !ok {
 		t.Fatal("an unknown current organization does not block listing")
 	}
-	if _, ok := claudeResetAvailabilityForUse(path, now, 5*time.Minute, "org-other"); ok {
+	if _, ok := claudeResetAvailabilityForUse(path, now, 5*time.Minute, "", true); ok {
+		t.Fatal("an unknown current organization must block redemption")
+	}
+	if _, ok := claudeResetAvailabilityForUse(path, now, 5*time.Minute, "org-other", false); ok {
 		t.Fatal("another sign-in must not see cached grants")
+	}
+	cache.OrganizationID = ""
+	if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := claudeResetAvailabilityForUse(path, now, 5*time.Minute, "org-test", false); !ok {
+		t.Fatal("an unbound cache may still be listed")
+	}
+	if _, ok := claudeResetAvailabilityForUse(path, now, 5*time.Minute, "org-test", true); ok {
+		t.Fatal("an unbound cache must never be redeemed")
+	}
+	cache.OrganizationID = "org-test"
+	if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
+		t.Fatal(err)
 	}
 	calls := 0
 	deps, _ := testClaudeResetDeps(t, dir, func(claudeResetClaimRequest) (claudeResetClaimResult, error) {
@@ -622,13 +646,16 @@ func TestCachedGrantsAreBoundToTheirSignIn(t *testing.T) {
 		return claudeResetClaimResult{Result: "reset"}, nil
 	})
 	deps.OrganizationID = func() (string, error) { return "org-other", nil }
-	if status, err := runClaudeResetAction("use", "", deps); err == nil || calls != 0 || !strings.Contains(status.Message, "another sign-in") {
+	if status, err := runClaudeResetAction("use", "", deps); err == nil || calls != 0 || !strings.Contains(status.Message, "this sign-in") || status.Requested {
 		t.Fatalf("use under another sign-in must refuse: %+v %v", status, err)
 	}
 }
 
 func TestClaudeUsageFetchRecordsOrganization(t *testing.T) {
 	transport, now := setupClaudeRefreshTest(t)
+	if _, err := claudeOrganizationID(); err == nil {
+		t.Fatal("the refresh fixture must not see a real organization")
+	}
 	if err := os.WriteFile(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), ".claude.json"), []byte(`{"oauthAccount":{"organizationUuid":"org-synthetic-2"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}

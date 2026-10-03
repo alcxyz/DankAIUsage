@@ -671,7 +671,9 @@ PluginComponent {
                     error: "helper output unreadable"
                 }
             }
-            status.justUsed = root._claudeResetAction === "use" || root._claudeResetAction === "retry"
+            // Only a request the helper actually sent is this session's result;
+            // a refusal shows through its error until the next status reload.
+            status.justUsed = status.requested === true
                     || (root.claudeResetStatus.justUsed === true && !!status.lastAttemptAt
                         && status.lastAttemptAt === root.claudeResetStatus.lastAttemptAt)
             root.claudeResetStatus = status

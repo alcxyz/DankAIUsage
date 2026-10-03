@@ -99,6 +99,7 @@ type claudeResetStatus struct {
 	LastAttemptAt    string             `json:"lastAttemptAt,omitempty"`
 	ResetsLeft       *int               `json:"resetsLeft,omitempty"`
 	UsageRefreshed   bool               `json:"usageRefreshed,omitempty"`
+	Requested        bool               `json:"requested"`
 	Error            string             `json:"error,omitempty"`
 }
 
@@ -258,6 +259,7 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 	availability, fetchedAt := claudeResetAvailabilityFromCache(deps.UsageCachePath)
 	status := publicClaudeResetStatus(state, availability, fetchedAt)
 	status.StateKnown = stateKnown
+	status.Requested = requested
 	if err != nil {
 		if !stateKnown {
 			status.State = "error"
@@ -322,9 +324,9 @@ func useClaudeReset(state *claudeResetState, grantID string, retryOnly bool, dep
 		grant = claudeResetGrant{ID: state.GrantID}
 		requestID = state.RequestID
 	} else {
-		availability, ok := claudeResetAvailabilityForUse(deps.UsageCachePath, now, deps.RefreshInterval, organization)
+		availability, ok := claudeResetAvailabilityForUse(deps.UsageCachePath, now, deps.RefreshInterval, organization, true)
 		if !ok {
-			return false, false, errors.New("Claude usage data is stale or belongs to another sign-in; refresh usage first")
+			return false, false, errors.New("Claude usage data is stale or not tied to this sign-in; refresh usage first")
 		}
 		if !availability.Reported {
 			return false, false, errors.New("Claude reset availability is unknown; refresh usage first")
@@ -545,7 +547,7 @@ func claudeResetMeta(availability claudeResetAvailability, now time.Time) map[st
 // refreshes is trusted only within max(stale TTL, two intervals).
 func claudeResetsFromUsageCache(path string, now time.Time, interval time.Duration) ([]UsageReset, map[string]any) {
 	organization, _ := claudeOrganizationID()
-	availability, ok := claudeResetAvailabilityForUse(path, now, interval, organization)
+	availability, ok := claudeResetAvailabilityForUse(path, now, interval, organization, false)
 	if !ok || !availability.Reported {
 		return nil, nil
 	}
@@ -555,10 +557,14 @@ func claudeResetsFromUsageCache(path string, now time.Time, interval time.Durati
 // claudeResetAvailabilityForUse applies the quota collector's stale-serve rule
 // before a grant may be redeemed: a body kept through failed refreshes is
 // trusted only within max(stale TTL, two intervals). A cache fetched under a
-// different organization than the current sign-in is never offered.
-func claudeResetAvailabilityForUse(path string, now time.Time, interval time.Duration, organization string) (claudeResetAvailability, bool) {
+// different organization than the current sign-in is never offered, and a
+// redemption additionally requires the cache to be bound to one at all.
+func claudeResetAvailabilityForUse(path string, now time.Time, interval time.Duration, organization string, requireBinding bool) (claudeResetAvailability, bool) {
 	cache := loadClaudeOAuthUsageCache(path)
 	if cache.OrganizationID != "" && organization != "" && cache.OrganizationID != organization {
+		return claudeResetAvailability{}, false
+	}
+	if requireBinding && (cache.OrganizationID == "" || cache.OrganizationID != organization) {
 		return claudeResetAvailability{}, false
 	}
 	if cache.LastError != "" {

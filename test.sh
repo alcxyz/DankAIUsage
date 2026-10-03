@@ -88,6 +88,7 @@ assert component_text.count('root.runClaudeReset("forget", "")') == 1
 assert 'if (root.claudeResetForgetConfirm) root.runClaudeReset("forget", "")' in component_text
 assert 'running: root.claudeResetForgetConfirm' in component_text
 assert 'if (action === "use" || action === "retry") claudeResetConfirm = false' in component_text
+assert 'status.justUsed = status.requested === true' in component_text
 assert 'if (root.claudeResetConfirm) root.runClaudeReset("use"' in component_text
 assert 'else root.claudeResetConfirm = true' in component_text
 assert 'running: root.claudeResetConfirm' in component_text

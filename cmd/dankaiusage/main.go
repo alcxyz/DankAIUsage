@@ -2125,6 +2125,9 @@ func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Du
 			actionErr = err
 			return nil
 		}
+		// Read alongside the token, before the request, so an account switch
+		// during the fetch cannot tag this body with the next sign-in.
+		organization, _ := claudeOrganizationID()
 		cache.ClaudeVersion = claudeCodeVersionString(cache.ClaudeVersion)
 		body, backoff, err := fetchClaudeOAuthUsage(token, cache.ClaudeVersion)
 		if err != nil {
@@ -2177,7 +2180,7 @@ func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Du
 		cache.Body = body
 		// Remember whose usage this is, so limit resets listed from the cache
 		// are never redeemed under a different sign-in (ADR-0022).
-		cache.OrganizationID, _ = claudeOrganizationID()
+		cache.OrganizationID = organization
 		cache.FetchedAt = now.UTC().Format(time.RFC3339Nano)
 		cache.NextAttemptAt = now.Add(interval).UTC().Format(time.RFC3339Nano)
 		cache.LastError = ""
