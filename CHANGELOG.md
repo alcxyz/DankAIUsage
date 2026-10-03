@@ -6,6 +6,8 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+- Fixed Claude quotas failing to refresh with HTTP 429 after 1.3.0: the quota poll identifies itself as Claude Code again, and the limit-reset check is a separate request under Claude Code's OAuth client identity at most every 30 minutes, backing off for an hour when rate limited. A failed reset check now shows its reason and never blanks the quota windows.
+
 ## [1.3.0] - 2026-10-03
 
 - Claude limit resets granted to your plan now appear under the Claude card with their expiry and what they clear, and Advanced offers a confirmed **Use reset now** action; nothing is ever used automatically. The helper now identifies itself to the usage endpoint as Claude Code's OAuth client, which the endpoint requires before it reports resets.
