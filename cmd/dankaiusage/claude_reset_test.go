@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -359,12 +358,16 @@ type claudeResetClaimTransport struct {
 	bodies   []string
 	status   int
 	response string
+	fail     error
 }
 
 func (transport *claudeResetClaimTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	body, _ := io.ReadAll(request.Body)
 	transport.requests = append(transport.requests, request)
 	transport.bodies = append(transport.bodies, string(body))
+	if transport.fail != nil {
+		return nil, transport.fail
+	}
 	return &http.Response{
 		StatusCode: transport.status,
 		Header:     http.Header{},
@@ -716,7 +719,7 @@ func TestRunClaudeResetActionForgetRecoversUnreadableState(t *testing.T) {
 
 	for _, action := range []string{"status", "use", "retry"} {
 		status, err := runClaudeResetAction(action, "", deps)
-		if err == nil || status.StateKnown || status.State != "error" || !strings.Contains(status.Error, "claude-reset forget") {
+		if err == nil || status.StateKnown || !status.StateUnreadable || status.State != "error" || !strings.Contains(status.Error, "claude-reset forget") {
 			t.Fatalf("%s on an unreadable record: %+v error=%v", action, status, err)
 		}
 	}
@@ -725,7 +728,7 @@ func TestRunClaudeResetActionForgetRecoversUnreadableState(t *testing.T) {
 	}
 
 	status, err := runClaudeResetAction("forget", "", deps)
-	if err != nil || !status.StateKnown || status.State != "idle" || status.Error != "" {
+	if err != nil || !status.StateKnown || status.StateUnreadable || status.State != "idle" || status.Error != "" {
 		t.Fatalf("forget: %+v error=%v", status, err)
 	}
 	status, err = runClaudeResetAction("status", "", deps)
@@ -735,17 +738,31 @@ func TestRunClaudeResetActionForgetRecoversUnreadableState(t *testing.T) {
 }
 
 func TestSafeClaudeResetErrorDropsRequestURL(t *testing.T) {
-	wrapped := &url.Error{
-		Op:  "Post",
-		URL: "https://api.anthropic.com/api/organizations/org-secret-uuid/reset_rate_limits",
-		Err: errors.New("context deadline exceeded (Client.Timeout exceeded while awaiting headers)"),
+	// Through the real claim path: http.Client wraps a transport failure in a
+	// url.Error that repeats the organization URL.
+	transport := &claudeResetClaimTransport{fail: errors.New("context deadline exceeded (Client.Timeout exceeded while awaiting headers)")}
+	previous := http.DefaultTransport
+	http.DefaultTransport = transport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	_, err := claimClaudeReset(claudeResetClaimRequest{Token: "x", Version: "0.0.0-test", OrganizationID: "org-secret-uuid", GrantID: "g", RequestID: "r"})
+	if err == nil || !strings.Contains(err.Error(), "org-secret-uuid") {
+		t.Fatalf("expected a wrapped transport error naming the URL, got %v", err)
 	}
-	message := safeClaudeResetError(wrapped)
+	message := safeClaudeResetError(err)
 	if strings.Contains(message, "org-secret-uuid") || strings.Contains(message, "api.anthropic.com") {
 		t.Fatalf("message leaks the request URL: %q", message)
 	}
 	if !strings.Contains(message, "context deadline exceeded") {
 		t.Fatalf("message lost the cause: %q", message)
+	}
+
+	dir := t.TempDir()
+	writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
+	deps, _ := testClaudeResetDeps(t, dir, nil)
+	deps.Claim = claimClaudeReset
+	status, _ := runClaudeResetAction("use", "", deps)
+	if status.State != "attempted" || strings.Contains(status.Error, "org-secret-uuid") || strings.Contains(status.Error, "org-test") || !strings.Contains(status.Error, "context deadline exceeded") {
+		t.Fatalf("use after a transport failure: %+v", status)
 	}
 	long := errors.New(strings.Repeat("x", 400))
 	if got := safeClaudeResetError(long); len(got) != 160 {

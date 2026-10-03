@@ -459,9 +459,11 @@ PluginComponent {
     }
 
     // The helper could not read its own attempt record (corrupt, or from
-    // another version). Nothing can be used until forget replaces it.
+    // another version) and says so. Nothing can be used until forget replaces
+    // it. Lock timeouts and unreadable helper output do not count: the record
+    // may be fine, so forget is not offered for them.
     function claudeResetStateUnreadable() {
-        return claudeResetStatus.state === "error" && claudeResetStatus.stateKnown === false
+        return claudeResetStatus.stateUnreadable === true
     }
 
     // Uncertain or failed attempts and the result of this session's use stay

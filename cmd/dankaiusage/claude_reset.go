@@ -100,7 +100,10 @@ type claudeResetStatus struct {
 	ResetsLeft       *int               `json:"resetsLeft,omitempty"`
 	UsageRefreshed   bool               `json:"usageRefreshed,omitempty"`
 	Requested        bool               `json:"requested"`
-	Error            string             `json:"error,omitempty"`
+	// StateUnreadable marks a saved record the helper could not read; only
+	// forget recovers from it. Lock or directory failures leave it unset.
+	StateUnreadable bool   `json:"stateUnreadable,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 type claudeResetClaimRequest struct {
@@ -223,11 +226,13 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 	var state claudeResetState
 	var actionErr error
 	stateKnown := false
+	stateUnreadable := false
 	refreshUsage := false
 	requested := false
 	err := withStateFileLock(deps.StatePath, claudeResetLockTimeout, "Claude reset state", func() error {
 		loaded, err := loadClaudeResetState(deps.StatePath)
 		if err != nil && action != "forget" {
+			stateUnreadable = true
 			return errors.New("saved Claude reset state is unreadable; check Settings → Usage on claude.ai, then run `dankaiusage claude-reset forget` to discard it")
 		}
 		if err == nil {
@@ -263,6 +268,7 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 	availability, fetchedAt := claudeResetAvailabilityFromCache(deps.UsageCachePath)
 	status := publicClaudeResetStatus(state, availability, fetchedAt)
 	status.StateKnown = stateKnown
+	status.StateUnreadable = stateUnreadable
 	status.Requested = requested
 	if err != nil {
 		if !stateKnown {
@@ -883,7 +889,7 @@ func claimClaudeReset(request claudeResetClaimRequest) (claudeResetClaimResult, 
 	client := &http.Client{Timeout: claudeResetClaimTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		return claudeResetClaimResult{}, fmt.Errorf("Claude reset request failed: %v", err)
+		return claudeResetClaimResult{}, fmt.Errorf("Claude reset request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
