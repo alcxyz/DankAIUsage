@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -519,6 +520,26 @@ func TestClaudeResetAvailabilityCheckIdentityAndCadence(t *testing.T) {
 	status, err := runClaudeResetAction("status", "", deps)
 	if err != nil || !strings.Contains(status.AvailabilityError, "429") || !strings.Contains(status.Message, "could not report") {
 		t.Fatalf("status after a failed check: %+v %v", status, err)
+	}
+	// The summary surfaces the failure; a refusal quotes the real next attempt.
+	if _, meta := claudeResetsForSummary(at.Add(time.Minute), 5*time.Minute); meta == nil || !strings.Contains(fmt.Sprint(meta["claudeResetCheckError"]), "429") {
+		t.Fatalf("summary meta must carry the check error: %v", meta)
+	}
+	if text := claudeResetNextCheckText(path, at.Add(time.Minute)); !strings.Contains(text, "59 minutes") {
+		t.Fatalf("next check text: %q", text)
+	}
+	// Missing credentials are not reported as a failed check: the quota side
+	// owns that message and a statusline-only setup has nothing to check.
+	if err := os.Remove(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), ".credentials.json")); err != nil {
+		t.Fatal(err)
+	}
+	later := at.Add(2 * time.Hour)
+	if _, meta := claudeResetsForSummary(later, 5*time.Minute); meta != nil {
+		t.Fatalf("a credentials failure must stay quiet in the summary: %v", meta)
+	}
+	cache, err = loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || cache.DiagnosticCategory != "authentication" || !strings.Contains(cache.LastError, "credentials") {
+		t.Fatalf("the cache still records the credentials failure: %+v %v", cache, err)
 	}
 }
 

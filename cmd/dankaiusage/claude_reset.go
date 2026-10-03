@@ -371,7 +371,7 @@ func useClaudeReset(state *claudeResetState, grantID string, retryOnly bool, dep
 			return false, false, errors.New("Claude reset availability is unknown until the next reset check")
 		}
 		if !ok {
-			return false, false, errors.New("Claude reset availability is stale or not tied to this sign-in; it is checked again within half an hour")
+			return false, false, errors.New("Claude reset availability is stale or not tied to this sign-in; " + claudeResetNextCheckText(deps.AvailabilityCachePath, now))
 		}
 		if !availability.Reported {
 			return false, false, errors.New("Claude reset availability is unknown until the next reset check")
@@ -598,7 +598,13 @@ func claudeResetsForSummary(now time.Time, interval time.Duration) ([]UsageReset
 	path := claudeResetAvailabilityCachePath()
 	refreshErr := refreshClaudeResetAvailability(path, now, interval)
 	resets, meta := claudeResetsFromAvailabilityCache(path, now, interval)
-	checkError := loadClaudeOAuthUsageCache(path).LastError
+	cache := loadClaudeOAuthUsageCache(path)
+	checkError := cache.LastError
+	// Missing local credentials are not news: the quota poll reports them in
+	// its own way, and a statusline-only setup has no reset to check.
+	if cache.DiagnosticCategory == "authentication" && cache.DiagnosticHTTPStatus == 0 {
+		checkError = ""
+	}
 	if refreshErr != nil && checkError == "" {
 		checkError = refreshErr.Error()
 	}
@@ -618,6 +624,21 @@ func claudeResetsFromAvailabilityCache(path string, now time.Time, interval time
 		return nil, nil
 	}
 	return claudeAvailableResets(availability, now), claudeResetMeta(availability, now)
+}
+
+// claudeResetNextCheckText says when the availability cache will be fetched
+// again, from its own reservation, so refusals do not promise a time the
+// backoff will not keep.
+func claudeResetNextCheckText(path string, now time.Time) string {
+	next, err := parseOptionalRefreshTime(loadClaudeOAuthUsageCache(path).NextAttemptAt)
+	if err != nil || next.IsZero() || !next.After(now) {
+		return "it is checked again on the next refresh"
+	}
+	minutes := int((next.Sub(now) + time.Minute - 1) / time.Minute)
+	if minutes <= 1 {
+		return "it is checked again within a minute"
+	}
+	return fmt.Sprintf("the next check is due in %d minutes", minutes)
 }
 
 // refreshClaudeResetAvailability fetches the cedar_ember block under Claude
