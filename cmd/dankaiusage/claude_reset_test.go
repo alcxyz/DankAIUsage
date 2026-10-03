@@ -127,6 +127,12 @@ func TestParseClaudeResetAvailability(t *testing.T) {
 	if inner["eligible"] != true || inner["nextGrantId"] != "launch-grant-1" {
 		t.Fatalf("claudeReset meta: %+v", inner)
 	}
+	paused := availability
+	paused.Grants = append([]claudeResetGrant(nil), availability.Grants...)
+	paused.Grants[0].Paused = true
+	if _, ok := claudeResetMeta(paused, now)["claudeReset"].(map[string]any)["nextGrantId"]; ok {
+		t.Fatal("a paused next grant must not be offered to the widget")
+	}
 
 	expired := claudeAvailableResets(availability, mustParseTime(t, "2026-10-23T00:00:00Z"))
 	if len(expired) != 0 {
@@ -293,8 +299,14 @@ func TestRunClaudeResetActionRefusesWithoutEligibleGrant(t *testing.T) {
 	if err == nil || calls != 0 || status.State != "idle" {
 		t.Fatalf("spent grant must not be claimed: %+v error=%v", status, err)
 	}
-	if _, err := runClaudeResetAction("use", "", claudeResetDeps{StatePath: filepath.Join(t.TempDir(), "claude-reset.json"), Claim: deps.Claim}); err == nil || calls != 0 {
-		t.Fatalf("missing usage cache must refuse: %v", err)
+	empty := deps
+	empty.StatePath = filepath.Join(t.TempDir(), "claude-reset.json")
+	empty.UsageCachePath = filepath.Join(filepath.Dir(empty.StatePath), "claude-oauth-usage.json")
+	if status, err := runClaudeResetAction("use", "", empty); err == nil || calls != 0 || !strings.Contains(status.Message, "unknown") {
+		t.Fatalf("missing usage cache must refuse: %+v %v", status, err)
+	}
+	if status, err := runClaudeResetAction("retry", "", deps); err == nil || calls != 0 || !strings.Contains(status.Message, "no unconfirmed") {
+		t.Fatalf("retry without a pending attempt must refuse: %+v %v", status, err)
 	}
 	if _, err := runClaudeResetAction("bogus", "", deps); err == nil {
 		t.Fatal("unknown action must fail")
@@ -410,8 +422,12 @@ func TestClaimClaudeResetRequest(t *testing.T) {
 	}
 	transport.status = http.StatusOK
 	transport.response = `{"result":"something_new"}`
-	if result, err := claimClaudeReset(claudeResetClaimRequest{Token: "x", OrganizationID: "org", GrantID: "g", RequestID: "r"}); err != nil || result.Result != "unavailable" {
-		t.Fatalf("unknown result must map to unavailable: %+v %v", result, err)
+	if _, err := claimClaudeReset(claudeResetClaimRequest{Token: "x", OrganizationID: "org", GrantID: "g", RequestID: "r"}); err == nil {
+		t.Fatal("unknown result must be an error so the attempt stays pending")
+	}
+	transport.response = `{}`
+	if _, err := claimClaudeReset(claudeResetClaimRequest{Token: "x", OrganizationID: "org", GrantID: "g", RequestID: "r"}); err == nil {
+		t.Fatal("missing result must be an error so the attempt stays pending")
 	}
 }
 
@@ -460,6 +476,28 @@ func TestExpireClaudeUsageCacheAllowsImmediateRefresh(t *testing.T) {
 	}
 }
 
+func TestExpireClaudeUsageCacheKeepsProviderBackoff(t *testing.T) {
+	dir := t.TempDir()
+	path := writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
+	cache, err := loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.LastError = "Claude usage API rate limited (HTTP 429)"
+	cache.NextAttemptAt = "2026-10-03T05:20:00Z"
+	if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
+		t.Fatal(err)
+	}
+	now := mustParseTime(t, "2026-10-03T05:06:00Z")
+	if err := expireClaudeUsageCache(path, now); err != nil {
+		t.Fatal(err)
+	}
+	cache, err = loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || len(cache.Body) != 0 || cache.NextAttemptAt != "2026-10-03T05:20:00Z" {
+		t.Fatalf("a 429 backoff must survive expiry: %+v %v", cache, err)
+	}
+}
+
 func TestClaudeResetsFromUsageCacheIgnoreStaleFailedBody(t *testing.T) {
 	dir := t.TempDir()
 	path := writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
@@ -497,7 +535,7 @@ func TestClaudeResetsFromUsageCacheIgnoreStaleFailedBody(t *testing.T) {
 }
 
 func TestRunClaudeResetActionPendingRetryStaysPendingOnInconclusiveAnswers(t *testing.T) {
-	for _, result := range []string{"rate_limited", "auth_error", "unavailable"} {
+	for _, result := range []string{"rate_limited", "auth_error", "unavailable", "cooldown", "not_limited", "ineligible"} {
 		t.Run(result, func(t *testing.T) {
 			dir := t.TempDir()
 			writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
@@ -514,12 +552,12 @@ func TestRunClaudeResetActionPendingRetryStaysPendingOnInconclusiveAnswers(t *te
 				t.Fatal("first attempt should time out")
 			}
 			answer = result
-			status, err := runClaudeResetAction("use", "", deps)
+			status, err := runClaudeResetAction("retry", "", deps)
 			if err == nil || status.State != "attempted" || status.Outcome != result || len(*expired) != 0 {
 				t.Fatalf("inconclusive retry answer must keep the attempt pending: %+v error=%v", status, err)
 			}
 			answer = "reset"
-			status, err = runClaudeResetAction("use", "", deps)
+			status, err = runClaudeResetAction("retry", "", deps)
 			if err != nil || status.State != "used" || len(requests) != 3 || requests[2].RequestID != requests[0].RequestID {
 				t.Fatalf("final retry must still reuse the request id: %+v error=%v requests=%+v", status, err, requests)
 			}

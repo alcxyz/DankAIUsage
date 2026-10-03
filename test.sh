@@ -81,9 +81,10 @@ assert component_text.count('"--refresh-interval", "" + root.refreshInterval') =
 assert 'var command = ["dankaiusage", "claude-reset", action, "--refresh-interval", "" + root.refreshInterval]' in component_text
 assert 'if (action === "use" && grantId) command.push("--grant", grantId)' in component_text
 assert component_text.count('root.runClaudeReset("use", root.claudeResetGrantId(modelData))') == 1
-assert component_text.count('onClicked: root.runClaudeReset("use", "")') == 1, 'one retry action for an unconfirmed attempt'
+assert component_text.count('onClicked: root.runClaudeReset("retry", "")') == 1, 'one retry action for an unconfirmed attempt'
+assert 'runClaudeReset("use", "")' not in component_text, 'the widget never sends an unqualified use'
 assert 'visible: root.claudeResetStatus.state === "attempted"' in component_text
-assert 'if (action === "use") claudeResetConfirm = false' in component_text
+assert 'if (action === "use" || action === "retry") claudeResetConfirm = false' in component_text
 assert 'if (root.claudeResetConfirm) root.runClaudeReset("use"' in component_text
 assert 'else root.claudeResetConfirm = true' in component_text
 assert 'running: root.claudeResetConfirm' in component_text

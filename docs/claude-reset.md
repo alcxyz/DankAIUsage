@@ -31,15 +31,16 @@ usage, opening the dropdown, or installing the plugin never redeems one.
 
 ```sh
 dankaiusage claude-reset status
-dankaiusage claude-reset use            # the grant Claude offers next, or retry
+dankaiusage claude-reset use            # the grant Claude offers next
 dankaiusage claude-reset use --grant ID # a specific grant from status
+dankaiusage claude-reset retry          # resend an unconfirmed attempt only
 dankaiusage claude-reset forget         # drop an unconfirmed attempt record
 ```
 
 `status` reads the cached usage data and the helper's own attempt record; it
 contacts no server. `use` sends one redemption request and prints the result;
-while an attempt is unconfirmed it always retries that attempt first. An
-attempt is bound to the Claude account that made it. After switching accounts,
+while an attempt is unconfirmed it always retries that attempt first, and
+`retry` does only that, refusing when nothing is pending. An attempt is bound to the Claude account that made it. After switching accounts,
 sign back in to retry it, or run `forget` once you have checked the outcome on
 claude.ai; `forget` never contacts Claude. All commands print JSON.
 

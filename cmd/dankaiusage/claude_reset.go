@@ -235,7 +235,11 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 		case "status":
 			return nil
 		case "use":
-			requested, refreshUsage, actionErr = useClaudeReset(&state, grantID, deps)
+			requested, refreshUsage, actionErr = useClaudeReset(&state, grantID, false, deps)
+			return nil
+		case "retry":
+			// Resends an unconfirmed attempt only; it can never start a new one.
+			requested, refreshUsage, actionErr = useClaudeReset(&state, grantID, true, deps)
 			return nil
 		case "forget":
 			// Drops an unconfirmed attempt record without contacting Claude.
@@ -275,7 +279,7 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 		status.Error = actionErr.Error()
 		// A refusal before any request is the whole story; do not echo an
 		// older saved outcome above it.
-		if action == "use" && !requested {
+		if (action == "use" || action == "retry") && !requested {
 			status.Message = actionErr.Error()
 		}
 	}
@@ -289,10 +293,13 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 // already have applied is reconciled instead of a second one being spent.
 // It reports whether a request was sent, whether usage should refresh, and
 // the outcome error.
-func useClaudeReset(state *claudeResetState, grantID string, deps claudeResetDeps) (bool, bool, error) {
+func useClaudeReset(state *claudeResetState, grantID string, retryOnly bool, deps claudeResetDeps) (bool, bool, error) {
 	now := deps.Now()
 	pending := state.State == "attempted" && claudeResetGrantIDPattern.MatchString(state.GrantID) &&
 		claudeResetRequestIDPattern.MatchString(state.RequestID)
+	if retryOnly && !pending {
+		return false, false, errors.New("no unconfirmed Claude reset attempt to retry; refresh to see the current state")
+	}
 	// Credentials are read before anything is saved, so a sign-in problem
 	// leaves an earlier unconfirmed attempt, and its request id, untouched.
 	token, _, err := deps.ReadToken(now)
@@ -406,11 +413,14 @@ func useClaudeReset(state *claudeResetState, grantID string, deps claudeResetDep
 		state.Message = "Couldn't reset your limits · nothing was used · try again in a moment"
 		actionErr = errors.New(state.Message)
 	}
-	// None of these answers says what became of the earlier request; a retry
-	// of an unconfirmed attempt must stay unconfirmed and keep its request id.
-	if pending && state.State == "failed" {
+	// Only reset and already_used say what became of the earlier request. Any
+	// other answer to a retry (cooldown, ineligible, 429, ...) may describe the
+	// account after that request was applied, so the attempt stays unconfirmed
+	// and keeps its request id. forget exists for a grant that is truly gone.
+	if pending && state.State != "used" {
 		state.State = "attempted"
-		state.Message = "Couldn't confirm the earlier reset went through · " + strings.TrimPrefix(state.Message, "Couldn't reset your limits · ")
+		state.Message = "Couldn't confirm the earlier reset went through · Claude answered: " + result.Result +
+			" · check Settings → Usage on claude.ai, then retry or run `dankaiusage claude-reset forget`"
 		actionErr = errors.New(state.Message)
 	}
 	if err := saveClaudeResetState(deps.StatePath, *state); err != nil {
@@ -509,8 +519,10 @@ func claudeResetMeta(availability claudeResetAvailability, now time.Time) map[st
 	if availability.IneligibleReason != "" {
 		meta["ineligibleReason"] = availability.IneligibleReason
 	}
-	if availability.NextGrantID != "" {
-		meta["nextGrantId"] = availability.NextGrantID
+	for _, grant := range grants {
+		if grant.ID == availability.NextGrantID {
+			meta["nextGrantId"] = availability.NextGrantID
+		}
 	}
 	if availability.CooldownUntil != "" {
 		meta["cooldownUntil"] = availability.CooldownUntil
@@ -789,11 +801,18 @@ func expireClaudeUsageCache(path string, now time.Time) error {
 		if err != nil {
 			return err
 		}
+		next := now
+		// A backoff the provider asked for after a failed fetch still stands;
+		// only the ordinary interval cooldown is skipped.
+		if cache.LastError != "" {
+			if existing, err := parseOptionalRefreshTime(cache.NextAttemptAt); err == nil && existing.After(next) {
+				next = existing
+			}
+		}
 		cache.Body = nil
 		cache.FetchedAt = ""
 		cache.Invalidated = true
-		cache.LastError = ""
-		cache.NextAttemptAt = now.UTC().Format(time.RFC3339Nano)
+		cache.NextAttemptAt = next.UTC().Format(time.RFC3339Nano)
 		return saveClaudeOAuthUsageCache(path, cache)
 	})
 }
@@ -889,7 +908,9 @@ func parseClaudeResetClaimResponse(data []byte) (claudeResetClaimResult, error) 
 	switch result.Result {
 	case "reset", "already_used", "not_limited", "cooldown", "ineligible", "unavailable":
 	default:
-		result.Result = "unavailable"
+		// An outcome this helper does not know cannot be called "nothing was
+		// used"; keep the attempt pending like an unreadable response.
+		return claudeResetClaimResult{}, errors.New("Claude reset response had an unknown outcome")
 	}
 	for _, kind := range wire.Cleared {
 		for _, known := range claudeResetLimitKinds {

@@ -625,10 +625,10 @@ PluginComponent {
     // owns the attempt record; the widget never redeems automatically.
     function runClaudeReset(action, grantId) {
         if (claudeResetProcess.running) return
-        if (action === "use" && usageProcess.running) return
+        if ((action === "use" || action === "retry") && usageProcess.running) return
         _claudeResetOutput = ""
         _claudeResetAction = action
-        if (action === "use") claudeResetConfirm = false
+        if (action === "use" || action === "retry") claudeResetConfirm = false
         var command = ["dankaiusage", "claude-reset", action, "--refresh-interval", "" + root.refreshInterval]
         if (action === "use" && grantId) command.push("--grant", grantId)
         claudeResetProcess.command = command
@@ -654,12 +654,12 @@ PluginComponent {
                     error: "helper output unreadable"
                 }
             }
-            status.justUsed = root._claudeResetAction === "use"
+            status.justUsed = root._claudeResetAction === "use" || root._claudeResetAction === "retry"
                     || (root.claudeResetStatus.justUsed === true
                         && status.lastAttemptAt === root.claudeResetStatus.lastAttemptAt)
             root.claudeResetStatus = status
             // A use attempt may have refilled the windows; fetch them again.
-            if (root._claudeResetAction === "use" || root._usageRefreshPending) {
+            if (root._claudeResetAction === "use" || root._claudeResetAction === "retry" || root._usageRefreshPending) {
                 root._usageRefreshPending = false
                 Qt.callLater(root.refreshUsage)
             }
@@ -3188,10 +3188,11 @@ PluginComponent {
                                     Column {
                                         id: resetDescriptionList
                                         width: parent.width
-                                        visible: root.advancedDropdown && root.providerResetDescriptions(modelData).length > 0
+                                        visible: root.advancedDropdown && modelData.id === "claude"
+                                                && root.providerResetDescriptions(modelData).length > 0
 
                                         Repeater {
-                                            model: root.advancedDropdown ? root.providerResetDescriptions(modelData) : []
+                                            model: root.advancedDropdown && modelData.id === "claude" ? root.providerResetDescriptions(modelData) : []
 
                                             StyledText {
                                                 x: resetsIcon.width + Theme.spacingXS
@@ -3279,7 +3280,7 @@ PluginComponent {
                                                     && root.claudeResetStatus.state !== "attempted"
 
                                             CompactAction {
-                                                text: claudeResetProcess.running ? "Using reset..."
+                                                text: claudeResetProcess.running && root._claudeResetAction === "use" ? "Using reset..."
                                                         : root.claudeResetConfirm ? "Confirm: use reset now" : "Use reset now"
                                                 enabled: !claudeResetProcess.running && !usageProcess.running
                                                 warning: root.claudeResetConfirm
@@ -3300,10 +3301,10 @@ PluginComponent {
                                         // The retry resends the saved grant and request id, so it
                                         // cannot spend a second reset and needs no second click.
                                         CompactAction {
-                                            text: claudeResetProcess.running ? "Checking reset..." : "Retry unconfirmed reset"
+                                            text: claudeResetProcess.running && root._claudeResetAction === "retry" ? "Retrying reset..." : "Retry unconfirmed reset"
                                             enabled: !claudeResetProcess.running && !usageProcess.running
                                             visible: root.claudeResetStatus.state === "attempted"
-                                            onClicked: root.runClaudeReset("use", "")
+                                            onClicked: root.runClaudeReset("retry", "")
                                         }
 
                                         NoticeRow {

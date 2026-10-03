@@ -48,8 +48,10 @@ this endpoint (ADR-0001); this is the same identity, stated precisely.
   that grant with the same request id, whatever the cache offers by then, and
   refuses to pick another grant until the server has answered. Sign-in
   problems are detected before anything is saved, so they never disturb an
-  unconfirmed attempt, and rate-limit, auth or "unavailable" answers to a
-  retry leave it unconfirmed as well. The record stores the organization that
+  unconfirmed attempt. Only `reset` and `already_used` settle a retry; every
+  other answer, and any outcome the helper does not recognise, leaves it
+  unconfirmed. The widget's retry uses a `retry` action that can only resend a
+  pending request and refuses to start a new one. The record stores the organization that
   made the attempt; another account cannot resend it, and an explicit `forget`
   exists for that case. The server, not the helper, decides whether the
   earlier request was already applied.
