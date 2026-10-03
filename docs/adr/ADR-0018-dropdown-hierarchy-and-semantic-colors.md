@@ -4,6 +4,10 @@
 **Date:** 2026-09-12
 **Applies to:** `DankAIUsageWidget.qml`
 
+**Amended by:** [ADR-0021](ADR-0021-top-bar-quota-bars.md) permits default-off
+brand logo colors and usage-based quota-bar colors. The default theme-derived
+colors and error precedence remain unchanged.
+
 ## Context
 
 The dropdown grew feature by feature. Secondary sections (bar controls, reset

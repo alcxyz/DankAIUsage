@@ -16,6 +16,9 @@
   A `spend.balance` amount is shown as a prepaid balance: appended to the
   monthly-limit bar when there is one, or as a balance-only bucket without a
   percentage when extra usage is enabled with no monthly limit.
+  The request asks for granted limit resets (`cedar_ember=1`) and identifies
+  itself as Claude Code's OAuth client, which the endpoint requires before it
+  reports them ([ADR-0022](adr/ADR-0022-manual-claude-limit-reset.md)).
   The statusline JSON cached by `dankaiusage claude-statusline` is the
   fallback source (see below).
 - **Token history:** Codex session/archived-session JSONL and Claude project
@@ -42,7 +45,8 @@ information.
 
 The helper shares a per-provider cooldown across refresh paths and processes
 ([ADR-0015](adr/ADR-0015-shared-usage-refresh-cooldown.md)). Manual Refresh
-can reuse cached quotas; it does not bypass the minimum. An already scheduled
+can reuse cached quotas; it does not bypass the minimum, and neither does the
+optional refresh when the dropdown opens. An already scheduled
 cooldown is not shortened by changing the slider; subsequent requests use the
 new interval. Provider error backoff may extend the wait. Three minutes is a
 conservative minimum, not a guarantee against account restrictions. Claude's

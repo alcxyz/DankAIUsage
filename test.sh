@@ -37,8 +37,18 @@ assert {"settings_read", "settings_write", "process"} <= set(plugin["permissions
 assert plugin["settings_schema"]["refreshInterval"]["minimum"] == 180
 assert plugin["settings_schema"]["refreshInterval"]["maximum"] == 3600
 assert plugin["settings_schema"]["refreshInterval"]["default"] == 300
+assert plugin["settings_schema"]["refreshOnOpen"] == {"type": "boolean", "default": False}
 assert plugin["settings_schema"]["publicResetAnnouncements"] == {"type": "boolean", "default": False}
 assert plugin["settings_schema"]["systemNotifications"] == {"type": "boolean", "default": True}
+# Quota-bar mode is opt-in; its label keys only accept known kinds.
+assert plugin["settings_schema"]["barQuotaBars"] == {"type": "boolean", "default": False}
+assert plugin["settings_schema"]["barPaceMarker"] == {"type": "boolean", "default": False}
+# Fixed brand and gradient colors are opt-in exceptions to ADR-0018.
+assert plugin["settings_schema"]["brandLogoColors"] == {"type": "boolean", "default": False}
+assert plugin["settings_schema"]["barUsageColors"] == {"type": "boolean", "default": False}
+assert plugin["settings_schema"]["barQuotaBarWidth"] == {"type": "integer", "default": 40, "minimum": 16, "maximum": 120}
+for side in ("barLabelLeft", "barLabelRight"):
+    assert plugin["settings_schema"][side] == {"type": "string", "enum": ["none", "tag", "time", "percent"], "default": "none"}
 
 component = pathlib.Path(plugin["component"].removeprefix("./"))
 settings = pathlib.Path(plugin["settings"].removeprefix("./"))
@@ -65,7 +75,35 @@ for screenshot in ("docs/screenshot.png", "docs/screenshot-simple.png", "docs/sc
 # or an implicit side effect of collecting usage.
 assert 'armed: false' in component_text
 assert '"dankaiusage", "codex-reset", action,' in component_text
-assert component_text.count('"--refresh-interval", "" + root.refreshInterval') == 3
+assert component_text.count('"--refresh-interval", "" + root.refreshInterval') == 4
+# Claude limit resets are used only through an explicit, confirmed action
+# (ADR-0022); the widget never redeems one on its own.
+assert 'var command = ["dankaiusage", "claude-reset", action, "--refresh-interval", "" + root.refreshInterval]' in component_text
+assert 'if (action === "use" && grantId) command.push("--grant", grantId)' in component_text
+# The second click sends the grant the first click showed (saved in
+# claudeResetConfirmGrantId); a changed offer asks again instead of spending.
+assert component_text.count('root.runClaudeReset("use", grantId)') == 1
+assert 'root.claudeResetConfirmGrantId = grantId' in component_text
+assert 'root.claudeResetConfirm = grantId !== ""' in component_text
+assert '} else if (grantId !== "" && grantId === root.claudeResetConfirmGrantId) {' in component_text
+assert 'root.runClaudeReset("use", root.claudeResetGrantId(modelData))' not in component_text, 'the confirmed click never recomputes the grant'
+assert 'visible: root.claudeResetStatus.state === "attempted" || root.claudeResetStateUnreadable()' in component_text, 'forget recovers an unreadable record'
+assert component_text.count('onClicked: root.runClaudeReset("retry", "")') == 1, 'one retry action for an unconfirmed attempt'
+assert 'runClaudeReset("use", "")' not in component_text, 'the widget never sends an unqualified use'
+assert 'visible: root.claudeResetStatus.state === "attempted"' in component_text
+assert component_text.count('root.runClaudeReset("forget", "")') == 1
+assert 'if (root.claudeResetForgetConfirm) root.runClaudeReset("forget", "")' in component_text
+assert 'running: root.claudeResetForgetConfirm' in component_text
+assert 'if (action === "use" || action === "retry") claudeResetConfirm = false' in component_text
+assert 'status.justUsed = status.requested === true' in component_text
+assert 'if (!root.claudeResetConfirm) {' in component_text
+assert 'running: root.claudeResetConfirm' in component_text
+assert 'runClaudeReset("use"' not in component_text.split('function runClaudeReset(action, grantId)')[0], 'no automatic Claude reset use before the explicit action'
+for forbidden in ('runClaudeReset("check"', 'runClaudeReset("arm"'):
+    assert forbidden not in component_text
+assert 'if (claudeResetProcess.running) {' in component_text
+assert 'if (showClaude && !claudeResetProcess.running) runClaudeReset("status")' in component_text
+assert 'reset.resetType === "claudeLimitReset"' in component_text
 assert 'command: ["dankaiusage", "diagnostics"]' in component_text
 assert 'command: ["dankaiusage", "announcements", "--enabled"]' in component_text
 assert 'if (!publicResetAnnouncements || announcementProcess.running) return' in component_text
@@ -262,6 +300,9 @@ for expected in (
     'visible: root.advancedDropdown && root.tokenHistoryRange === "tracked"',
     'visible: root.advancedDropdown && root.providerResets(modelData).length > 0',
     'visible: modelData.id === "codex" && root.resetControlsVisible(modelData)',
+    'visible: modelData.id === "claude" && root.claudeResetControlsVisible(modelData)',
+    'visible: root.advancedDropdown && root.hasSpendableClaudeReset(modelData)',
+    'visible: !root.advancedDropdown && modelData.id === "claude" && root.hasSpendableClaudeReset(modelData)',
     'visible: (root.advancedDropdown && (root.showCodex || root.showClaude))',
     'visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime',
 ):
@@ -383,6 +424,43 @@ equal(normalizeRefresh(900), 900, "valid whole-minute interval is preserved");
 equal(normalizeRefresh(3599), 3600, "interval snaps at upper bound");
 equal(normalizeRefresh(7200), 3600, "interval clamps to maximum");
 
+let openClock = 1000000;
+let openRefreshes = 0;
+const openScope = {
+    refreshOnOpen: false, _lastOpenRefresh: 0,
+    Date: { now() { return openClock; } },
+    refreshCycle() { openRefreshes++; }
+};
+const refreshOnOpen = bindQmlFunction("refreshOnPopoutOpen", openScope);
+refreshOnOpen();
+equal(openRefreshes, 0, "opening the dropdown does not refresh by default");
+openScope.refreshOnOpen = true;
+refreshOnOpen();
+equal(openRefreshes, 1, "enabled setting refreshes when the dropdown opens");
+openClock += 29000;
+refreshOnOpen();
+equal(openRefreshes, 1, "reopening within 30 s does not refresh again");
+openClock += 1000;
+refreshOnOpen();
+equal(openRefreshes, 2, "reopening after 30 s refreshes again");
+const popoutVisibilityHandler = qml.match(/onPopoutVisibleChanged:\s*\{([^}]+)\}/);
+if (!popoutVisibilityHandler) throw new Error("missing popout visibility handler");
+const onPopoutVisibleChanged = new Function("popoutVisible", "root", popoutVisibilityHandler[1]);
+let sectionResets = 0;
+const popoutActions = {
+    refreshOnPopoutOpen: refreshOnOpen,
+    resetSectionLimits() { sectionResets++; }
+};
+openClock += 30000;
+onPopoutVisibleChanged(true, popoutActions);
+equal(openRefreshes, 3, "opening dispatches the optional refresh");
+equal(sectionResets, 0, "opening preserves the current section limits");
+onPopoutVisibleChanged(false, popoutActions);
+equal(openRefreshes, 3, "closing does not refresh");
+equal(sectionResets, 1, "closing still resets history and announcement pagination");
+if (!/function refreshOnPopoutOpen\(\) \{[^}]*refreshCycle\(\)/.test(qml))
+    throw new Error("open refresh must use refreshCycle so armed reset checks keep their order");
+
 const primeProvider = { available: true, meta: {} };
 let primeCalls = 0;
 const primeScope = {
@@ -429,7 +507,10 @@ const migrationScope = {
         saveValue(key, value) { migrationSaves.push([key, value]); }
     }
 };
-bindQmlFunction("loadValue", migrationScope, settingsQml)();
+// Grouped settings expose their own loadValue forwarders; extract the
+// refresh-interval one specifically.
+const refreshSettingQml = settingsQml.slice(settingsQml.indexOf("id: refreshIntervalSetting"));
+bindQmlFunction("loadValue", migrationScope, refreshSettingQml)();
 equal(migrationScope.refreshSeconds, 180, "settings load migrates legacy interval");
 equal(JSON.stringify(migrationSaves), JSON.stringify([["refreshInterval", 180]]), "settings migration persists clamped seconds");
 
@@ -506,6 +587,53 @@ equal(resetVisible(false, {armed: true, stateKnown: true}), true, "armed reset r
 equal(resetVisible(false, {armed: false, stateKnown: false}), true, "unknown reset state remains recoverable");
 equal(resetVisible(false, {armed: false, stateKnown: true, error: "failed"}), true, "reset errors remain visible");
 equal(resetVisible(false, {armed: false, stateKnown: true, state: "attempted"}), true, "uncertain reset outcome remains visible");
+
+const claudeReset = {id: "grant-1", resetType: "claudeLimitReset", expiresAt: "2026-09-20T12:00:00Z"};
+const claudeProvider = {id: "claude", meta: {availableResetCount: 1, claudeReset: {eligible: true, nextGrantId: "grant-1"}}, resets: [claudeReset]};
+function claudeVisible(advancedDropdown, claudeResetStatus, provider = claudeProvider) {
+    const scope = {advancedDropdown, claudeResetStatus, resetClock, Date, isFinite};
+    scope.providerResets = bindQmlFunction("providerResets", scope);
+    scope.hasSpendableClaudeReset = bindQmlFunction("hasSpendableClaudeReset", scope);
+    scope.claudeResetRecentlyFailed = bindQmlFunction("claudeResetRecentlyFailed", scope);
+    scope.claudeResetNeedsAttention = bindQmlFunction("claudeResetNeedsAttention", scope);
+    return bindQmlFunction("claudeResetControlsVisible", scope)(provider);
+}
+const settled = {stateKnown: true, state: "idle", message: ""};
+equal(claudeVisible(true, settled), true, "advanced shows a spendable Claude reset");
+equal(claudeVisible(false, settled), false, "simple mode hides the Claude reset control");
+for (const provider of [null, {id: "codex", meta: {availableResetCount: 1, claudeReset: {eligible: true}}, resets: [claudeReset]},
+    {id: "claude", meta: {availableResetCount: 1, claudeReset: {eligible: false, ineligibleReason: "surface"}}, resets: [claudeReset]},
+    {id: "claude", meta: {availableResetCount: 0, claudeReset: {eligible: true}}, resets: [claudeReset]},
+    {id: "claude", meta: {availableResetCount: 1}, resets: [claudeReset]},
+    {id: "claude", meta: {availableResetCount: 1, claudeReset: {eligible: true}}, resets: [{...claudeReset, resetType: "codexRateLimits"}]},
+    {id: "claude", meta: {availableResetCount: 1, claudeReset: {eligible: true}}, resets: [{...claudeReset, expiresAt: "2026-09-18T12:00:00Z"}]},
+]) {
+    equal(claudeVisible(true, settled, provider), false, "ineligible or spent Claude resets hide the control");
+}
+equal(claudeVisible(false, {stateKnown: true, state: "attempted"}), true, "uncertain Claude reset attempt stays visible");
+equal(claudeVisible(false, {stateKnown: true, state: "failed", error: "failed"}), true, "Claude reset errors stay visible");
+const failedScope = (status) => {
+    const scope = {advancedDropdown: false, claudeResetStatus: status, resetClock, Date, isFinite};
+    scope.providerResets = bindQmlFunction("providerResets", scope);
+    scope.hasSpendableClaudeReset = bindQmlFunction("hasSpendableClaudeReset", scope);
+    scope.claudeResetRecentlyFailed = bindQmlFunction("claudeResetRecentlyFailed", scope);
+    scope.claudeResetNeedsAttention = bindQmlFunction("claudeResetNeedsAttention", scope);
+    return bindQmlFunction("claudeResetControlsVisible", scope)(claudeProvider);
+};
+equal(failedScope({stateKnown: true, state: "failed", lastAttemptAt: "2026-09-19T11:30:00Z"}), true, "a recent saved failure stays visible after a status reload");
+equal(failedScope({stateKnown: true, state: "failed", lastAttemptAt: "2026-09-19T10:30:00Z"}), false, "an old saved failure no longer demands attention");
+equal(failedScope({stateKnown: true, state: "failed"}), false, "a failure without a timestamp does not stick forever");
+equal(failedScope({stateKnown: true, state: "failed", justUsed: true, lastAttemptAt: "2026-09-19T10:30:00Z"}), false, "this session's old failure also expires");
+equal(failedScope({stateKnown: true, state: "used", justUsed: true, lastAttemptAt: "2026-09-19T10:30:00Z"}), true, "this session's success stays visible");
+equal(claudeVisible(false, {stateKnown: true, state: "used", justUsed: true}), true, "this session's result stays visible");
+const grantScope = {providerResets: bindQmlFunction("providerResets", {}), resetClock, Date};
+const grantId = bindQmlFunction("claudeResetGrantId", grantScope);
+equal(grantId(claudeProvider), "grant-1", "grant id prefers the offered grant");
+equal(grantId({id: "claude", meta: {claudeReset: {}}, resets: [claudeReset]}), "grant-1", "grant id falls back to the listed reset");
+equal(grantId({id: "claude", meta: {}, resets: [{...claudeReset, resetType: "codexRateLimits"}]}), "", "no Claude grant yields no id");
+const expiredFirst = {id: "claude", meta: {claudeReset: {nextGrantId: "grant-1"}},
+    resets: [{...claudeReset, expiresAt: "2026-09-19T11:00:00Z"}, {...claudeReset, id: "grant-2"}]};
+equal(grantId(expiredFirst), "grant-2", "an expired offered grant is skipped for a live one");
 JS
     then
         pass "dropdown JavaScript behavior"
@@ -793,6 +921,11 @@ if command -v node >/dev/null 2>&1; then
     else
         fail "public announcements" "selection or notification behavior failed"
     fi
+    if node --test tests/codex-resets-ui.test.cjs; then
+        pass "available Codex reset expiry list"
+    else
+        fail "Codex reset expiries" "ordering or expiry lines are inconsistent"
+    fi
     if node --test tests/reset-time-ui.test.cjs; then
         pass "reset countdown and progress behavior"
     else
@@ -802,6 +935,16 @@ if command -v node >/dev/null 2>&1; then
         pass "token component display and locale formatting behavior"
     else
         fail "token display" "token components or locale formatting are inconsistent"
+    fi
+    if node --test tests/bar-quota-ui.test.cjs; then
+        pass "top-bar quota bars, tags, and labels"
+    else
+        fail "top-bar quota bars" "bar selection, colors, tags, or labels are inconsistent"
+    fi
+    if node --test tests/settings-ui.test.cjs; then
+        pass "settings page grouping, value reload, and disclosure safety"
+    else
+        fail "settings page grouping" "grouping, reload forwarding, or disclosure invariants failed"
     fi
 fi
 VERSION="$(python3 -c 'import json; print(json.load(open("plugin.json", encoding="utf-8"))["version"])')"

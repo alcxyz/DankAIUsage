@@ -2,7 +2,7 @@
   "id": "dankAIUsage",
   "name": "AI Usage",
   "description": "Monitor Codex and Claude quotas, credits, and token history",
-    "version": "1.2.0",
+    "version": "1.3.0",
   "author": "alcxyz",
   "icon": "monitoring",
   "type": "widget",
@@ -27,6 +27,10 @@
       "default": 300,
       "minimum": 180,
       "maximum": 3600
+    },
+    "refreshOnOpen": {
+      "type": "boolean",
+      "default": false
     },
     "periodDays": {
       "type": "integer",
@@ -79,6 +83,38 @@
       "default": false
     },
     "compactPill": {
+      "type": "boolean",
+      "default": false
+    },
+    "barQuotaBars": {
+      "type": "boolean",
+      "default": false
+    },
+    "barQuotaBarWidth": {
+      "type": "integer",
+      "default": 40,
+      "minimum": 16,
+      "maximum": 120
+    },
+    "barLabelLeft": {
+      "type": "string",
+      "enum": ["none", "tag", "time", "percent"],
+      "default": "none"
+    },
+    "barLabelRight": {
+      "type": "string",
+      "enum": ["none", "tag", "time", "percent"],
+      "default": "none"
+    },
+    "barPaceMarker": {
+      "type": "boolean",
+      "default": false
+    },
+    "brandLogoColors": {
+      "type": "boolean",
+      "default": false
+    },
+    "barUsageColors": {
       "type": "boolean",
       "default": false
     }

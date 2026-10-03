@@ -14,6 +14,8 @@ PluginComponent {
     pluginId: "dankAIUsage"
 
     property int refreshInterval: 300
+    property bool refreshOnOpen: false
+    property double _lastOpenRefresh: 0
     property double resetClock: Date.now()
 
     Timer {
@@ -35,6 +37,13 @@ PluginComponent {
     property bool includeCachedTokens: false
     property bool compactPill: false
     property bool showUsed: false
+    property bool barQuotaBars: false
+    property int barQuotaBarWidth: 40
+    property string barLabelLeft: "none"
+    property string barLabelRight: "none"
+    property bool barPaceMarker: false
+    property bool brandLogoColors: false
+    property bool barUsageColors: false
     property bool historyShowScheduledShort: false
     property bool historyShowOther: true
     property bool historyShowScheduledWeekly: false
@@ -116,6 +125,13 @@ PluginComponent {
     property bool _codexResetWasArmed: false
     property bool _refreshAfterCodexReset: false
     property double _codexResetRevision: 0
+    property var claudeResetStatus: ({ stateKnown: false, state: "idle", message: "" })
+    property string _claudeResetOutput: ""
+    property string _claudeResetAction: ""
+    property bool claudeResetConfirm: false
+    // The grant shown by the first click; the second click sends only that one.
+    property string claudeResetConfirmGrantId: ""
+    property bool claudeResetForgetConfirm: false
 
     Connections {
         target: root.pluginService
@@ -165,6 +181,7 @@ PluginComponent {
         refreshInterval = normalizedRefreshInterval(savedRefreshInterval)
         if (refreshInterval !== Number(savedRefreshInterval) && pluginService.savePluginData)
             pluginService.savePluginData(pluginId, "refreshInterval", refreshInterval)
+        refreshOnOpen = pluginService.loadPluginData(pluginId, "refreshOnOpen", false) === true
         periodDays = pluginService.loadPluginData(pluginId, "periodDays", 7) || 7
         showCodex = pluginService.loadPluginData(pluginId, "showCodex", true) !== false
         showClaude = pluginService.loadPluginData(pluginId, "showClaude", true) !== false
@@ -179,6 +196,13 @@ PluginComponent {
         includeCachedTokens = pluginService.loadPluginData(pluginId, "includeCachedTokens", false) === true
         compactPill = pluginService.loadPluginData(pluginId, "compactPill", false) === true
         showUsed = pluginService.loadPluginData(pluginId, "showUsed", false) === true
+        barQuotaBars = pluginService.loadPluginData(pluginId, "barQuotaBars", false) === true
+        barQuotaBarWidth = Math.max(16, Math.min(120, Math.round(Number(pluginService.loadPluginData(pluginId, "barQuotaBarWidth", 40)) || 40)))
+        barLabelLeft = barLabelKind(pluginService.loadPluginData(pluginId, "barLabelLeft", "none"))
+        barLabelRight = barLabelKind(pluginService.loadPluginData(pluginId, "barLabelRight", "none"))
+        barPaceMarker = pluginService.loadPluginData(pluginId, "barPaceMarker", false) === true
+        brandLogoColors = pluginService.loadPluginData(pluginId, "brandLogoColors", false) === true
+        barUsageColors = pluginService.loadPluginData(pluginId, "barUsageColors", false) === true
         enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
         if (!wasEnabled && enableClaudePrime) {
             lastClaudeAutoPrimeFailed = false
@@ -398,6 +422,79 @@ PluginComponent {
         return false
     }
 
+    // A Claude limit reset is spendable when the account is eligible and the
+    // helper lists an unexpired grant with resets left (ADR-0022).
+    function hasSpendableClaudeReset(provider) {
+        if (!provider || provider.id !== "claude" || !provider.meta || !provider.meta.claudeReset) return false
+        if (provider.meta.claudeReset.eligible !== true || !(provider.meta.availableResetCount > 0)) return false
+        var resets = providerResets(provider)
+        for (var i = 0; i < resets.length; i++) {
+            var reset = resets[i]
+            if (reset && reset.id && reset.resetType === "claudeLimitReset"
+                    && (!reset.expiresAt || Date.parse(reset.expiresAt) > resetClock)) return true
+        }
+        return false
+    }
+
+    // The offered grant, if it is still an unexpired listed reset; otherwise
+    // the first unexpired Claude reset.
+    function claudeResetGrantId(provider) {
+        var meta = provider && provider.meta ? provider.meta.claudeReset : null
+        var preferred = meta && meta.nextGrantId ? meta.nextGrantId : ""
+        var resets = providerResets(provider)
+        var fallback = ""
+        for (var i = 0; i < resets.length; i++) {
+            var reset = resets[i]
+            if (!reset || !reset.id || reset.resetType !== "claudeLimitReset") continue
+            if (reset.expiresAt && !(Date.parse(reset.expiresAt) > resetClock)) continue
+            if (reset.id === preferred) return reset.id
+            if (fallback === "") fallback = reset.id
+        }
+        return fallback
+    }
+
+    function claudeResetControlsVisible(provider) {
+        if (!provider || provider.id !== "claude") return false
+        return (advancedDropdown && hasSpendableClaudeReset(provider)) || claudeResetNeedsAttention()
+    }
+
+    // The helper could not read its own attempt record (corrupt, or from
+    // another version) and says so. Nothing can be used until forget replaces
+    // it. Lock timeouts and unreadable helper output do not count: the record
+    // may be fine, so forget is not offered for them.
+    function claudeResetStateUnreadable() {
+        return claudeResetStatus.stateUnreadable === true
+    }
+
+    // Uncertain or failed attempts and the result of this session's use stay
+    // visible in either dropdown mode; a settled idle state stays quiet.
+    // Failures, including this session's, fall under the one-hour limit.
+    function claudeResetNeedsAttention() {
+        return claudeResetStatus.state === "attempted" || !!claudeResetStatus.error
+                || (claudeResetStatus.justUsed === true && claudeResetStatus.state !== "failed")
+                || claudeResetRecentlyFailed()
+    }
+
+    // A saved failed outcome is worth showing for an hour after the attempt,
+    // not forever: nothing was spent, and the use button is back anyway.
+    function claudeResetRecentlyFailed() {
+        if (claudeResetStatus.state !== "failed") return false
+        var at = Date.parse(claudeResetStatus.lastAttemptAt || "")
+        return isFinite(at) && resetClock - at < 3600000
+    }
+
+    // A grant that needs a limit is offered as-is; Claude answers not_limited
+    // and keeps it when the user is not at one. Say so before the click.
+    function claudeResetRequiresLimitNow(provider, grantId) {
+        var meta = provider && provider.meta ? provider.meta.claudeReset : null
+        if (!meta || meta.atLimit === true || !meta.grants) return false
+        if (!grantId) grantId = claudeResetGrantId(provider)
+        for (var i = 0; i < meta.grants.length; i++) {
+            if (meta.grants[i] && meta.grants[i].id === grantId) return meta.grants[i].useRequiresLimit === true
+        }
+        return false
+    }
+
     // The status line stays quiet while the control is simply off and settled.
     function codexResetNeedsAttention() {
         return codexResetStatus.armed === true || codexResetStatus.stateKnown === false
@@ -437,6 +534,9 @@ PluginComponent {
     // cache. Otherwise every reset check could arrive inside the cooldown and
     // never receive the fresh data required to authorize consumption.
     function refreshCycle() {
+        // The saved Claude reset record (an unconfirmed attempt after a crash
+        // or timeout) is local state; reading it never contacts a server.
+        if (showClaude && !claudeResetProcess.running) runClaudeReset("status")
         if (codexResetProcess.running) {
             _refreshCyclePending = true
             return
@@ -454,6 +554,16 @@ PluginComponent {
         refreshUsage()
         // Hiding Codex pauses automatic consumption, but still updates status.
         runCodexReset("status")
+    }
+
+    // Opening the dropdown runs the same cycle as the Refresh button, at most
+    // every 30 s. The helper cooldown still limits provider requests.
+    function refreshOnPopoutOpen() {
+        if (!refreshOnOpen) return
+        var now = Date.now()
+        if (now - _lastOpenRefresh < 30000) return
+        _lastOpenRefresh = now
+        refreshCycle()
     }
 
     function runCodexReset(action) {
@@ -514,6 +624,10 @@ PluginComponent {
             _usageRefreshPending = true
             return
         }
+        if (claudeResetProcess.running) {
+            _usageRefreshPending = true
+            return
+        }
         if (historyExplanationProcess.running) {
             _usageRefreshPending = true
             return
@@ -533,6 +647,77 @@ PluginComponent {
             "--refresh-interval", "" + root.refreshInterval
         ]
         usageProcess.running = true
+    }
+
+    // Explicit, confirmed, one-request use of a Claude limit reset. The helper
+    // owns the attempt record; the widget never redeems automatically.
+    function runClaudeReset(action, grantId) {
+        if (claudeResetProcess.running) return
+        if ((action === "use" || action === "retry") && usageProcess.running) return
+        _claudeResetOutput = ""
+        _claudeResetAction = action
+        if (action === "use" || action === "retry") claudeResetConfirm = false
+        if (action !== "status") claudeResetForgetConfirm = false
+        var command = ["dankaiusage", "claude-reset", action, "--refresh-interval", "" + root.refreshInterval]
+        if (action === "use" && grantId) command.push("--grant", grantId)
+        claudeResetProcess.command = command
+        claudeResetProcess.running = true
+    }
+
+    Process {
+        id: claudeResetProcess
+        running: false
+        stdout: SplitParser {
+            onRead: data => { root._claudeResetOutput += data + "\n" }
+        }
+        onExited: (exitCode, exitStatus) => {
+            var status
+            try {
+                status = JSON.parse(root._claudeResetOutput.trim())
+                if (typeof status.state !== "string") throw new Error("Invalid reset status")
+            } catch (e) {
+                status = {
+                    stateKnown: false,
+                    state: "error",
+                    message: "Claude reset status unavailable. Check the helper version and retry.",
+                    error: "helper output unreadable"
+                }
+            }
+            // Only a request the helper actually sent is this session's result;
+            // a refusal shows through its error until the next status reload.
+            status.justUsed = status.requested === true
+                    || (root.claudeResetStatus.justUsed === true && !!status.lastAttemptAt
+                        && status.lastAttemptAt === root.claudeResetStatus.lastAttemptAt)
+            root.claudeResetStatus = status
+            // A use attempt may have refilled the windows; fetch them again.
+            if (root._claudeResetAction === "use" || root._claudeResetAction === "retry" || root._usageRefreshPending) {
+                root._usageRefreshPending = false
+                Qt.callLater(root.refreshUsage)
+            }
+        }
+    }
+
+    function claudeResetDetailText() {
+        var message = claudeResetStatus.message || ""
+        if (claudeResetStatus.error && claudeResetStatus.error !== message)
+            message += (message !== "" ? "\n" : "") + claudeResetStatus.error
+        return message
+    }
+
+    // Describes the grant the first click chose, not whatever is offered now.
+    function claudeResetConfirmText(provider) {
+        var grantId = claudeResetConfirmGrantId || claudeResetGrantId(provider)
+        var resets = providerResets(provider)
+        var detail = ""
+        for (var i = 0; i < resets.length; i++) {
+            if (resets[i] && resets[i].id === grantId) {
+                detail = resets[i].description || ""
+                break
+            }
+        }
+        return "Refills your Claude limits now; this cannot be undone. Your weekly reset day stays the same."
+                + (claudeResetRequiresLimitNow(provider, grantId) ? "\nThis reset can only be used while you are at a limit; Claude keeps it otherwise." : "")
+                + (detail !== "" ? "\n" + detail : "")
     }
 
     function primeClaude(automatic) {
@@ -1720,6 +1905,47 @@ PluginComponent {
         return resets.length + " usage resets available"
     }
 
+    // Available resets, soonest expiry first; unknown expiries last.
+    function providerResetsByExpiry(provider) {
+        return providerResets(provider).slice().sort(function(a, b) {
+            var ta = Date.parse(a.expiresAt || ""), tb = Date.parse(b.expiresAt || "")
+            return (isFinite(ta) ? ta : Infinity) - (isFinite(tb) ? tb : Infinity)
+        })
+    }
+
+    // Shared title of all available resets, or "" when they differ.
+    function providerResetCommonTitle(provider) {
+        var resets = providerResets(provider)
+        if (resets.length === 0) return ""
+        var title = resets[0].title || ""
+        for (var i = 1; i < resets.length; i++) {
+            if ((resets[i].title || "") !== title) return ""
+        }
+        return title
+    }
+
+    function resetExpiryLine(reset, showTitle) {
+        var title = showTitle && reset.title ? " · " + reset.title : ""
+        var at = Date.parse(reset.expiresAt || "")
+        if (!isFinite(at)) return "Expiry not reported" + title
+        var left = at - resetClock
+        return "Expires " + formatShortDateTime(reset.expiresAt) + " · "
+                + (left <= 0 ? "expired" : "in " + resetDuration(left)) + title
+    }
+
+    // Provider-supplied detail per reset: what it clears, whether it needs a
+    // limit. Titles are added only when several resets are listed.
+    function providerResetDescriptions(provider) {
+        var resets = providerResetsByExpiry(provider)
+        var out = []
+        for (var i = 0; i < resets.length; i++) {
+            var description = resets[i] && resets[i].description ? resets[i].description : ""
+            if (description === "") continue
+            out.push(resets.length > 1 && resets[i].title ? resets[i].title + " · " + description : description)
+        }
+        return out
+    }
+
     function providerResetDetail(provider) {
         var resets = providerResets(provider)
         if (resets.length === 0) return ""
@@ -2024,7 +2250,158 @@ PluginComponent {
 
     function providerLogoColor(provider) {
         if (!provider || !provider.available || provider.error) return Theme.error
-        return Theme.primary
+        return brandLogoColors ? providerBrandColor(provider) : Theme.primary
+    }
+
+    // Opt-in exception to ADR-0018: fixed brand colors for the logos. OpenAI's
+    // mark is monochrome, so it follows the theme: white on dark, black on light.
+    function providerBrandColor(provider) {
+        if (provider && provider.id === "claude") return "#D97757"
+        return Theme.isLightMode ? "#000000" : "#FFFFFF"
+    }
+
+    // Opt-in exception to ADR-0018: fixed gradient over percent used for
+    // quota-bar fills. Stops: green, yellow at 50, orange at 75, dark red at 100.
+    readonly property var usageColorStops: [
+        [0, 0.26, 0.63, 0.28], [50, 0.99, 0.85, 0.21], [75, 0.98, 0.55, 0.0], [100, 0.55, 0.0, 0.0]
+    ]
+
+    function usageGradientColor(allowance) {
+        if (!knownAllowance(allowance)) return Theme.surfaceVariantText
+        var p = Math.max(0, Math.min(100, allowance.percentUsed || 0))
+        var s = usageColorStops
+        for (var i = 1; i < s.length; i++) {
+            if (p > s[i][0]) continue
+            var t = (p - s[i - 1][0]) / (s[i][0] - s[i - 1][0])
+            return Qt.rgba(s[i - 1][1] + (s[i][1] - s[i - 1][1]) * t,
+                           s[i - 1][2] + (s[i][2] - s[i - 1][2]) * t,
+                           s[i - 1][3] + (s[i][3] - s[i - 1][3]) * t, 1)
+        }
+        return Qt.rgba(s[s.length - 1][1], s[s.length - 1][2], s[s.length - 1][3], 1)
+    }
+
+    // Quota-bar mode (ADR-0021): fill uses the same severity colors as the
+    // text pill unless the usage gradient is enabled.
+    function barFillColor(bucket) {
+        if (hasError) return Theme.error
+        var allowance = bucket ? bucket.allowance : null
+        return barUsageColors ? usageGradientColor(allowance) : allowanceColor(allowance)
+    }
+
+    // Non-credit quotas in helper order (5-hour, weekly, model-scoped). Claude
+    // still honours the per-quota top-bar choices.
+    function providerBarBuckets(provider) {
+        var out = []
+        var buckets = providerQuotaBuckets(provider)
+        for (var i = 0; i < buckets.length; i++) {
+            if (buckets[i].kind === "credits") continue
+            if (provider.id === "claude" && !claudeBucketShownInBar(buckets[i])) continue
+            out.push(buckets[i])
+        }
+        return out
+    }
+
+    function barProviderGroups() {
+        var list = visibleProviders()
+        var groups = []
+        for (var i = 0; i < list.length; i++) {
+            var buckets = providerBarBuckets(list[i])
+            if (buckets.length > 0) groups.push({ provider: list[i], buckets: buckets, tags: barQuotaTags(buckets) })
+        }
+        return groups
+    }
+
+    readonly property int barMaxRows: {
+        var rows = 1
+        var groups = barProviderGroups()
+        for (var i = 0; i < groups.length; i++) rows = Math.max(rows, groups[i].buckets.length)
+        return rows
+    }
+    readonly property int barRowPitch: Math.max(4, Math.min(10, Math.floor((widgetThickness - 4) / barMaxRows)))
+    readonly property int barTrackHeight: Math.max(2, Math.round(barRowPitch * 0.5))
+    readonly property int barLabelSize: Math.max(7, barRowPitch + 1)
+
+    function barLabelKind(value) {
+        return ["none", "tag", "time", "percent"].indexOf(value) >= 0 ? value : "none"
+    }
+
+    function barLabelText(kind, bucket, tag) {
+        if (!bucket) return ""
+        if (kind === "tag") return tag || ""
+        if (kind === "time") return barTimeLabel(bucket.allowance)
+        if (kind === "percent") return allowanceLabel(bucket.allowance, false)
+        return ""
+    }
+
+    // Window tag from its length: 5h, 1d, w (six days or longer).
+    function barWindowTag(allowance) {
+        var minutes = allowance ? allowance.windowMinutes : 0
+        if (typeof minutes === "number" && isFinite(minutes) && minutes > 0) {
+            if (minutes >= 6 * 1440) return "w"
+            if (minutes % 1440 === 0) return (minutes / 1440) + "d"
+            if (minutes % 60 === 0) return (minutes / 60) + "h"
+            return Math.round(minutes) + "m"
+        }
+        if (allowance && allowance.window === "weekly") return "w"
+        return allowance && allowance.window === "session" ? "s" : "?"
+    }
+
+    // One tag per bucket: general quotas by window (5h, w), model-scoped
+    // quotas by the model initial, plus the window unless weekly (f, f5h).
+    // Clashing scoped tags use more of the model name (fa, fo).
+    function barQuotaTags(buckets) {
+        var prefix = []
+        for (var i = 0; i < buckets.length; i++) prefix.push(1)
+        function tagAt(k) {
+            var bucket = buckets[k]
+            var window = barWindowTag(bucket ? bucket.allowance : null)
+            if (!bucket || bucket.kind !== "scoped") return window
+            var name = (bucket.label || "").split("·")[0].replace(/\s+/g, "").toLowerCase() || "?"
+            return name.slice(0, prefix[k]) + (window === "w" ? "" : window)
+        }
+        while (true) {
+            var tags = []
+            for (var j = 0; j < buckets.length; j++) tags.push(tagAt(j))
+            var grown = false
+            for (var m = 0; m < buckets.length; m++) {
+                if (buckets[m].kind !== "scoped" || tags.indexOf(tags[m]) === tags.lastIndexOf(tags[m])) continue
+                var full = (buckets[m].label || "").split("·")[0].replace(/\s+/g, "").length
+                if (prefix[m] < full) {
+                    prefix[m]++
+                    grown = true
+                }
+            }
+            if (!grown) return tags
+        }
+    }
+
+    // Widest expected text per label kind, so a group's column keeps one width.
+    function barLabelTemplate(kind, buckets, tags) {
+        var template = kind === "time" ? "00h00" : (kind === "percent" ? "100%" : "5h")
+        var candidates = []
+        for (var i = 0; i < buckets.length; i++)
+            candidates.push(kind === "tag" ? (tags[i] || "") : (kind === "percent" ? barLabelText(kind, buckets[i], "") : ""))
+        for (var j = 0; j < candidates.length; j++) {
+            if (candidates[j].length > template.length) template = candidates[j]
+        }
+        return template
+    }
+
+    // Compact reset countdown for the bar: 45m, 2h05, 4d23h. Used mode shows
+    // elapsed window time, or nothing when the window length is unknown.
+    function barTimeLabel(allowance) {
+        var timing = resetTiming(allowance, resetClock)
+        if (!timing) return ""
+        if (timing.remainingMs <= 0) return "now"
+        if (showUsed && !timing.progressKnown) return ""
+        var ms = showUsed ? timing.durationMs - timing.remainingMs : timing.remainingMs
+        var minutes = Math.max(0, Math.ceil(ms / 60000))
+        var days = Math.floor(minutes / 1440)
+        var hours = Math.floor((minutes % 1440) / 60)
+        var mins = minutes % 60
+        if (days > 0) return days + "d" + (hours > 0 ? hours + "h" : "")
+        if (hours > 0) return hours + "h" + (mins < 10 ? "0" : "") + mins
+        return mins + "m"
     }
 
     function providerColor(provider) {
@@ -2162,7 +2539,7 @@ PluginComponent {
             }
 
             Repeater {
-                model: root.topBarSegments()
+                model: root.barQuotaBars ? [] : root.topBarSegments()
 
                 Row {
                     spacing: Theme.spacingXS
@@ -2185,9 +2562,132 @@ PluginComponent {
                 }
             }
 
+            // Quota-bar mode: stacked bars per provider (ADR-0021).
+            Repeater {
+                model: root.barQuotaBars ? root.barProviderGroups() : []
+
+                Row {
+                    id: barGroup
+                    property var groupProvider: modelData.provider
+                    property var groupBuckets: modelData.buckets
+                    property var groupTags: modelData.tags
+                    spacing: Theme.spacingXS
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    ProviderLogo {
+                        provider: barGroup.groupProvider
+                        size: Theme.fontSizeMedium
+                        visible: root.barShowProviderLogos
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    StyledText {
+                        id: barProviderName
+                        text: barGroup.groupProvider.name
+                        visible: !root.barShowProviderLogos
+                        font.pixelSize: Theme.fontSizeMedium
+                        color: Theme.surfaceText
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Column {
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Repeater {
+                            model: modelData.buckets
+
+                            Row {
+                                height: root.barRowPitch
+                                spacing: 3
+
+                                StyledText {
+                                    visible: root.barLabelLeft !== "none"
+                                    text: root.barLabelText(root.barLabelLeft, modelData, barGroup.groupTags[index])
+                                    width: Math.ceil(Math.max(barLeftMetrics.width, implicitWidth))
+                                    wrapMode: Text.NoWrap
+                                    elide: Text.ElideNone
+                                    horizontalAlignment: Text.AlignRight
+                                    font.pixelSize: root.barLabelSize
+                                    color: Theme.surfaceVariantText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Rectangle {
+                                    width: root.barQuotaBarWidth
+                                    height: root.barTrackHeight
+                                    radius: height / 2
+                                    color: Theme.withAlpha(Theme.surfaceVariantText, 0.25)
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Rectangle {
+                                        width: parent.width * root.quotaProgress(modelData) / 100
+                                        height: parent.height
+                                        radius: parent.radius
+                                        color: root.barFillColor(modelData)
+                                    }
+
+                                    // Even-pace point: window time left (Left) or elapsed (Used).
+                                    // A 1px line with 1px contrasting edges stays visible on any fill.
+                                    Item {
+                                        property real pace: root.resetTimeProgress(modelData.allowance, root.resetClock, root.showUsed)
+                                        visible: root.barPaceMarker && modelData.kind !== "credits" && pace >= 0
+                                        width: 3
+                                        height: parent.height + 2
+                                        x: Math.round(Math.max(0, Math.min(1, pace)) * (parent.width - 1)) - 1
+                                        anchors.verticalCenter: parent.verticalCenter
+
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            color: Theme.withAlpha(Theme.surface, 0.6)
+                                        }
+
+                                        Rectangle {
+                                            x: 1
+                                            width: 1
+                                            height: parent.height
+                                            color: Theme.surfaceText
+                                        }
+                                    }
+                                }
+
+                                StyledText {
+                                    visible: root.barLabelRight !== "none"
+                                    text: root.barLabelText(root.barLabelRight, modelData, barGroup.groupTags[index])
+                                    width: Math.ceil(Math.max(barRightMetrics.width, implicitWidth))
+                                    wrapMode: Text.NoWrap
+                                    elide: Text.ElideNone
+                                    font.pixelSize: root.barLabelSize
+                                    color: Theme.surfaceVariantText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+                        }
+                    }
+
+                    // Labels measure with the theme font, not the TextMetrics default.
+                    StyledText {
+                        id: barFontProbe
+                        visible: false
+                        font.pixelSize: root.barLabelSize
+                    }
+
+                    TextMetrics {
+                        id: barLeftMetrics
+                        font: barFontProbe.font
+                        text: root.barLabelTemplate(root.barLabelLeft, barGroup.groupBuckets, barGroup.groupTags)
+                    }
+
+                    TextMetrics {
+                        id: barRightMetrics
+                        font: barFontProbe.font
+                        text: root.barLabelTemplate(root.barLabelRight, barGroup.groupBuckets, barGroup.groupTags)
+                    }
+                }
+            }
+
             StyledText {
                 text: root.isLoading && root.providers.length === 0 ? "..." : "--"
-                visible: root.topBarSegments().length === 0
+                visible: root.barQuotaBars ? root.barProviderGroups().length === 0 : root.topBarSegments().length === 0
                 font.pixelSize: Theme.fontSizeMedium
                 color: root.hasError ? Theme.error : Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
@@ -2222,7 +2722,10 @@ PluginComponent {
             id: popoutRoot
             property var parentPopout: null
             readonly property bool popoutVisible: parentPopout ? parentPopout.shouldBeVisible : false
-            onPopoutVisibleChanged: if (!popoutVisible) root.resetSectionLimits()
+            onPopoutVisibleChanged: {
+                if (popoutVisible) root.refreshOnPopoutOpen()
+                else root.resetSectionLimits()
+            }
             implicitHeight: Math.min(popoutColumn.implicitHeight, root.popoutMaxHeight(parentPopout))
 
             DankFlickable {
@@ -2681,12 +3184,56 @@ PluginComponent {
                                             anchors.leftMargin: Theme.spacingXS
                                             anchors.right: parent.right
                                             anchors.verticalCenter: parent.verticalCenter
-                                            text: "· " + root.providerResetDetail(modelData)
+                                            // Several resets: their shared title here, expiries listed below.
+                                            text: "· " + (root.providerResets(modelData).length < 2
+                                                    ? root.providerResetDetail(modelData) : root.providerResetCommonTitle(modelData))
                                             font.pixelSize: Theme.fontSizeSmall
                                             color: Theme.surfaceVariantText
                                             elide: Text.ElideRight
                                             maximumLineCount: 1
-                                            visible: width > 24
+                                            visible: width > 24 && (root.providerResets(modelData).length < 2
+                                                    || root.providerResetCommonTitle(modelData) !== "")
+                                        }
+                                    }
+
+                                    Column {
+                                        id: resetExpiryList
+                                        property bool showTitles: root.providerResetCommonTitle(modelData) === ""
+                                        width: parent.width
+                                        visible: root.advancedDropdown && root.providerResets(modelData).length > 1
+
+                                        Repeater {
+                                            model: root.advancedDropdown ? root.providerResetsByExpiry(modelData) : []
+
+                                            StyledText {
+                                                x: resetsIcon.width + Theme.spacingXS
+                                                width: parent.width - x
+                                                text: root.resetExpiryLine(modelData, resetExpiryList.showTitles)
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                color: Theme.surfaceVariantText
+                                                elide: Text.ElideRight
+                                                maximumLineCount: 1
+                                            }
+                                        }
+                                    }
+
+                                    Column {
+                                        id: resetDescriptionList
+                                        width: parent.width
+                                        visible: root.advancedDropdown && modelData.id === "claude"
+                                                && root.providerResetDescriptions(modelData).length > 0
+
+                                        Repeater {
+                                            model: root.advancedDropdown && modelData.id === "claude" ? root.providerResetDescriptions(modelData) : []
+
+                                            StyledText {
+                                                x: resetsIcon.width + Theme.spacingXS
+                                                width: parent.width - x
+                                                text: modelData
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                color: Theme.surfaceVariantText
+                                                wrapMode: Text.WordWrap
+                                            }
                                         }
                                     }
 
@@ -2751,6 +3298,103 @@ PluginComponent {
                                             text: root.codexResetDetailText()
                                             visible: root.codexResetNeedsAttention()
                                         }
+                                    }
+
+                                    Column {
+                                        width: parent.width
+                                        spacing: Theme.spacingXS
+                                        visible: modelData.id === "claude" && root.claudeResetControlsVisible(modelData)
+
+                                        Flow {
+                                            width: parent.width
+                                            spacing: Theme.spacingXS
+                                            visible: root.advancedDropdown && root.hasSpendableClaudeReset(modelData)
+                                                    && root.claudeResetStatus.state !== "attempted" && !root.claudeResetStateUnreadable()
+
+                                            // The second click sends the grant the first click showed. If
+                                            // the offered grant changed meanwhile, it asks again instead.
+                                            CompactAction {
+                                                text: claudeResetProcess.running && root._claudeResetAction === "use" ? "Using reset..."
+                                                        : root.claudeResetConfirm ? "Confirm: use reset now" : "Use reset now"
+                                                enabled: !claudeResetProcess.running && !usageProcess.running
+                                                warning: root.claudeResetConfirm
+                                                onClicked: {
+                                                    var grantId = root.claudeResetGrantId(modelData)
+                                                    if (!root.claudeResetConfirm) {
+                                                        root.claudeResetConfirmGrantId = grantId
+                                                        root.claudeResetConfirm = grantId !== ""
+                                                    } else if (grantId !== "" && grantId === root.claudeResetConfirmGrantId) {
+                                                        root.runClaudeReset("use", grantId)
+                                                    } else {
+                                                        root.claudeResetConfirm = false
+                                                    }
+                                                }
+                                            }
+
+                                            CompactAction {
+                                                text: "Keep it"
+                                                visible: root.claudeResetConfirm
+                                                enabled: !claudeResetProcess.running
+                                                onClicked: root.claudeResetConfirm = false
+                                            }
+                                        }
+
+                                        // The retry resends the saved grant and request id, so it
+                                        // cannot spend a second reset and needs no second click.
+                                        Flow {
+                                            width: parent.width
+                                            spacing: Theme.spacingXS
+                                            visible: root.claudeResetStatus.state === "attempted" || root.claudeResetStateUnreadable()
+
+                                            CompactAction {
+                                                text: claudeResetProcess.running && root._claudeResetAction === "retry" ? "Retrying reset..." : "Retry unconfirmed reset"
+                                                enabled: !claudeResetProcess.running && !usageProcess.running
+                                                visible: root.claudeResetStatus.state === "attempted"
+                                                onClicked: root.runClaudeReset("retry", "")
+                                            }
+
+                                            // Forget contacts nothing; it only drops the local record once the
+                                            // user has checked the outcome elsewhere. It also replaces a record
+                                            // the helper could not read.
+                                            CompactAction {
+                                                text: root.claudeResetForgetConfirm ? "Confirm: forget attempt" : "Forget attempt"
+                                                enabled: !claudeResetProcess.running
+                                                warning: root.claudeResetForgetConfirm
+                                                onClicked: {
+                                                    if (root.claudeResetForgetConfirm) root.runClaudeReset("forget", "")
+                                                    else root.claudeResetForgetConfirm = true
+                                                }
+                                            }
+                                        }
+
+                                        NoticeRow {
+                                            width: parent.width
+                                            level: "warning"
+                                            text: "Forget only drops the local record of this attempt. Check Settings → Usage on claude.ai first: if the reset was applied, the next use would spend another one."
+                                            visible: root.claudeResetForgetConfirm
+                                        }
+
+                                        NoticeRow {
+                                            width: parent.width
+                                            level: "warning"
+                                            text: root.claudeResetConfirmText(modelData)
+                                            visible: root.claudeResetConfirm
+                                        }
+
+                                        NoticeRow {
+                                            width: parent.width
+                                            level: root.claudeResetStatus.error ? "error"
+                                                    : root.claudeResetStatus.state === "attempted" ? "warning" : "info"
+                                            text: root.claudeResetDetailText()
+                                            visible: root.claudeResetNeedsAttention() && root.claudeResetDetailText() !== ""
+                                        }
+                                    }
+
+                                    NoticeRow {
+                                        width: parent.width
+                                        level: "info"
+                                        text: "Claude limit reset available · use it in Advanced"
+                                        visible: !root.advancedDropdown && modelData.id === "claude" && root.hasSpendableClaudeReset(modelData)
                                     }
 
                                     NoticeRow {
@@ -3464,6 +4108,18 @@ PluginComponent {
         interval: 15000
         running: root.clearTrackingConfirm
         onTriggered: root.clearTrackingConfirm = false
+    }
+
+    Timer {
+        interval: 15000
+        running: root.claudeResetConfirm
+        onTriggered: root.claudeResetConfirm = false
+    }
+
+    Timer {
+        interval: 15000
+        running: root.claudeResetForgetConfirm
+        onTriggered: root.claudeResetForgetConfirm = false
     }
 
     component TrackingPanel: StyledRect {

@@ -6,6 +6,17 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-03
+
+- Claude limit resets granted to your plan now appear under the Claude card with their expiry and what they clear, and Advanced offers a confirmed **Use reset now** action; nothing is ever used automatically. The helper now identifies itself to the usage endpoint as Claude Code's OAuth client, which the endpoint requires before it reports resets.
+- Reorganized the settings page into Display, Top bar, Quotas in the top bar, Collection, Automation and notifications, and a collapsed Token history and compatibility group. Quota bar options appear only while quota bars are on. No setting, default, or saved value changed.
+- Added optional brand-colored provider logos and quota-bar colors that follow usage from green to dark red. Both default off and preserve error colors. Thanks to @TheFacc for the contribution (#15).
+- Added optional quota bars in the horizontal top bar, with provider names when logos are hidden, configurable labels and width, and a pace marker. Credit switches apply to text mode; quota-bar mode keeps credits in the dropdown. Thanks to @TheFacc for the contribution (#14).
+- Advanced view lists every available Codex reset with its expiry date and countdown, soonest first. Thanks to @TheFacc for the contribution (#12).
+- Added an optional refresh when opening the dropdown, limited to once every 30 seconds and subject to the shared provider cooldown. Thanks to @TheFacc for the contribution (#13).
+
+For Nix release packaging, use `github:alcxyz/DankAIUsage/v1.3.0#release`. Manual release packaging is available from a clean `v1.3.0` checkout with `python3 scripts/package.py --release --output dist/release`. Install the packaged plugin directory together with its helper.
+
 ## [1.2.0] - 2026-09-24
 
 - Prepaid credit balances now appear as a **Credits** bucket for Codex and Claude. A balance without a monthly limit shows its amount instead of a percentage, has no progress bar, and never counts as the most constrained quota. A new **Codex credits** switch adds the balance to the top bar.

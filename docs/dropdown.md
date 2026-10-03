@@ -71,6 +71,22 @@ Widget dates and clock times use the user's Qt locale, including date order and
 change system settings. For example, an English interface can use a Norwegian
 time locale. Diagnostic exports retain unambiguous UTC timestamps.
 
+### Available Codex resets
+
+Advanced shows banked Codex resets under the Codex card. With one reset, the
+line gives its title and expiry. With several, each gets its own line with its
+expiry date and a countdown, soonest first; a title shared by all of them is
+shown once in the header line, otherwise each line carries its own. Expired or
+unreported expiries are labelled as such.
+
+### Available Claude resets
+
+Claude limit resets granted to your plan appear under the Claude card the same
+way, with the title, expiry and countdown, plus what the reset clears and
+whether it needs a limit. Advanced adds a **Use reset now** action that asks
+for a second click before sending the request. See
+[Claude limit resets](claude-reset.md).
+
 ### Why does Spark have two bars?
 
 Spark has [separate usage limits](https://learn.chatgpt.com/docs/agent-configuration/speed#codex-spark).
@@ -150,3 +166,6 @@ The generic plugin icon and provider logos are independently configurable, so
 the bar can show either icon style, both styles, or text only. Each provider's
 percentage takes the warning or error color when its most constrained shown
 quota runs low.
+
+An optional quota-bar mode replaces the text with small stacked bars per
+provider; see [Settings](settings.md#top-bar).

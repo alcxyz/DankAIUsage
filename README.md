@@ -31,6 +31,9 @@ monitoring app.
   appears in Advanced when a spendable reset is available. Armed controls and
   recovery messages remain visible even with no resets. Arming with no eligible
   reset leaves the control off; it does not automatically use future credits.
+- **Claude limit resets** granted to your plan are listed with their expiry and
+  what they clear; Advanced offers a confirmed **Use reset now** action.
+  Nothing is used automatically.
 - **Local reset history** with an optional "What changed?" prompt, and an
   optional, alpha-quality public reset feed. Section badges count unread items
   and clear when viewed; read state survives restarts and is shared across
@@ -71,7 +74,7 @@ in {
 ```
 
 Use your DMS module's plugin-source option for the last assignment. Release
-packaging is explicit: build `github:alcxyz/DankAIUsage/v1.2.0#release` (replace
+packaging is explicit: build `github:alcxyz/DankAIUsage/v1.3.0#release` (replace
 the tag with the desired published release). An untagged branch build uses the
 development package by default, even when its manifest base version matches a
 release.
@@ -119,6 +122,7 @@ if needed; the widget recovers on its next refresh.
 | Reading the dropdown: modes, quota bars, countdowns, local tokens, tracked totals | [docs/dropdown.md](docs/dropdown.md) |
 | Plugin settings, top-bar layout, Claude quota selection | [docs/settings.md](docs/settings.md) |
 | One-shot Codex reset | [docs/codex-reset.md](docs/codex-reset.md) |
+| Claude limit resets | [docs/claude-reset.md](docs/claude-reset.md) |
 | Reset history, explaining changes, public announcements (Alpha) | [docs/reset-history.md](docs/reset-history.md) |
 | Where the numbers come from, refresh cooldown, Claude statusline fallback, Claude prime | [docs/data-sources.md](docs/data-sources.md) |
 | Troubleshooting and local diagnostics | [docs/diagnostics.md](docs/diagnostics.md) |
