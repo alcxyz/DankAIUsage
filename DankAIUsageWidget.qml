@@ -458,8 +458,8 @@ PluginComponent {
 
     // Uncertain or failed attempts and the result of this session's use stay
     // visible in either dropdown mode; a settled idle state stays quiet.
+    // Failures, including this session's, fall under the one-hour limit.
     function claudeResetNeedsAttention() {
-        // Failures, including this session's, fall under the one-hour limit.
         return claudeResetStatus.state === "attempted" || !!claudeResetStatus.error
                 || (claudeResetStatus.justUsed === true && claudeResetStatus.state !== "failed")
                 || claudeResetRecentlyFailed()
