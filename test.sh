@@ -617,6 +617,8 @@ const failedScope = (status) => {
 equal(failedScope({stateKnown: true, state: "failed", lastAttemptAt: "2026-09-19T11:30:00Z"}), true, "a recent saved failure stays visible after a status reload");
 equal(failedScope({stateKnown: true, state: "failed", lastAttemptAt: "2026-09-19T10:30:00Z"}), false, "an old saved failure no longer demands attention");
 equal(failedScope({stateKnown: true, state: "failed"}), false, "a failure without a timestamp does not stick forever");
+equal(failedScope({stateKnown: true, state: "failed", justUsed: true, lastAttemptAt: "2026-09-19T10:30:00Z"}), false, "this session's old failure also expires");
+equal(failedScope({stateKnown: true, state: "used", justUsed: true, lastAttemptAt: "2026-09-19T10:30:00Z"}), true, "this session's success stays visible");
 equal(claudeVisible(false, {stateKnown: true, state: "used", justUsed: true}), true, "this session's result stays visible");
 const grantScope = {providerResets: bindQmlFunction("providerResets", {}), resetClock, Date};
 const grantId = bindQmlFunction("claudeResetGrantId", grantScope);
