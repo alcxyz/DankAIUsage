@@ -43,8 +43,8 @@ dankaiusage claude-reset retry          # resend an unconfirmed attempt only
 dankaiusage claude-reset forget         # drop an unconfirmed attempt record
 ```
 
-`status` reads the cached usage data and the helper's own attempt record; it
-contacts no server. `use` sends one redemption request and prints the result;
+`status` reads the cached reset availability and the helper's own attempt
+record; it contacts no server. `use` sends one redemption request and prints the result;
 while an attempt is unconfirmed it always retries that attempt first, and
 `retry` does only that, refusing when nothing is pending. An attempt is bound to the Claude account that made it, and cached grants are
 offered only to the sign-in that fetched them. After switching accounts, sign
@@ -54,9 +54,14 @@ claude.ai; `forget` never contacts Claude. All commands print JSON.
 ## Why it may be missing
 
 The usage API only reports resets for eligible accounts and recognised
-clients. The helper identifies itself as Claude Code's OAuth client; if Claude
-still answers that the client or plan is not eligible, the card shows no reset
-and `status` names the reason. The reset remains usable on claude.ai.
+clients. The helper checks for resets at most every 30 minutes in a separate
+request that identifies itself as Claude Code's OAuth client; the quota poll
+itself never does. If Claude answers that the client or plan is not eligible,
+or rate-limits the check, the card shows no reset and `status` names the
+reason while the quotas keep refreshing. The reset remains usable on
+claude.ai. A new grant, or one spent elsewhere, can take up to 30 minutes to
+show.
 
-See [ADR-0022](adr/ADR-0022-manual-claude-limit-reset.md) for the design and
-[Data sources](data-sources.md) for the request details.
+See [ADR-0022](adr/ADR-0022-manual-claude-limit-reset.md) and
+[ADR-0023](adr/ADR-0023-separate-claude-reset-availability-check.md) for the
+design and [Data sources](data-sources.md) for the request details.

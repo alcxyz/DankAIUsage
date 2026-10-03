@@ -372,7 +372,7 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 	if limitErr != nil {
 		setProviderMeta(&provider, "limitError", limitErr.Error())
 	}
-	if resets, resetMeta := claudeResetsFromUsageCache(claudeOAuthUsageCachePath(), now, opts.RefreshInterval); resetMeta != nil {
+	if resets, resetMeta := claudeResetsForSummary(now, opts.RefreshInterval); resetMeta != nil {
 		provider.Resets = resets
 		mergeProviderMeta(&provider, resetMeta)
 	}
@@ -1576,9 +1576,9 @@ func claudePrimeSessionFallback(now time.Time) (Allowance, map[string]any, bool)
 	return allowance, meta, true
 }
 
-// cedar_ember=1 asks the usage endpoint to include granted limit resets
-// alongside the regular windows and spend data (ADR-0022).
-const claudeOAuthUsageURL = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1"
+// The quota poll asks for windows and spend only; granted limit resets come
+// from the separate reset check in claude_reset.go (ADR-0023).
+const claudeOAuthUsageURL = "https://api.anthropic.com/api/oauth/usage"
 const claudeOAuthUsageSource = "claude usage api"
 const claudeOAuthUsageStaleTTL = 30 * time.Minute
 const claudeFallbackCodeVersion = "2.1.185"
@@ -1671,27 +1671,40 @@ func claudeCodeVersionString(cached string) string {
 	return claudeFallbackCodeVersion
 }
 
-// claudeOAuthUserAgent is the User-Agent Claude Code's own OAuth API client
-// sends. It matters twice: anonymous clients land in an aggressively
-// rate-limited bucket with persistent 429s, and the usage endpoint only
-// reports limit resets for a recognised surface (ADR-0022).
-func claudeOAuthUserAgent(version string) string {
+// claudeQuotaUserAgent identifies the quota poll as Claude Code. Anonymous
+// user agents land in an aggressively rate-limited bucket with persistent
+// 429s (ADR-0001); this identity has polled cleanly since July 2026.
+func claudeQuotaUserAgent(version string) string {
+	return "claude-code/" + version
+}
+
+// claudeResetClientUserAgent is the User-Agent of Claude Code's own OAuth API
+// client. The usage endpoint reports limit resets only for that surface, but
+// from 2026-10-03 it answers 429 when the identity is polled at quota cadence,
+// so only the low-cadence reset check and the claim request use it (ADR-0023).
+func claudeResetClientUserAgent(version string) string {
 	return "claude-cli/" + version + " (external, cli)"
 }
 
-func setClaudeOAuthHeaders(req *http.Request, token string, version string) {
+func setClaudeOAuthHeaders(req *http.Request, token string, userAgent string) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", claudeOAuthUserAgent(version))
+	req.Header.Set("User-Agent", userAgent)
 }
 
 func fetchClaudeOAuthUsage(token string, version string) ([]byte, time.Duration, error) {
-	req, err := http.NewRequest(http.MethodGet, claudeOAuthUsageURL, nil)
+	return fetchClaudeOAuthJSON(claudeOAuthUsageURL, token, claudeQuotaUserAgent(version))
+}
+
+// fetchClaudeOAuthJSON performs one authenticated GET against the OAuth usage
+// API and maps the response to the shared backoff rules.
+func fetchClaudeOAuthJSON(endpoint string, token string, userAgent string) ([]byte, time.Duration, error) {
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, 5 * time.Minute, err
 	}
-	setClaudeOAuthHeaders(req, token, version)
+	setClaudeOAuthHeaders(req, token, userAgent)
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {

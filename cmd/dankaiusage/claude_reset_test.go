@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -49,7 +50,7 @@ const claudeResetUsageFixture = `{
 
 func writeClaudeResetUsageFixture(t *testing.T, dir string, body string) string {
 	t.Helper()
-	path := filepath.Join(dir, "claude-oauth-usage.json")
+	path := filepath.Join(dir, "claude-reset-availability.json")
 	cache := claudeOAuthUsageCache{
 		FetchedAt:      "2026-10-03T05:00:00Z",
 		NextAttemptAt:  "2026-10-03T05:05:00Z",
@@ -71,13 +72,14 @@ func testClaudeResetDeps(t *testing.T, dir string, claim func(claudeResetClaimRe
 	t.Helper()
 	var expired []string
 	deps := claudeResetDeps{
-		Now:            func() time.Time { return mustParseTime(t, "2026-10-03T05:01:00Z") },
-		StatePath:      filepath.Join(dir, "claude-reset.json"),
-		UsageCachePath: filepath.Join(dir, "claude-oauth-usage.json"),
-		ReadToken:      func(time.Time) (string, string, error) { return "synthetic-test-only", "max", nil },
-		OrganizationID: func() (string, error) { return "org-test", nil },
-		ClaudeVersion:  func(string) string { return "0.0.0-test" },
-		Claim:          claim,
+		Now:                   func() time.Time { return mustParseTime(t, "2026-10-03T05:01:00Z") },
+		StatePath:             filepath.Join(dir, "claude-reset.json"),
+		UsageCachePath:        filepath.Join(dir, "claude-oauth-usage.json"),
+		AvailabilityCachePath: filepath.Join(dir, "claude-reset-availability.json"),
+		ReadToken:             func(time.Time) (string, string, error) { return "synthetic-test-only", "max", nil },
+		OrganizationID:        func() (string, error) { return "org-test", nil },
+		ClaudeVersion:         func(string) string { return "0.0.0-test" },
+		Claim:                 claim,
 		ExpireUsage: func(path string, _ time.Time) error {
 			expired = append(expired, path)
 			return nil
@@ -199,8 +201,8 @@ func TestRunClaudeResetActionUseSuccess(t *testing.T) {
 	if !strings.Contains(status.Message, "Limits reset") || !strings.Contains(status.Message, "5-hour and weekly") {
 		t.Fatalf("message: %q", status.Message)
 	}
-	if len(*expired) != 1 || (*expired)[0] != deps.UsageCachePath {
-		t.Fatalf("usage cache should expire once after success: %v", *expired)
+	if len(*expired) != 2 || (*expired)[0] != deps.AvailabilityCachePath || (*expired)[1] != deps.UsageCachePath {
+		t.Fatalf("both caches should expire once after success: %v", *expired)
 	}
 	saved, loadErr := loadClaudeResetState(deps.StatePath)
 	if loadErr != nil || saved.State != "used" || saved.GrantID != "launch-grant-1" || saved.RequestID != requests[0].RequestID {
@@ -305,8 +307,8 @@ func TestRunClaudeResetActionRefusesWithoutEligibleGrant(t *testing.T) {
 	}
 	empty := deps
 	empty.StatePath = filepath.Join(t.TempDir(), "claude-reset.json")
-	empty.UsageCachePath = filepath.Join(filepath.Dir(empty.StatePath), "claude-oauth-usage.json")
-	if status, err := runClaudeResetAction("use", "", empty); err == nil || calls != 0 || !strings.Contains(status.Message, "refresh usage first") {
+	empty.AvailabilityCachePath = filepath.Join(filepath.Dir(empty.StatePath), "claude-reset-availability.json")
+	if status, err := runClaudeResetAction("use", "", empty); err == nil || calls != 0 || !strings.Contains(status.Message, "next reset check") {
 		t.Fatalf("missing usage cache must refuse: %+v %v", status, err)
 	}
 	if status, err := runClaudeResetAction("retry", "", deps); err == nil || calls != 0 || !strings.Contains(status.Message, "no unconfirmed") {
@@ -343,7 +345,7 @@ func TestRunClaudeResetActionOutcomes(t *testing.T) {
 			if (err != nil) != tc.wantErr || status.State != tc.wantState || status.Outcome != tc.result {
 				t.Fatalf("status=%+v error=%v", status, err)
 			}
-			if (len(*expired) == 1) != tc.refreshed {
+			if (len(*expired) == 2) != tc.refreshed {
 				t.Fatalf("usage expiry: %v", *expired)
 			}
 			if status.Message == "" {
@@ -439,7 +441,9 @@ func TestClaimClaudeResetRequest(t *testing.T) {
 	}
 }
 
-func TestClaudeUsageFetchUsesClaudeCodeClientUserAgent(t *testing.T) {
+func TestClaudeQuotaFetchKeepsClaudeCodeUserAgent(t *testing.T) {
+	// The claude-cli identity is rate limited at quota cadence (ADR-0023); the
+	// quota poll must never carry it or ask for resets.
 	transport, now := setupClaudeRefreshTest(t)
 	if _, _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now, time.Minute, false); err != nil {
 		t.Fatal(err)
@@ -447,11 +451,95 @@ func TestClaudeUsageFetchUsesClaudeCodeClientUserAgent(t *testing.T) {
 	if transport.calls.Load() != 1 {
 		t.Fatalf("calls: %d", transport.calls.Load())
 	}
-	if transport.lastUserAgent == "" || !strings.HasPrefix(transport.lastUserAgent, "claude-cli/") || !strings.HasSuffix(transport.lastUserAgent, " (external, cli)") {
+	if !strings.HasPrefix(transport.lastUserAgent, "claude-code/") || strings.Contains(transport.lastUserAgent, "claude-cli") {
 		t.Fatalf("user agent: %q", transport.lastUserAgent)
 	}
-	if !strings.Contains(transport.lastURL, "cedar_ember=1") {
-		t.Fatalf("usage URL should request limit resets: %q", transport.lastURL)
+	if strings.Contains(transport.lastURL, "cedar_ember") || strings.Contains(transport.lastURL, "?") {
+		t.Fatalf("quota URL must stay plain: %q", transport.lastURL)
+	}
+}
+
+func TestClaudeResetAvailabilityCheckIdentityAndCadence(t *testing.T) {
+	transport, now := setupClaudeRefreshTest(t)
+	if err := os.WriteFile(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), ".claude.json"), []byte(`{"oauthAccount":{"organizationUuid":"org-synthetic-3"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := claudeResetAvailabilityCachePath()
+	if path == claudeOAuthUsageCachePath() {
+		t.Fatal("reset checks need their own cache")
+	}
+	if err := refreshClaudeResetAvailability(path, now, 5*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if transport.calls.Load() != 1 {
+		t.Fatalf("calls: %d", transport.calls.Load())
+	}
+	if !strings.HasPrefix(transport.lastUserAgent, "claude-cli/") || !strings.HasSuffix(transport.lastUserAgent, " (external, cli)") {
+		t.Fatalf("user agent: %q", transport.lastUserAgent)
+	}
+	if !strings.Contains(transport.lastURL, "cedar_ember=1") || !strings.Contains(transport.lastURL, "skip_spend=1") {
+		t.Fatalf("reset check URL: %q", transport.lastURL)
+	}
+	cache, err := loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || len(cache.Body) == 0 || cache.OrganizationID != "org-synthetic-3" || cache.LastError != "" {
+		t.Fatalf("cache after check: %+v %v", cache, err)
+	}
+	// Half an hour apart at the default interval, whatever the quota cadence.
+	if err := refreshClaudeResetAvailability(path, now.Add(10*time.Minute), 5*time.Minute); err != nil || transport.calls.Load() != 1 {
+		t.Fatalf("a second check inside the cadence must not fetch: calls=%d %v", transport.calls.Load(), err)
+	}
+	if err := refreshClaudeResetAvailability(path, now.Add(31*time.Minute), 5*time.Minute); err != nil || transport.calls.Load() != 2 {
+		t.Fatalf("a check after the cadence must fetch: calls=%d %v", transport.calls.Load(), err)
+	}
+	// A 429 backs off for at least an hour and keeps the last body.
+	transport.status = http.StatusTooManyRequests
+	transport.retryAfter = "0"
+	at := now.Add(62 * time.Minute)
+	if err := refreshClaudeResetAvailability(path, at, 5*time.Minute); err != nil || transport.calls.Load() != 3 {
+		t.Fatalf("third check: calls=%d %v", transport.calls.Load(), err)
+	}
+	cache, err = loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || !strings.Contains(cache.LastError, "429") || !strings.Contains(cache.LastError, "reset check") || len(cache.Body) == 0 {
+		t.Fatalf("cache after 429: %+v %v", cache, err)
+	}
+	next, err := parseOptionalRefreshTime(cache.NextAttemptAt)
+	if err != nil || next.Before(at.Add(claudeResetAvailabilityBackoff)) {
+		t.Fatalf("429 backoff too short: %s %v", cache.NextAttemptAt, err)
+	}
+	if err := refreshClaudeResetAvailability(path, at.Add(59*time.Minute), 5*time.Minute); err != nil || transport.calls.Load() != 3 {
+		t.Fatalf("backoff must hold: calls=%d %v", transport.calls.Load(), err)
+	}
+	// The quota cache is untouched by all of this.
+	if _, err := os.Stat(claudeOAuthUsageCachePath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("quota cache must not be created by reset checks: %v", err)
+	}
+	// status explains the failed check instead of claiming ignorance.
+	deps, _ := testClaudeResetDeps(t, filepath.Dir(path), nil)
+	deps.AvailabilityCachePath = path
+	deps.Now = func() time.Time { return at.Add(time.Minute) }
+	status, err := runClaudeResetAction("status", "", deps)
+	if err != nil || !strings.Contains(status.AvailabilityError, "429") || !strings.Contains(status.Message, "could not report") {
+		t.Fatalf("status after a failed check: %+v %v", status, err)
+	}
+	// The summary surfaces the failure; a refusal quotes the real next attempt.
+	if _, meta := claudeResetsForSummary(at.Add(time.Minute), 5*time.Minute); meta == nil || !strings.Contains(fmt.Sprint(meta["claudeResetCheckError"]), "429") {
+		t.Fatalf("summary meta must carry the check error: %v", meta)
+	}
+	if text := claudeResetNextCheckText(path, at.Add(time.Minute)); !strings.Contains(text, "59 minutes") {
+		t.Fatalf("next check text: %q", text)
+	}
+	// Missing credentials are not reported as a failed check: the quota side
+	// owns that message and a statusline-only setup has nothing to check.
+	if err := os.Remove(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), ".credentials.json")); err != nil {
+		t.Fatal(err)
+	}
+	later := at.Add(2 * time.Hour)
+	if _, meta := claudeResetsForSummary(later, 5*time.Minute); meta != nil {
+		t.Fatalf("a credentials failure must stay quiet in the summary: %v", meta)
+	}
+	cache, err = loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || cache.DiagnosticCategory != "authentication" || !strings.Contains(cache.LastError, "credentials") {
+		t.Fatalf("the cache still records the credentials failure: %+v %v", cache, err)
 	}
 }
 
@@ -473,7 +561,7 @@ func TestExpireClaudeUsageCacheAllowsImmediateRefresh(t *testing.T) {
 	if len(cache.Body) != 0 || cache.FetchedAt != "" || !cache.Invalidated || cache.NextAttemptAt != later.UTC().Format(time.RFC3339Nano) {
 		t.Fatalf("cache: %+v", cache)
 	}
-	if resets, meta := claudeResetsFromUsageCache(path, later, 5*time.Minute); resets != nil || meta != nil {
+	if resets, meta := claudeResetsFromAvailabilityCache(path, later, 5*time.Minute); resets != nil || meta != nil {
 		t.Fatal("expired cache must not report resets")
 	}
 	// One minute into a five-minute interval the collector must fetch again
@@ -506,14 +594,14 @@ func TestExpireClaudeUsageCacheKeepsProviderBackoff(t *testing.T) {
 	}
 }
 
-func TestClaudeResetsFromUsageCacheIgnoreStaleFailedBody(t *testing.T) {
+func TestClaudeResetsFromAvailabilityCacheIgnoreStaleFailedBody(t *testing.T) {
 	// Listing reads the current organization; keep it unknown and synthetic.
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	dir := t.TempDir()
 	path := writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
 	fetchedAt := mustParseTime(t, "2026-10-03T05:00:00Z")
-	if resets, _ := claudeResetsFromUsageCache(path, fetchedAt.Add(time.Hour), 5*time.Minute); len(resets) != 1 {
+	if resets, _ := claudeResetsFromAvailabilityCache(path, fetchedAt.Add(time.Hour), 5*time.Minute); len(resets) != 1 {
 		t.Fatal("a healthy cache lists grants regardless of age")
 	}
 	cache, err := loadClaudeOAuthUsageCacheStrict(path)
@@ -524,14 +612,14 @@ func TestClaudeResetsFromUsageCacheIgnoreStaleFailedBody(t *testing.T) {
 	if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
 		t.Fatal(err)
 	}
-	if resets, _ := claudeResetsFromUsageCache(path, fetchedAt.Add(10*time.Minute), 5*time.Minute); len(resets) != 1 {
-		t.Fatal("a recently failed refresh still serves the last grants")
+	if resets, _ := claudeResetsFromAvailabilityCache(path, fetchedAt.Add(2*time.Hour), 5*time.Minute); len(resets) != 1 {
+		t.Fatal("a recently failed check still serves the last grants")
 	}
-	if resets, meta := claudeResetsFromUsageCache(path, fetchedAt.Add(claudeOAuthUsageStaleTTL), 5*time.Minute); resets != nil || meta != nil {
+	if resets, meta := claudeResetsFromAvailabilityCache(path, fetchedAt.Add(claudeResetAvailabilityStaleTTL), 5*time.Minute); resets != nil || meta != nil {
 		t.Fatal("a stale body kept through failures must not offer a spendable grant")
 	}
-	if resets, _ := claudeResetsFromUsageCache(path, fetchedAt.Add(claudeOAuthUsageStaleTTL), time.Hour); len(resets) != 1 {
-		t.Fatal("long intervals widen the stale window like the quota collector")
+	if resets, _ := claudeResetsFromAvailabilityCache(path, fetchedAt.Add(claudeResetAvailabilityStaleTTL-time.Minute), 5*time.Minute); len(resets) != 1 {
+		t.Fatal("grants stay listed until the stale window closes")
 	}
 	// use follows the same rule before sending anything.
 	calls := 0
@@ -539,7 +627,7 @@ func TestClaudeResetsFromUsageCacheIgnoreStaleFailedBody(t *testing.T) {
 		calls++
 		return claudeResetClaimResult{Result: "reset"}, nil
 	})
-	deps.Now = func() time.Time { return fetchedAt.Add(claudeOAuthUsageStaleTTL) }
+	deps.Now = func() time.Time { return fetchedAt.Add(claudeResetAvailabilityStaleTTL) }
 	if status, err := runClaudeResetAction("use", "", deps); err == nil || calls != 0 || !strings.Contains(status.Message, "stale") {
 		t.Fatalf("stale cache must refuse use: %+v %v", status, err)
 	}

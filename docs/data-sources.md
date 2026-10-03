@@ -16,9 +16,11 @@
   A `spend.balance` amount is shown as a prepaid balance: appended to the
   monthly-limit bar when there is one, or as a balance-only bucket without a
   percentage when extra usage is enabled with no monthly limit.
-  The request asks for granted limit resets (`cedar_ember=1`) and identifies
-  itself as Claude Code's OAuth client, which the endpoint requires before it
-  reports them ([ADR-0022](adr/ADR-0022-manual-claude-limit-reset.md)).
+  Granted limit resets come from a separate request to the same endpoint with
+  `cedar_ember=1`, made at most every 30 minutes under Claude Code's OAuth
+  client identity, which the endpoint requires before it reports them and
+  rate-limits at quota cadence ([ADR-0022](adr/ADR-0022-manual-claude-limit-reset.md),
+  [ADR-0023](adr/ADR-0023-separate-claude-reset-availability-check.md)).
   The statusline JSON cached by `dankaiusage claude-statusline` is the
   fallback source (see below).
 - **Token history:** Codex session/archived-session JSONL and Claude project

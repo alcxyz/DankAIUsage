@@ -31,6 +31,26 @@ const (
 	claudeResetSource       = "claude usage api"
 )
 
+// Reset availability is a separate, low-cadence request under Claude Code's
+// client identity (ADR-0023). The quota poll never carries that identity, so
+// a 429 on this check cannot blank the quota windows.
+const (
+	claudeResetAvailabilityURL      = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1"
+	claudeResetAvailabilityInterval = 30 * time.Minute
+	claudeResetAvailabilityBackoff  = time.Hour
+	claudeResetAvailabilityStaleTTL = 6 * time.Hour
+)
+
+func claudeResetAvailabilityCachePath() string {
+	return filepath.Join(pluginStateDir(), "claude-reset-availability.json")
+}
+
+// claudeResetAvailabilityCadence spaces reset checks at least half an hour
+// apart and no closer than two quota intervals.
+func claudeResetAvailabilityCadence(interval time.Duration) time.Duration {
+	return max(claudeResetAvailabilityInterval, 2*normalizeUsageRefreshInterval(interval))
+}
+
 var (
 	claudeResetGrantIDPattern   = regexp.MustCompile(`^[a-z0-9_-]{1,40}$`)
 	claudeResetRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -81,25 +101,26 @@ type claudeResetState struct {
 }
 
 type claudeResetStatus struct {
-	OK               bool               `json:"ok"`
-	StateKnown       bool               `json:"stateKnown"`
-	Reported         bool               `json:"reported"`
-	Eligible         bool               `json:"eligible"`
-	IneligibleReason string             `json:"ineligibleReason,omitempty"`
-	AtLimit          bool               `json:"atLimit"`
-	Grants           []claudeResetGrant `json:"grants"`
-	NextGrantID      string             `json:"nextGrantId,omitempty"`
-	CooldownUntil    string             `json:"cooldownUntil,omitempty"`
-	UsageFetchedAt   string             `json:"usageFetchedAt,omitempty"`
-	State            string             `json:"state"`
-	Message          string             `json:"message"`
-	GrantID          string             `json:"grantId,omitempty"`
-	Outcome          string             `json:"outcome,omitempty"`
-	Reason           string             `json:"reason,omitempty"`
-	LastAttemptAt    string             `json:"lastAttemptAt,omitempty"`
-	ResetsLeft       *int               `json:"resetsLeft,omitempty"`
-	UsageRefreshed   bool               `json:"usageRefreshed,omitempty"`
-	Requested        bool               `json:"requested"`
+	OK                bool               `json:"ok"`
+	StateKnown        bool               `json:"stateKnown"`
+	Reported          bool               `json:"reported"`
+	Eligible          bool               `json:"eligible"`
+	IneligibleReason  string             `json:"ineligibleReason,omitempty"`
+	AtLimit           bool               `json:"atLimit"`
+	Grants            []claudeResetGrant `json:"grants"`
+	NextGrantID       string             `json:"nextGrantId,omitempty"`
+	CooldownUntil     string             `json:"cooldownUntil,omitempty"`
+	UsageFetchedAt    string             `json:"usageFetchedAt,omitempty"`
+	State             string             `json:"state"`
+	Message           string             `json:"message"`
+	GrantID           string             `json:"grantId,omitempty"`
+	Outcome           string             `json:"outcome,omitempty"`
+	Reason            string             `json:"reason,omitempty"`
+	LastAttemptAt     string             `json:"lastAttemptAt,omitempty"`
+	ResetsLeft        *int               `json:"resetsLeft,omitempty"`
+	UsageRefreshed    bool               `json:"usageRefreshed,omitempty"`
+	Requested         bool               `json:"requested"`
+	AvailabilityError string             `json:"availabilityError,omitempty"`
 	// StateUnreadable marks a saved record the helper could not read; only
 	// forget recovers from it. Lock or directory failures leave it unset.
 	StateUnreadable bool   `json:"stateUnreadable,omitempty"`
@@ -124,28 +145,30 @@ type claudeResetClaimResult struct {
 }
 
 type claudeResetDeps struct {
-	Now             func() time.Time
-	StatePath       string
-	UsageCachePath  string
-	RefreshInterval time.Duration
-	ReadToken       func(time.Time) (string, string, error)
-	OrganizationID  func() (string, error)
-	ClaudeVersion   func(string) string
-	Claim           func(claudeResetClaimRequest) (claudeResetClaimResult, error)
-	ExpireUsage     func(string, time.Time) error
+	Now                   func() time.Time
+	StatePath             string
+	UsageCachePath        string
+	AvailabilityCachePath string
+	RefreshInterval       time.Duration
+	ReadToken             func(time.Time) (string, string, error)
+	OrganizationID        func() (string, error)
+	ClaudeVersion         func(string) string
+	Claim                 func(claudeResetClaimRequest) (claudeResetClaimResult, error)
+	ExpireUsage           func(string, time.Time) error
 }
 
 func defaultClaudeResetDeps() claudeResetDeps {
 	return claudeResetDeps{
-		Now:             time.Now,
-		StatePath:       claudeResetStatePath(),
-		UsageCachePath:  claudeOAuthUsageCachePath(),
-		RefreshInterval: usageRefreshDefaultInterval,
-		ReadToken:       readClaudeOAuthToken,
-		OrganizationID:  claudeOrganizationID,
-		ClaudeVersion:   claudeCodeVersionString,
-		Claim:           claimClaudeReset,
-		ExpireUsage:     expireClaudeUsageCache,
+		Now:                   time.Now,
+		StatePath:             claudeResetStatePath(),
+		UsageCachePath:        claudeOAuthUsageCachePath(),
+		AvailabilityCachePath: claudeResetAvailabilityCachePath(),
+		RefreshInterval:       usageRefreshDefaultInterval,
+		ReadToken:             readClaudeOAuthToken,
+		OrganizationID:        claudeOrganizationID,
+		ClaudeVersion:         claudeCodeVersionString,
+		Claim:                 claimClaudeReset,
+		ExpireUsage:           expireClaudeUsageCache,
 	}
 }
 
@@ -204,6 +227,13 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 			deps.UsageCachePath = filepath.Join(filepath.Dir(deps.StatePath), "claude-oauth-usage.json")
 		} else {
 			deps.UsageCachePath = claudeOAuthUsageCachePath()
+		}
+	}
+	if deps.AvailabilityCachePath == "" {
+		if deps.StatePath != claudeResetStatePath() {
+			deps.AvailabilityCachePath = filepath.Join(filepath.Dir(deps.StatePath), "claude-reset-availability.json")
+		} else {
+			deps.AvailabilityCachePath = claudeResetAvailabilityCachePath()
 		}
 	}
 	deps.RefreshInterval = normalizeUsageRefreshInterval(deps.RefreshInterval)
@@ -265,8 +295,8 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 			return nil
 		}
 	})
-	availability, fetchedAt := claudeResetAvailabilityFromCache(deps.UsageCachePath)
-	status := publicClaudeResetStatus(state, availability, fetchedAt)
+	availability, fetchedAt := claudeResetAvailabilityFromCache(deps.AvailabilityCachePath)
+	status := publicClaudeResetStatus(state, availability, fetchedAt, loadClaudeOAuthUsageCache(deps.AvailabilityCachePath).LastError)
 	status.StateKnown = stateKnown
 	status.StateUnreadable = stateUnreadable
 	status.Requested = requested
@@ -281,6 +311,8 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 	// Expiring the usage cache uses the shared refresh lock and runs after the
 	// reset lock is released. Failure here cannot cause another account change.
 	if refreshUsage {
+		// The grant list changed too; let the next summary re-check it.
+		_ = deps.ExpireUsage(deps.AvailabilityCachePath, deps.Now())
 		if expireErr := deps.ExpireUsage(deps.UsageCachePath, deps.Now()); expireErr == nil {
 			status.UsageRefreshed = true
 		} else {
@@ -334,12 +366,15 @@ func useClaudeReset(state *claudeResetState, grantID string, retryOnly bool, dep
 		grant = claudeResetGrant{ID: state.GrantID}
 		requestID = state.RequestID
 	} else {
-		availability, ok := claudeResetAvailabilityForUse(deps.UsageCachePath, now, deps.RefreshInterval, organization, true)
+		availability, ok := claudeResetAvailabilityForUse(deps.AvailabilityCachePath, now, deps.RefreshInterval, organization, true)
+		if !ok && len(loadClaudeOAuthUsageCache(deps.AvailabilityCachePath).Body) == 0 {
+			return false, false, errors.New("Claude reset availability is unknown until the next reset check")
+		}
 		if !ok {
-			return false, false, errors.New("Claude usage data is stale or not tied to this sign-in; refresh usage first")
+			return false, false, errors.New("Claude reset availability is stale or not tied to this sign-in; " + claudeResetNextCheckText(deps.AvailabilityCachePath, now))
 		}
 		if !availability.Reported {
-			return false, false, errors.New("Claude reset availability is unknown; refresh usage first")
+			return false, false, errors.New("Claude reset availability is unknown until the next reset check")
 		}
 		if !availability.Eligible {
 			return false, false, errors.New(claudeResetIneligibleMessage(availability.IneligibleReason))
@@ -371,11 +406,15 @@ func useClaudeReset(state *claudeResetState, grantID string, retryOnly bool, dep
 	if err := saveClaudeResetState(deps.StatePath, *state); err != nil {
 		return false, false, errors.New("could not save Claude reset state before the request")
 	}
-	// The same Claude Code version as the usage fetch, so both requests come
-	// from one consistent client identity.
+	// The same Claude Code version as the availability check, so both requests
+	// come from one consistent client identity.
+	cachedVersion := loadClaudeOAuthUsageCache(deps.AvailabilityCachePath).ClaudeVersion
+	if cachedVersion == "" {
+		cachedVersion = loadClaudeOAuthUsageCache(deps.UsageCachePath).ClaudeVersion
+	}
 	result, err := deps.Claim(claudeResetClaimRequest{
 		Token:          token,
-		Version:        deps.ClaudeVersion(loadClaudeOAuthUsageCache(deps.UsageCachePath).ClaudeVersion),
+		Version:        deps.ClaudeVersion(cachedVersion),
 		OrganizationID: organization,
 		GrantID:        grant.ID,
 		RequestID:      requestID,
@@ -552,10 +591,33 @@ func claudeResetMeta(availability claudeResetAvailability, now time.Time) map[st
 	return out
 }
 
-// claudeResetsFromUsageCache lists grants from the cached usage body under the
-// same staleness rule as the quota windows: a body kept through failed
-// refreshes is trusted only within max(stale TTL, two intervals).
-func claudeResetsFromUsageCache(path string, now time.Time, interval time.Duration) ([]UsageReset, map[string]any) {
+// claudeResetsForSummary refreshes the reset availability cache when its own
+// cadence allows and lists the grants it holds. A failed check is reported in
+// meta and never touches the quota cache.
+func claudeResetsForSummary(now time.Time, interval time.Duration) ([]UsageReset, map[string]any) {
+	path := claudeResetAvailabilityCachePath()
+	refreshErr := refreshClaudeResetAvailability(path, now, interval)
+	resets, meta := claudeResetsFromAvailabilityCache(path, now, interval)
+	cache := loadClaudeOAuthUsageCache(path)
+	checkError := cache.LastError
+	// Missing local credentials are not news: the quota poll reports them in
+	// its own way, and a statusline-only setup has no reset to check.
+	if cache.DiagnosticCategory == "authentication" && cache.DiagnosticHTTPStatus == 0 {
+		checkError = ""
+	}
+	if refreshErr != nil && checkError == "" {
+		checkError = refreshErr.Error()
+	}
+	if checkError != "" {
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		meta["claudeResetCheckError"] = checkError
+	}
+	return resets, meta
+}
+
+func claudeResetsFromAvailabilityCache(path string, now time.Time, interval time.Duration) ([]UsageReset, map[string]any) {
 	organization, _ := claudeOrganizationID()
 	availability, ok := claudeResetAvailabilityForUse(path, now, interval, organization, false)
 	if !ok || !availability.Reported {
@@ -564,11 +626,100 @@ func claudeResetsFromUsageCache(path string, now time.Time, interval time.Durati
 	return claudeAvailableResets(availability, now), claudeResetMeta(availability, now)
 }
 
-// claudeResetAvailabilityForUse applies the quota collector's stale-serve rule
-// before a grant may be redeemed: a body kept through failed refreshes is
-// trusted only within max(stale TTL, two intervals). A cache fetched under a
-// different organization than the current sign-in is never offered, and a
-// redemption additionally requires the cache to be bound to one at all.
+// claudeResetNextCheckText says when the availability cache will be fetched
+// again, from its own reservation, so refusals do not promise a time the
+// backoff will not keep.
+func claudeResetNextCheckText(path string, now time.Time) string {
+	next, err := parseOptionalRefreshTime(loadClaudeOAuthUsageCache(path).NextAttemptAt)
+	if err != nil || next.IsZero() || !next.After(now) {
+		return "it is checked again on the next refresh"
+	}
+	minutes := int((next.Sub(now) + time.Minute - 1) / time.Minute)
+	if minutes <= 1 {
+		return "it is checked again within a minute"
+	}
+	return fmt.Sprintf("the next check is due in %d minutes", minutes)
+}
+
+// refreshClaudeResetAvailability fetches the cedar_ember block under Claude
+// Code's client identity at most once per cadence. Failures back off for at
+// least an hour and keep the last body for the stale window.
+func refreshClaudeResetAvailability(path string, now time.Time, interval time.Duration) error {
+	cadence := claudeResetAvailabilityCadence(interval)
+	return withUsageRefreshLock(path, func() error {
+		cache, err := loadClaudeOAuthUsageCacheStrict(path)
+		if err != nil {
+			return err
+		}
+		fetchedAt, err := parseOptionalRefreshTime(cache.FetchedAt)
+		if err != nil {
+			return err
+		}
+		nextAttemptAt, err := parseOptionalRefreshTime(cache.NextAttemptAt)
+		if err != nil {
+			return err
+		}
+		if !fetchedAt.IsZero() && fetchedAt.Add(cadence).After(nextAttemptAt) {
+			nextAttemptAt = fetchedAt.Add(cadence)
+		}
+		if now.Before(nextAttemptAt) {
+			return nil
+		}
+		// Reserve before the request so a concurrent summary cannot repeat it.
+		cache.NextAttemptAt = now.Add(cadence).UTC().Format(time.RFC3339Nano)
+		if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
+			return errors.New("could not reserve Claude reset check")
+		}
+		// Classify on the original error, whose wording the diagnostics code
+		// knows, then name the reset check in the stored message.
+		fail := func(cause error, backoff time.Duration) error {
+			cache.DiagnosticCategory, cache.DiagnosticHTTPStatus = classifyDiagnosticError("claude", cause)
+			cache.LastError = strings.Replace(cause.Error(), "Claude usage API", "Claude reset check", 1)
+			wait := max(cadence, backoff, claudeResetAvailabilityBackoff)
+			cache.DiagnosticCooldownSeconds = int64(wait / time.Second)
+			cache.NextAttemptAt = now.Add(wait).UTC().Format(time.RFC3339Nano)
+			if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
+				return errors.New("could not save Claude reset check failure")
+			}
+			return nil
+		}
+		token, _, err := readClaudeOAuthToken(now)
+		if err != nil {
+			return fail(err, 0)
+		}
+		// Read with the token, before the request, so an account switch during
+		// the fetch cannot tag this body with the next sign-in (ADR-0022).
+		organization, _ := claudeOrganizationID()
+		cache.ClaudeVersion = claudeCodeVersionString(cache.ClaudeVersion)
+		body, backoff, err := fetchClaudeOAuthJSON(claudeResetAvailabilityURL, token, claudeResetClientUserAgent(cache.ClaudeVersion))
+		if err != nil {
+			return fail(err, backoff)
+		}
+		var root map[string]any
+		if err := json.Unmarshal(body, &root); err != nil {
+			return fail(errors.New("Claude usage API returned an unsupported response"), 0)
+		}
+		cache.Body = body
+		cache.OrganizationID = organization
+		cache.FetchedAt = now.UTC().Format(time.RFC3339Nano)
+		cache.NextAttemptAt = now.Add(cadence).UTC().Format(time.RFC3339Nano)
+		cache.LastError = ""
+		cache.DiagnosticCategory = ""
+		cache.DiagnosticHTTPStatus = 0
+		cache.DiagnosticCooldownSeconds = 0
+		cache.Invalidated = false
+		if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
+			return errors.New("could not save Claude reset check")
+		}
+		return nil
+	})
+}
+
+// claudeResetAvailabilityForUse applies a stale-serve rule before a grant may
+// be listed or redeemed: a body kept through failed checks is trusted only
+// within max(stale TTL, two check cadences). A cache fetched under a different
+// organization than the current sign-in is never offered, and a redemption
+// additionally requires the cache to be bound to one at all.
 func claudeResetAvailabilityForUse(path string, now time.Time, interval time.Duration, organization string, requireBinding bool) (claudeResetAvailability, bool) {
 	cache := loadClaudeOAuthUsageCache(path)
 	if cache.OrganizationID != "" && organization != "" && cache.OrganizationID != organization {
@@ -579,7 +730,7 @@ func claudeResetAvailabilityForUse(path string, now time.Time, interval time.Dur
 	}
 	if cache.LastError != "" {
 		fetchedAt, err := time.Parse(time.RFC3339Nano, cache.FetchedAt)
-		if err != nil || now.Sub(fetchedAt) >= max(claudeOAuthUsageStaleTTL, 2*normalizeUsageRefreshInterval(interval)) {
+		if err != nil || now.Sub(fetchedAt) >= max(claudeResetAvailabilityStaleTTL, 2*claudeResetAvailabilityCadence(interval)) {
 			return claudeResetAvailability{}, false
 		}
 	}
@@ -739,24 +890,25 @@ func claudeResetIneligibleMessage(reason string) string {
 	}
 }
 
-func publicClaudeResetStatus(state claudeResetState, availability claudeResetAvailability, fetchedAt string) claudeResetStatus {
+func publicClaudeResetStatus(state claudeResetState, availability claudeResetAvailability, fetchedAt string, checkError string) claudeResetStatus {
 	status := claudeResetStatus{
-		StateKnown:       true,
-		Reported:         availability.Reported,
-		Eligible:         availability.Eligible,
-		IneligibleReason: availability.IneligibleReason,
-		AtLimit:          availability.AtLimit,
-		Grants:           []claudeResetGrant{},
-		NextGrantID:      availability.NextGrantID,
-		CooldownUntil:    availability.CooldownUntil,
-		UsageFetchedAt:   fetchedAt,
-		State:            state.State,
-		Message:          state.Message,
-		GrantID:          state.GrantID,
-		Outcome:          state.Outcome,
-		Reason:           state.Reason,
-		LastAttemptAt:    state.AttemptedAt,
-		ResetsLeft:       state.ResetsLeft,
+		StateKnown:        true,
+		Reported:          availability.Reported,
+		Eligible:          availability.Eligible,
+		IneligibleReason:  availability.IneligibleReason,
+		AtLimit:           availability.AtLimit,
+		Grants:            []claudeResetGrant{},
+		NextGrantID:       availability.NextGrantID,
+		CooldownUntil:     availability.CooldownUntil,
+		UsageFetchedAt:    fetchedAt,
+		AvailabilityError: checkError,
+		State:             state.State,
+		Message:           state.Message,
+		GrantID:           state.GrantID,
+		Outcome:           state.Outcome,
+		Reason:            state.Reason,
+		LastAttemptAt:     state.AttemptedAt,
+		ResetsLeft:        state.ResetsLeft,
 	}
 	status.Grants = append(status.Grants, availability.Grants...)
 	if status.State == "" {
@@ -764,8 +916,10 @@ func publicClaudeResetStatus(state claudeResetState, availability claudeResetAva
 	}
 	if status.Message == "" {
 		switch {
+		case !availability.Reported && checkError != "":
+			status.Message = "Claude could not report limit resets: " + checkError
 		case !availability.Reported:
-			status.Message = "Claude reset availability is unknown until usage refreshes"
+			status.Message = "Claude reset availability is unknown until the next reset check"
 		case !availability.Eligible:
 			status.Message = claudeResetIneligibleMessage(availability.IneligibleReason)
 		case len(availability.Grants) == 0:
@@ -885,7 +1039,7 @@ func claimClaudeReset(request claudeResetClaimRequest) (claudeResetClaimResult, 
 	if err != nil {
 		return claudeResetClaimResult{}, err
 	}
-	setClaudeOAuthHeaders(req, request.Token, request.Version)
+	setClaudeOAuthHeaders(req, request.Token, claudeResetClientUserAgent(request.Version))
 	client := &http.Client{Timeout: claudeResetClaimTimeout}
 	resp, err := client.Do(req)
 	if err != nil {

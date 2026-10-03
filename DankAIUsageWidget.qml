@@ -2457,6 +2457,10 @@ PluginComponent {
             add("Claude tokens are local Claude Code only, not web", "info")
         if (provider.id === "claude" && provider.meta.sessionFallbackSource)
             add("Session timer from Claude prime; account limits unavailable", "warning")
+        // The limit-reset check is separate from the quota poll; its failure
+        // only hides the reset line, so say why in Advanced.
+        if (advancedDropdown && provider.id === "claude" && provider.meta.claudeResetCheckError)
+            add("Limit-reset check failed: " + provider.meta.claudeResetCheckError, "warning")
         if (advancedDropdown && provider.meta.tokenDataNote) {
             var note = provider.meta.tokenDataNote
             var lastUsage = formatShortDateTime(provider.meta.lastUsageAt)

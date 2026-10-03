@@ -1,6 +1,6 @@
 # ADR-0022: Explicit, confirmed use of Claude limit resets
 
-**Status:** Accepted
+**Status:** Accepted, amended by ADR-0023 (the request identity and the single usage request)
 **Date:** 2026-10-03
 **Applies to:** `cmd/dankaiusage` (`claude-reset`, Claude usage headers), `DankAIUsageWidget.qml`
 **Builds on:** ADR-0001, ADR-0008, ADR-0010
