@@ -222,6 +222,7 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 	var actionErr error
 	stateKnown := false
 	refreshUsage := false
+	requested := false
 	err := withStateFileLock(deps.StatePath, claudeResetLockTimeout, "Claude reset state", func() error {
 		loaded, err := loadClaudeResetState(deps.StatePath)
 		if err != nil {
@@ -233,7 +234,7 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 		case "status":
 			return nil
 		case "use":
-			refreshUsage, actionErr = useClaudeReset(&state, grantID, deps)
+			requested, refreshUsage, actionErr = useClaudeReset(&state, grantID, deps)
 			return nil
 		default:
 			actionErr = fmt.Errorf("unknown claude-reset action %q", action)
@@ -262,39 +263,68 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 	}
 	if actionErr != nil {
 		status.Error = actionErr.Error()
+		// A refusal before any request is the whole story; do not echo an
+		// older saved outcome above it.
+		if action == "use" && !requested {
+			status.Message = actionErr.Error()
+		}
 	}
 	return status, actionErr
 }
 
 // useClaudeReset redeems one grant. State is saved as "attempted" before the
-// request so a crash or timeout leaves a visible record and a retry reuses
-// the same request id instead of starting a second redemption.
-func useClaudeReset(state *claudeResetState, grantID string, deps claudeResetDeps) (bool, error) {
+// request so a crash or timeout leaves a visible record. An unconfirmed
+// attempt is always retried first, with the same grant and request id and
+// regardless of what the usage cache offers now, so a reset the server may
+// already have applied is reconciled instead of a second one being spent.
+// It reports whether a request was sent, whether usage should refresh, and
+// the outcome error.
+func useClaudeReset(state *claudeResetState, grantID string, deps claudeResetDeps) (bool, bool, error) {
 	now := deps.Now()
-	availability, _ := claudeResetAvailabilityFromCache(deps.UsageCachePath)
-	if !availability.Reported {
-		return false, errors.New("Claude reset availability is unknown; refresh usage first")
-	}
-	if !availability.Eligible {
-		return false, errors.New(claudeResetIneligibleMessage(availability.IneligibleReason))
-	}
-	grant, ok := selectClaudeResetGrant(availability, grantID, now)
-	if !ok {
-		if grantID != "" {
-			return false, errors.New("that Claude reset is not available; refresh usage and check the offered reset")
-		}
-		return false, errors.New("no usable Claude reset is available")
-	}
+	pending := state.State == "attempted" && claudeResetGrantIDPattern.MatchString(state.GrantID) &&
+		claudeResetRequestIDPattern.MatchString(state.RequestID)
+	var grant claudeResetGrant
 	requestID := ""
-	if state.State == "attempted" && state.GrantID == grant.ID && claudeResetRequestIDPattern.MatchString(state.RequestID) {
+	if pending {
+		if grantID != "" && grantID != state.GrantID {
+			return false, false, fmt.Errorf("an earlier attempt to use reset %s is unconfirmed; retry it before choosing another reset", state.GrantID)
+		}
+		grant = claudeResetGrant{ID: state.GrantID}
 		requestID = state.RequestID
 	} else {
+		availability, _ := claudeResetAvailabilityFromCache(deps.UsageCachePath)
+		if !availability.Reported {
+			return false, false, errors.New("Claude reset availability is unknown; refresh usage first")
+		}
+		if !availability.Eligible {
+			return false, false, errors.New(claudeResetIneligibleMessage(availability.IneligibleReason))
+		}
+		selected, ok := selectClaudeResetGrant(availability, grantID, now)
+		if !ok {
+			if grantID != "" {
+				return false, false, errors.New("that Claude reset is not available; refresh usage and check the offered reset")
+			}
+			return false, false, errors.New("no usable Claude reset is available")
+		}
+		grant = selected
 		id, err := newUUID()
 		if err != nil {
-			return false, errors.New("could not create a reset request id")
+			return false, false, errors.New("could not create a reset request id")
 		}
 		requestID = id
 	}
+
+	// Credentials are read before anything is saved, so a sign-in problem
+	// leaves an earlier unconfirmed attempt, and its request id, untouched.
+	token, _, err := deps.ReadToken(now)
+	if err != nil {
+		return false, false, errors.New("Couldn't reset with this login · nothing was sent · " + err.Error())
+	}
+	organization, err := deps.OrganizationID()
+	if err != nil {
+		return false, false, errors.New("Couldn't reset with this login · nothing was sent · " + err.Error())
+	}
+
 	*state = claudeResetState{
 		Version:     claudeResetStateVersion,
 		State:       "attempted",
@@ -304,24 +334,7 @@ func useClaudeReset(state *claudeResetState, grantID string, deps claudeResetDep
 		Message:     "Reset requested; waiting for Claude to confirm",
 	}
 	if err := saveClaudeResetState(deps.StatePath, *state); err != nil {
-		return false, errors.New("could not save Claude reset state before the request")
-	}
-
-	token, _, err := deps.ReadToken(now)
-	if err != nil {
-		state.State = "failed"
-		state.Outcome = "auth_error"
-		state.Message = "Couldn't reset with this login · nothing was used · " + err.Error()
-		_ = saveClaudeResetState(deps.StatePath, *state)
-		return false, errors.New(state.Message)
-	}
-	organization, err := deps.OrganizationID()
-	if err != nil {
-		state.State = "failed"
-		state.Outcome = "auth_error"
-		state.Message = "Couldn't reset with this login · nothing was used · " + err.Error()
-		_ = saveClaudeResetState(deps.StatePath, *state)
-		return false, errors.New(state.Message)
+		return false, false, errors.New("could not save Claude reset state before the request")
 	}
 	result, err := deps.Claim(claudeResetClaimRequest{
 		Token:          token,
@@ -336,7 +349,7 @@ func useClaudeReset(state *claudeResetState, grantID string, deps claudeResetDep
 		state.Outcome = "error"
 		state.Message = "Couldn't confirm the reset went through · if limits are still full in a moment, try again"
 		_ = saveClaudeResetState(deps.StatePath, *state)
-		return false, errors.New(safeClaudeResetError(err))
+		return true, false, errors.New(safeClaudeResetError(err))
 	}
 	state.Outcome = result.Result
 	state.Reason = result.Reason
@@ -380,7 +393,7 @@ func useClaudeReset(state *claudeResetState, grantID string, deps claudeResetDep
 			actionErr = errors.New("reset outcome could not be saved; check usage before trying again")
 		}
 	}
-	return refresh, actionErr
+	return true, refresh, actionErr
 }
 
 func selectClaudeResetGrant(availability claudeResetAvailability, grantID string, now time.Time) (claudeResetGrant, bool) {
@@ -490,7 +503,17 @@ func claudeResetMeta(availability claudeResetAvailability, now time.Time) map[st
 	return out
 }
 
+// claudeResetsFromUsageCache lists grants from the cached usage body under the
+// same staleness rule as the quota windows: a body kept through failed
+// refreshes is trusted only within the stale-serve window.
 func claudeResetsFromUsageCache(path string, now time.Time) ([]UsageReset, map[string]any) {
+	cache := loadClaudeOAuthUsageCache(path)
+	if cache.LastError != "" {
+		fetchedAt, err := time.Parse(time.RFC3339Nano, cache.FetchedAt)
+		if err != nil || now.Sub(fetchedAt) >= claudeOAuthUsageStaleTTL {
+			return nil, nil
+		}
+	}
 	availability, _ := claudeResetAvailabilityFromCache(path)
 	if !availability.Reported {
 		return nil, nil
@@ -724,7 +747,9 @@ func saveClaudeResetState(path string, state claudeResetState) error {
 
 // expireClaudeUsageCache drops the pre-reset quota snapshot and allows the
 // next summary to fetch immediately, so the refilled windows appear without
-// waiting out the regular cooldown.
+// waiting out the regular cooldown. FetchedAt is cleared too: the collector
+// floors the next attempt at FetchedAt plus the interval, which would
+// otherwise keep the cooldown alive with no body to serve.
 func expireClaudeUsageCache(path string, now time.Time) error {
 	return withUsageRefreshLock(path, func() error {
 		cache, err := loadClaudeOAuthUsageCacheStrict(path)
@@ -732,6 +757,7 @@ func expireClaudeUsageCache(path string, now time.Time) error {
 			return err
 		}
 		cache.Body = nil
+		cache.FetchedAt = ""
 		cache.Invalidated = true
 		cache.LastError = ""
 		cache.NextAttemptAt = now.UTC().Format(time.RFC3339Nano)

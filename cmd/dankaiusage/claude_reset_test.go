@@ -219,13 +219,54 @@ func TestRunClaudeResetActionRetryReusesRequestID(t *testing.T) {
 	if err == nil || status.State != "attempted" || status.Outcome != "error" || len(*expired) != 0 {
 		t.Fatalf("transport failure should keep the attempt pending: %+v error=%v", status, err)
 	}
+	// A different grant cannot be chosen while the first attempt is unconfirmed.
+	status, err = runClaudeResetAction("use", "other-grant", deps)
+	if err == nil || len(requests) != 1 || status.State != "attempted" || !strings.Contains(status.Message, "unconfirmed") {
+		t.Fatalf("pending attempt must block other grants: %+v error=%v", status, err)
+	}
+	// A sign-in problem must not disturb the unconfirmed attempt either.
+	tokenDeps := deps
+	tokenDeps.ReadToken = func(time.Time) (string, string, error) { return "", "", errors.New("Claude OAuth token expired") }
+	status, err = runClaudeResetAction("use", "", tokenDeps)
+	if err == nil || len(requests) != 1 || status.State != "attempted" {
+		t.Fatalf("credential failure must keep the attempt pending: %+v error=%v", status, err)
+	}
+	// Even when the cache no longer offers the grant, the retry resends the
+	// same request so the server reconciles the earlier outcome.
+	spent := strings.Replace(claudeResetUsageFixture, `"resets_left": 1,
+      "starts_at"`, `"resets_left": 0,
+      "starts_at"`, 1)
+	writeClaudeResetUsageFixture(t, dir, spent)
 	fail = false
-	status, err = runClaudeResetAction("use", "launch-grant-1", deps)
+	status, err = runClaudeResetAction("use", "", deps)
 	if err != nil || status.State != "used" || status.Outcome != "already_used" || !status.UsageRefreshed {
 		t.Fatalf("retry: %+v error=%v", status, err)
 	}
-	if len(requests) != 2 || requests[0].RequestID != requests[1].RequestID {
-		t.Fatalf("retry must reuse the request id: %+v", requests)
+	if len(requests) != 2 || requests[0].RequestID != requests[1].RequestID || requests[1].GrantID != "launch-grant-1" {
+		t.Fatalf("retry must reuse the grant and request id: %+v", requests)
+	}
+	// With the attempt settled, a fresh use is gated by the cache again.
+	status, err = runClaudeResetAction("use", "", deps)
+	if err == nil || len(requests) != 2 || status.Message != err.Error() {
+		t.Fatalf("spent grant must refuse with its own message: %+v error=%v", status, err)
+	}
+}
+
+func TestRunClaudeResetActionCredentialFailureSendsNothing(t *testing.T) {
+	dir := t.TempDir()
+	writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
+	calls := 0
+	deps, expired := testClaudeResetDeps(t, dir, func(claudeResetClaimRequest) (claudeResetClaimResult, error) {
+		calls++
+		return claudeResetClaimResult{Result: "reset"}, nil
+	})
+	deps.OrganizationID = func() (string, error) { return "", errors.New("Claude organization is unknown") }
+	status, err := runClaudeResetAction("use", "", deps)
+	if err == nil || calls != 0 || len(*expired) != 0 || status.State != "idle" || !strings.Contains(status.Message, "nothing was sent") {
+		t.Fatalf("status=%+v error=%v calls=%d", status, err, calls)
+	}
+	if _, statErr := os.Stat(deps.StatePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("no state should be written before a request: %v", statErr)
 	}
 }
 
@@ -391,21 +432,54 @@ func TestClaudeUsageFetchUsesClaudeCodeClientUserAgent(t *testing.T) {
 }
 
 func TestExpireClaudeUsageCacheAllowsImmediateRefresh(t *testing.T) {
-	dir := t.TempDir()
-	path := writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
-	now := mustParseTime(t, "2026-10-03T05:01:00Z")
-	if err := expireClaudeUsageCache(path, now); err != nil {
+	transport, now := setupClaudeRefreshTest(t)
+	interval := 5 * time.Minute
+	if _, _, _, _, _, info, err := collectClaudeOAuthLimitsWithPolicy(now, interval, false); err != nil || info.Cached {
+		t.Fatalf("initial fetch: %+v %v", info, err)
+	}
+	path := claudeOAuthUsageCachePath()
+	later := now.Add(time.Minute)
+	if err := expireClaudeUsageCache(path, later); err != nil {
 		t.Fatal(err)
 	}
 	cache, err := loadClaudeOAuthUsageCacheStrict(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cache.Body) != 0 || !cache.Invalidated || cache.NextAttemptAt != now.UTC().Format(time.RFC3339Nano) {
+	if len(cache.Body) != 0 || cache.FetchedAt != "" || !cache.Invalidated || cache.NextAttemptAt != later.UTC().Format(time.RFC3339Nano) {
 		t.Fatalf("cache: %+v", cache)
 	}
-	if resets, meta := claudeResetsFromUsageCache(path, now); resets != nil || meta != nil {
+	if resets, meta := claudeResetsFromUsageCache(path, later); resets != nil || meta != nil {
 		t.Fatal("expired cache must not report resets")
+	}
+	// One minute into a five-minute interval the collector must fetch again
+	// instead of honouring the old cooldown with nothing to serve.
+	session, _, _, _, _, info, err := collectClaudeOAuthLimitsWithPolicy(later, interval, false)
+	if err != nil || !session.Known || info.Cached || transport.calls.Load() != 2 {
+		t.Fatalf("post-reset refresh: known=%v info=%+v error=%v calls=%d", session.Known, info, err, transport.calls.Load())
+	}
+}
+
+func TestClaudeResetsFromUsageCacheIgnoreStaleFailedBody(t *testing.T) {
+	dir := t.TempDir()
+	path := writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
+	fetchedAt := mustParseTime(t, "2026-10-03T05:00:00Z")
+	if resets, _ := claudeResetsFromUsageCache(path, fetchedAt.Add(time.Hour)); len(resets) != 1 {
+		t.Fatal("a healthy cache lists grants regardless of age")
+	}
+	cache, err := loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.LastError = "Claude usage API rate limited (HTTP 429)"
+	if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
+		t.Fatal(err)
+	}
+	if resets, _ := claudeResetsFromUsageCache(path, fetchedAt.Add(10*time.Minute)); len(resets) != 1 {
+		t.Fatal("a recently failed refresh still serves the last grants")
+	}
+	if resets, meta := claudeResetsFromUsageCache(path, fetchedAt.Add(claudeOAuthUsageStaleTTL)); resets != nil || meta != nil {
+		t.Fatal("a stale body kept through failures must not offer a spendable grant")
 	}
 }
 

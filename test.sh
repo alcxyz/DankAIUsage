@@ -88,6 +88,7 @@ assert 'runClaudeReset("use"' not in component_text.split('function runClaudeRes
 for forbidden in ('runClaudeReset("check"', 'runClaudeReset("arm"'):
     assert forbidden not in component_text
 assert 'if (claudeResetProcess.running) {' in component_text
+assert 'if (showClaude && !claudeResetProcess.running) runClaudeReset("status")' in component_text
 assert 'reset.resetType === "claudeLimitReset"' in component_text
 assert 'command: ["dankaiusage", "diagnostics"]' in component_text
 assert 'command: ["dankaiusage", "announcements", "--enabled"]' in component_text

@@ -44,8 +44,12 @@ this endpoint (ADR-0001); this is the same identity, stated precisely.
   account mutation: it re-reads the cached availability, refuses without an
   eligible, unexpired grant with resets left, saves an `attempted` record with
   the request id **before** sending, then records the server's outcome. A
-  transport failure keeps the record `attempted` so a retry reuses the request
-  id; the server, not the helper, decides whether it was already applied.
+  transport failure keeps the record `attempted`; the next `use` always retries
+  that grant with the same request id, whatever the cache offers by then, and
+  refuses to pick another grant until the server has answered. Sign-in
+  problems are detected before anything is saved, so they never disturb an
+  unconfirmed attempt. The server, not the helper, decides whether the earlier
+  request was already applied.
   `reset` and `already_used` count as success and expire the usage cache so the
   next summary fetches the refilled windows immediately; every other outcome
   leaves the grant untouched and says so.
@@ -58,7 +62,10 @@ this endpoint (ADR-0001); this is the same identity, stated precisely.
   spending the reset is always a deliberate, confirmed action.
 - The helper never reads the grant from live network state when deciding
   eligibility; it uses the shared usage cache, so one refresh cycle governs
-  requests as before (ADR-0015).
+  requests as before (ADR-0015). Grants follow the same stale-serve rule as
+  the quota windows: a body kept through failed refreshes is trusted only
+  within the stale window. The widget reads the saved attempt record on every
+  refresh cycle, so an unconfirmed attempt stays visible across restarts.
 
 ## Alternatives Considered
 

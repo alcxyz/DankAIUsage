@@ -494,6 +494,9 @@ PluginComponent {
     // cache. Otherwise every reset check could arrive inside the cooldown and
     // never receive the fresh data required to authorize consumption.
     function refreshCycle() {
+        // The saved Claude reset record (an unconfirmed attempt after a crash
+        // or timeout) is local state; reading it never contacts a server.
+        if (showClaude && !claudeResetProcess.running) runClaudeReset("status")
         if (codexResetProcess.running) {
             _refreshCyclePending = true
             return
