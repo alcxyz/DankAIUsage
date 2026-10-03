@@ -6,6 +6,7 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+- Claude limit resets granted to your plan now appear under the Claude card with their expiry and what they clear, and Advanced offers a confirmed **Use reset now** action; nothing is ever used automatically. The helper now identifies itself to the usage endpoint as Claude Code's OAuth client, which the endpoint requires before it reports resets.
 - Reorganized the settings page into Display, Top bar, Quotas in the top bar, Collection, Automation and notifications, and a collapsed Token history and compatibility group. Quota bar options appear only while quota bars are on. No setting, default, or saved value changed.
 - Added optional brand-colored provider logos and quota-bar colors that follow usage from green to dark red. Both default off and preserve error colors. Thanks to @TheFacc for the contribution (#15).
 - Added optional quota bars in the horizontal top bar, with provider names when logos are hidden, configurable labels and width, and a pace marker. Credit switches apply to text mode; quota-bar mode keeps credits in the dropdown. Thanks to @TheFacc for the contribution (#14).

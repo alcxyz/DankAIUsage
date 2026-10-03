@@ -6,6 +6,8 @@
 
 **Amended by:** [ADR-0010](ADR-0010-one-shot-codex-reset.md) permits an explicit,
 default-off one-shot reset control through the supported app-server protocol.
+[ADR-0022](ADR-0022-manual-claude-limit-reset.md) adds explicit, confirmed use
+of Claude limit resets.
 
 ## Context
 

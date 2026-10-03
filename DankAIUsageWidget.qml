@@ -125,6 +125,10 @@ PluginComponent {
     property bool _codexResetWasArmed: false
     property bool _refreshAfterCodexReset: false
     property double _codexResetRevision: 0
+    property var claudeResetStatus: ({ stateKnown: false, state: "idle", message: "" })
+    property string _claudeResetOutput: ""
+    property string _claudeResetAction: ""
+    property bool claudeResetConfirm: false
 
     Connections {
         target: root.pluginService
@@ -415,6 +419,42 @@ PluginComponent {
         return false
     }
 
+    // A Claude limit reset is spendable when the account is eligible and the
+    // helper lists an unexpired grant with resets left (ADR-0022).
+    function hasSpendableClaudeReset(provider) {
+        if (!provider || provider.id !== "claude" || !provider.meta || !provider.meta.claudeReset) return false
+        if (provider.meta.claudeReset.eligible !== true || !(provider.meta.availableResetCount > 0)) return false
+        var resets = providerResets(provider)
+        for (var i = 0; i < resets.length; i++) {
+            var reset = resets[i]
+            if (reset && reset.id && reset.resetType === "claudeLimitReset"
+                    && (!reset.expiresAt || Date.parse(reset.expiresAt) > resetClock)) return true
+        }
+        return false
+    }
+
+    function claudeResetGrantId(provider) {
+        var meta = provider && provider.meta ? provider.meta.claudeReset : null
+        if (meta && meta.nextGrantId) return meta.nextGrantId
+        var resets = providerResets(provider)
+        for (var i = 0; i < resets.length; i++) {
+            if (resets[i] && resets[i].id && resets[i].resetType === "claudeLimitReset") return resets[i].id
+        }
+        return ""
+    }
+
+    function claudeResetControlsVisible(provider) {
+        if (!provider || provider.id !== "claude") return false
+        return (advancedDropdown && hasSpendableClaudeReset(provider)) || claudeResetNeedsAttention()
+    }
+
+    // Uncertain or failed attempts and the result of this session's use stay
+    // visible in either dropdown mode; a settled idle state stays quiet.
+    function claudeResetNeedsAttention() {
+        return claudeResetStatus.state === "attempted" || !!claudeResetStatus.error
+                || claudeResetStatus.justUsed === true
+    }
+
     // The status line stays quiet while the control is simply off and settled.
     function codexResetNeedsAttention() {
         return codexResetStatus.armed === true || codexResetStatus.stateKnown === false
@@ -541,6 +581,10 @@ PluginComponent {
             _usageRefreshPending = true
             return
         }
+        if (claudeResetProcess.running) {
+            _usageRefreshPending = true
+            return
+        }
         if (historyExplanationProcess.running) {
             _usageRefreshPending = true
             return
@@ -560,6 +604,70 @@ PluginComponent {
             "--refresh-interval", "" + root.refreshInterval
         ]
         usageProcess.running = true
+    }
+
+    // Explicit, confirmed, one-request use of a Claude limit reset. The helper
+    // owns the attempt record; the widget never redeems automatically.
+    function runClaudeReset(action, grantId) {
+        if (claudeResetProcess.running) return
+        if (action === "use" && usageProcess.running) return
+        _claudeResetOutput = ""
+        _claudeResetAction = action
+        claudeResetConfirm = false
+        var command = ["dankaiusage", "claude-reset", action, "--refresh-interval", "" + root.refreshInterval]
+        if (action === "use" && grantId) command.push("--grant", grantId)
+        claudeResetProcess.command = command
+        claudeResetProcess.running = true
+    }
+
+    Process {
+        id: claudeResetProcess
+        running: false
+        stdout: SplitParser {
+            onRead: data => { root._claudeResetOutput += data + "\n" }
+        }
+        onExited: (exitCode, exitStatus) => {
+            var status
+            try {
+                status = JSON.parse(root._claudeResetOutput.trim())
+                if (typeof status.state !== "string") throw new Error("Invalid reset status")
+            } catch (e) {
+                status = {
+                    stateKnown: false,
+                    state: "error",
+                    message: "Claude reset status unavailable. Check the helper version and retry.",
+                    error: "helper output unreadable"
+                }
+            }
+            status.justUsed = root._claudeResetAction === "use"
+            root.claudeResetStatus = status
+            // A use attempt may have refilled the windows; fetch them again.
+            if (root._claudeResetAction === "use" || root._usageRefreshPending) {
+                root._usageRefreshPending = false
+                Qt.callLater(root.refreshUsage)
+            }
+        }
+    }
+
+    function claudeResetDetailText() {
+        var message = claudeResetStatus.message || ""
+        if (claudeResetStatus.error && claudeResetStatus.error !== message)
+            message += (message !== "" ? "\n" : "") + claudeResetStatus.error
+        return message
+    }
+
+    function claudeResetConfirmText(provider) {
+        var grantId = claudeResetGrantId(provider)
+        var resets = providerResets(provider)
+        var detail = ""
+        for (var i = 0; i < resets.length; i++) {
+            if (resets[i] && resets[i].id === grantId) {
+                detail = resets[i].description || ""
+                break
+            }
+        }
+        return "Refills your Claude limits now; this cannot be undone. Your weekly reset day stays the same."
+                + (detail !== "" ? "\n" + detail : "")
     }
 
     function primeClaude(automatic) {
@@ -3109,6 +3217,58 @@ PluginComponent {
                                         }
                                     }
 
+                                    Column {
+                                        width: parent.width
+                                        spacing: Theme.spacingXS
+                                        visible: modelData.id === "claude" && root.claudeResetControlsVisible(modelData)
+
+                                        Flow {
+                                            width: parent.width
+                                            spacing: Theme.spacingXS
+                                            visible: root.advancedDropdown && root.hasSpendableClaudeReset(modelData)
+
+                                            CompactAction {
+                                                text: claudeResetProcess.running ? "Using reset..."
+                                                        : root.claudeResetConfirm ? "Confirm: use reset now" : "Use reset now"
+                                                enabled: !claudeResetProcess.running && !usageProcess.running
+                                                warning: root.claudeResetConfirm
+                                                onClicked: {
+                                                    if (root.claudeResetConfirm) root.runClaudeReset("use", root.claudeResetGrantId(modelData))
+                                                    else root.claudeResetConfirm = true
+                                                }
+                                            }
+
+                                            CompactAction {
+                                                text: "Keep it"
+                                                visible: root.claudeResetConfirm
+                                                enabled: !claudeResetProcess.running
+                                                onClicked: root.claudeResetConfirm = false
+                                            }
+                                        }
+
+                                        NoticeRow {
+                                            width: parent.width
+                                            level: "warning"
+                                            text: root.claudeResetConfirmText(modelData)
+                                            visible: root.claudeResetConfirm
+                                        }
+
+                                        NoticeRow {
+                                            width: parent.width
+                                            level: root.claudeResetStatus.error ? "error"
+                                                    : root.claudeResetStatus.state === "attempted" ? "warning" : "info"
+                                            text: root.claudeResetDetailText()
+                                            visible: root.claudeResetNeedsAttention() && root.claudeResetDetailText() !== ""
+                                        }
+                                    }
+
+                                    NoticeRow {
+                                        width: parent.width
+                                        level: "info"
+                                        text: "Claude limit reset available · use it in Advanced"
+                                        visible: !root.advancedDropdown && modelData.id === "claude" && root.hasSpendableClaudeReset(modelData)
+                                    }
+
                                     NoticeRow {
                                         width: parent.width
                                         level: "info"
@@ -3820,6 +3980,12 @@ PluginComponent {
         interval: 15000
         running: root.clearTrackingConfirm
         onTriggered: root.clearTrackingConfirm = false
+    }
+
+    Timer {
+        interval: 15000
+        running: root.claudeResetConfirm
+        onTriggered: root.claudeResetConfirm = false
     }
 
     component TrackingPanel: StyledRect {
