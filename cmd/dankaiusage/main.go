@@ -372,7 +372,7 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 	if limitErr != nil {
 		setProviderMeta(&provider, "limitError", limitErr.Error())
 	}
-	if resets, resetMeta := claudeResetsFromUsageCache(claudeOAuthUsageCachePath(), now); resetMeta != nil {
+	if resets, resetMeta := claudeResetsFromUsageCache(claudeOAuthUsageCachePath(), now, opts.RefreshInterval); resetMeta != nil {
 		provider.Resets = resets
 		mergeProviderMeta(&provider, resetMeta)
 	}

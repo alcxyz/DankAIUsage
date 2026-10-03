@@ -449,7 +449,7 @@ func TestExpireClaudeUsageCacheAllowsImmediateRefresh(t *testing.T) {
 	if len(cache.Body) != 0 || cache.FetchedAt != "" || !cache.Invalidated || cache.NextAttemptAt != later.UTC().Format(time.RFC3339Nano) {
 		t.Fatalf("cache: %+v", cache)
 	}
-	if resets, meta := claudeResetsFromUsageCache(path, later); resets != nil || meta != nil {
+	if resets, meta := claudeResetsFromUsageCache(path, later, 5*time.Minute); resets != nil || meta != nil {
 		t.Fatal("expired cache must not report resets")
 	}
 	// One minute into a five-minute interval the collector must fetch again
@@ -464,7 +464,7 @@ func TestClaudeResetsFromUsageCacheIgnoreStaleFailedBody(t *testing.T) {
 	dir := t.TempDir()
 	path := writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
 	fetchedAt := mustParseTime(t, "2026-10-03T05:00:00Z")
-	if resets, _ := claudeResetsFromUsageCache(path, fetchedAt.Add(time.Hour)); len(resets) != 1 {
+	if resets, _ := claudeResetsFromUsageCache(path, fetchedAt.Add(time.Hour), 5*time.Minute); len(resets) != 1 {
 		t.Fatal("a healthy cache lists grants regardless of age")
 	}
 	cache, err := loadClaudeOAuthUsageCacheStrict(path)
@@ -475,11 +475,102 @@ func TestClaudeResetsFromUsageCacheIgnoreStaleFailedBody(t *testing.T) {
 	if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
 		t.Fatal(err)
 	}
-	if resets, _ := claudeResetsFromUsageCache(path, fetchedAt.Add(10*time.Minute)); len(resets) != 1 {
+	if resets, _ := claudeResetsFromUsageCache(path, fetchedAt.Add(10*time.Minute), 5*time.Minute); len(resets) != 1 {
 		t.Fatal("a recently failed refresh still serves the last grants")
 	}
-	if resets, meta := claudeResetsFromUsageCache(path, fetchedAt.Add(claudeOAuthUsageStaleTTL)); resets != nil || meta != nil {
+	if resets, meta := claudeResetsFromUsageCache(path, fetchedAt.Add(claudeOAuthUsageStaleTTL), 5*time.Minute); resets != nil || meta != nil {
 		t.Fatal("a stale body kept through failures must not offer a spendable grant")
+	}
+	if resets, _ := claudeResetsFromUsageCache(path, fetchedAt.Add(claudeOAuthUsageStaleTTL), time.Hour); len(resets) != 1 {
+		t.Fatal("long intervals widen the stale window like the quota collector")
+	}
+	// use follows the same rule before sending anything.
+	calls := 0
+	deps, _ := testClaudeResetDeps(t, dir, func(claudeResetClaimRequest) (claudeResetClaimResult, error) {
+		calls++
+		return claudeResetClaimResult{Result: "reset"}, nil
+	})
+	deps.Now = func() time.Time { return fetchedAt.Add(claudeOAuthUsageStaleTTL) }
+	if status, err := runClaudeResetAction("use", "", deps); err == nil || calls != 0 || !strings.Contains(status.Message, "stale") {
+		t.Fatalf("stale cache must refuse use: %+v %v", status, err)
+	}
+}
+
+func TestRunClaudeResetActionPendingRetryStaysPendingOnInconclusiveAnswers(t *testing.T) {
+	for _, result := range []string{"rate_limited", "auth_error", "unavailable"} {
+		t.Run(result, func(t *testing.T) {
+			dir := t.TempDir()
+			writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
+			var requests []claudeResetClaimRequest
+			answer := ""
+			deps, expired := testClaudeResetDeps(t, dir, func(request claudeResetClaimRequest) (claudeResetClaimResult, error) {
+				requests = append(requests, request)
+				if answer == "" {
+					return claudeResetClaimResult{}, errors.New("timeout")
+				}
+				return claudeResetClaimResult{Result: answer}, nil
+			})
+			if _, err := runClaudeResetAction("use", "", deps); err == nil {
+				t.Fatal("first attempt should time out")
+			}
+			answer = result
+			status, err := runClaudeResetAction("use", "", deps)
+			if err == nil || status.State != "attempted" || status.Outcome != result || len(*expired) != 0 {
+				t.Fatalf("inconclusive retry answer must keep the attempt pending: %+v error=%v", status, err)
+			}
+			answer = "reset"
+			status, err = runClaudeResetAction("use", "", deps)
+			if err != nil || status.State != "used" || len(requests) != 3 || requests[2].RequestID != requests[0].RequestID {
+				t.Fatalf("final retry must still reuse the request id: %+v error=%v requests=%+v", status, err, requests)
+			}
+		})
+	}
+}
+
+func TestRunClaudeResetActionPendingAttemptIsBoundToOrganization(t *testing.T) {
+	dir := t.TempDir()
+	writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
+	var requests []claudeResetClaimRequest
+	deps, _ := testClaudeResetDeps(t, dir, func(request claudeResetClaimRequest) (claudeResetClaimResult, error) {
+		requests = append(requests, request)
+		return claudeResetClaimResult{}, errors.New("timeout")
+	})
+	if _, err := runClaudeResetAction("use", "", deps); err == nil || len(requests) != 1 {
+		t.Fatal("first attempt should time out")
+	}
+	saved, err := loadClaudeResetState(deps.StatePath)
+	if err != nil || saved.OrganizationID != "org-test" {
+		t.Fatalf("attempt must record its organization: %+v %v", saved, err)
+	}
+	other := deps
+	other.OrganizationID = func() (string, error) { return "org-other", nil }
+	status, err := runClaudeResetAction("use", "", other)
+	if err == nil || len(requests) != 1 || status.State != "attempted" || !strings.Contains(status.Message, "different Claude account") {
+		t.Fatalf("another account must not resend the saved request: %+v error=%v", status, err)
+	}
+	status, err = runClaudeResetAction("forget", "", other)
+	if err != nil || status.State != "idle" || status.GrantID != "" {
+		t.Fatalf("forget: %+v error=%v", status, err)
+	}
+	if saved, err := loadClaudeResetState(deps.StatePath); err != nil || saved.State != "idle" {
+		t.Fatalf("forget must persist: %+v %v", saved, err)
+	}
+}
+
+func TestClaimUsesCachedClaudeVersion(t *testing.T) {
+	dir := t.TempDir()
+	writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
+	var versions []string
+	deps, _ := testClaudeResetDeps(t, dir, func(request claudeResetClaimRequest) (claudeResetClaimResult, error) {
+		versions = append(versions, request.Version)
+		return claudeResetClaimResult{Result: "reset"}, nil
+	})
+	deps.ClaudeVersion = func(cached string) string { return "cached:" + cached }
+	if _, err := runClaudeResetAction("use", "", deps); err != nil {
+		t.Fatal(err)
+	}
+	if len(versions) != 1 || versions[0] != "cached:0.0.0-test" {
+		t.Fatalf("claim must reuse the usage fetch's cached version: %v", versions)
 	}
 }
 

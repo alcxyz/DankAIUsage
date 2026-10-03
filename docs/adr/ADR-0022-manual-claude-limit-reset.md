@@ -48,8 +48,11 @@ this endpoint (ADR-0001); this is the same identity, stated precisely.
   that grant with the same request id, whatever the cache offers by then, and
   refuses to pick another grant until the server has answered. Sign-in
   problems are detected before anything is saved, so they never disturb an
-  unconfirmed attempt. The server, not the helper, decides whether the earlier
-  request was already applied.
+  unconfirmed attempt, and rate-limit, auth or "unavailable" answers to a
+  retry leave it unconfirmed as well. The record stores the organization that
+  made the attempt; another account cannot resend it, and an explicit `forget`
+  exists for that case. The server, not the helper, decides whether the
+  earlier request was already applied.
   `reset` and `already_used` count as success and expire the usage cache so the
   next summary fetches the refilled windows immediately; every other outcome
   leaves the grant untouched and says so.
@@ -58,7 +61,8 @@ this endpoint (ADR-0001); this is the same identity, stated precisely.
   **Use reset now** action that needs a second click within fifteen seconds and
   shows what it does before that click. Simple mode only mentions that a reset
   is available. Uncertain or failed attempts and this session's result remain
-  visible in either mode. There is no automatic or armed use and no setting:
+  visible in either mode, and an unconfirmed attempt replaces the use button
+  with a single-click retry of the same request. There is no automatic or armed use and no setting:
   spending the reset is always a deliberate, confirmed action.
 - The helper never reads the grant from live network state when deciding
   eligibility; it uses the shared usage cache, so one refresh cycle governs

@@ -15,10 +15,14 @@ fifteen seconds sends the request. **Keep it** cancels. Simple mode only notes
 that a reset is available.
 
 The outcome appears under the card. `Limits reset` means Claude confirmed it
-and the quotas refresh right away. If the request could not be confirmed, the
-line says so; try again in a moment and the helper repeats the same request
-rather than starting a second one. Only the provider decides whether a reset is
-eligible, so a `not available` answer leaves the reset untouched.
+and the quotas refresh right away. If the request could not be confirmed (a
+timeout, a rate-limit answer, a sign-in problem), the line says so and a
+**Retry unconfirmed reset** action replaces the use button in both modes. The
+retry repeats the same request for the same grant, so it cannot spend a second
+reset; Claude answers with the earlier outcome. Only the provider decides
+whether a reset is eligible, so a `not available` answer leaves the reset
+untouched. A reset that can only be used at a limit is offered as-is; Claude
+keeps it if you are not at one, and the confirmation says so beforehand.
 
 Nothing uses a reset automatically. There is no setting to arm, and refreshing
 usage, opening the dropdown, or installing the plugin never redeems one.
@@ -27,13 +31,17 @@ usage, opening the dropdown, or installing the plugin never redeems one.
 
 ```sh
 dankaiusage claude-reset status
-dankaiusage claude-reset use            # the grant Claude offers next
+dankaiusage claude-reset use            # the grant Claude offers next, or retry
 dankaiusage claude-reset use --grant ID # a specific grant from status
+dankaiusage claude-reset forget         # drop an unconfirmed attempt record
 ```
 
 `status` reads the cached usage data and the helper's own attempt record; it
-contacts no server. `use` sends one redemption request and prints the result.
-Both print JSON.
+contacts no server. `use` sends one redemption request and prints the result;
+while an attempt is unconfirmed it always retries that attempt first. An
+attempt is bound to the Claude account that made it. After switching accounts,
+sign back in to retry it, or run `forget` once you have checked the outcome on
+claude.ai; `forget` never contacts Claude. All commands print JSON.
 
 ## Why it may be missing
 

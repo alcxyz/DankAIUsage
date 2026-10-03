@@ -451,8 +451,20 @@ PluginComponent {
     // Uncertain or failed attempts and the result of this session's use stay
     // visible in either dropdown mode; a settled idle state stays quiet.
     function claudeResetNeedsAttention() {
-        return claudeResetStatus.state === "attempted" || !!claudeResetStatus.error
-                || claudeResetStatus.justUsed === true
+        return claudeResetStatus.state === "attempted" || claudeResetStatus.state === "failed"
+                || !!claudeResetStatus.error || claudeResetStatus.justUsed === true
+    }
+
+    // A grant that needs a limit is offered as-is; Claude answers not_limited
+    // and keeps it when the user is not at one. Say so before the click.
+    function claudeResetRequiresLimitNow(provider) {
+        var meta = provider && provider.meta ? provider.meta.claudeReset : null
+        if (!meta || meta.atLimit === true || !meta.grants) return false
+        var grantId = claudeResetGrantId(provider)
+        for (var i = 0; i < meta.grants.length; i++) {
+            if (meta.grants[i] && meta.grants[i].id === grantId) return meta.grants[i].useRequiresLimit === true
+        }
+        return false
     }
 
     // The status line stays quiet while the control is simply off and settled.
@@ -616,7 +628,7 @@ PluginComponent {
         if (action === "use" && usageProcess.running) return
         _claudeResetOutput = ""
         _claudeResetAction = action
-        claudeResetConfirm = false
+        if (action === "use") claudeResetConfirm = false
         var command = ["dankaiusage", "claude-reset", action, "--refresh-interval", "" + root.refreshInterval]
         if (action === "use" && grantId) command.push("--grant", grantId)
         claudeResetProcess.command = command
@@ -643,6 +655,8 @@ PluginComponent {
                 }
             }
             status.justUsed = root._claudeResetAction === "use"
+                    || (root.claudeResetStatus.justUsed === true
+                        && status.lastAttemptAt === root.claudeResetStatus.lastAttemptAt)
             root.claudeResetStatus = status
             // A use attempt may have refilled the windows; fetch them again.
             if (root._claudeResetAction === "use" || root._usageRefreshPending) {
@@ -670,6 +684,7 @@ PluginComponent {
             }
         }
         return "Refills your Claude limits now; this cannot be undone. Your weekly reset day stays the same."
+                + (claudeResetRequiresLimitNow(provider) ? "\nThis reset can only be used while you are at a limit; Claude keeps it otherwise." : "")
                 + (detail !== "" ? "\n" + detail : "")
     }
 
@@ -1884,6 +1899,19 @@ PluginComponent {
         var left = at - resetClock
         return "Expires " + formatShortDateTime(reset.expiresAt) + " · "
                 + (left <= 0 ? "expired" : "in " + resetDuration(left)) + title
+    }
+
+    // Provider-supplied detail per reset: what it clears, whether it needs a
+    // limit. Titles are added only when several resets are listed.
+    function providerResetDescriptions(provider) {
+        var resets = providerResetsByExpiry(provider)
+        var out = []
+        for (var i = 0; i < resets.length; i++) {
+            var description = resets[i] && resets[i].description ? resets[i].description : ""
+            if (description === "") continue
+            out.push(resets.length > 1 && resets[i].title ? resets[i].title + " · " + description : description)
+        }
+        return out
     }
 
     function providerResetDetail(provider) {
@@ -3158,6 +3186,25 @@ PluginComponent {
                                     }
 
                                     Column {
+                                        id: resetDescriptionList
+                                        width: parent.width
+                                        visible: root.advancedDropdown && root.providerResetDescriptions(modelData).length > 0
+
+                                        Repeater {
+                                            model: root.advancedDropdown ? root.providerResetDescriptions(modelData) : []
+
+                                            StyledText {
+                                                x: resetsIcon.width + Theme.spacingXS
+                                                width: parent.width - x
+                                                text: modelData
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                color: Theme.surfaceVariantText
+                                                wrapMode: Text.WordWrap
+                                            }
+                                        }
+                                    }
+
+                                    Column {
                                         width: parent.width
                                         spacing: Theme.spacingXS
                                         visible: modelData.id === "codex" && root.resetControlsVisible(modelData)
@@ -3229,6 +3276,7 @@ PluginComponent {
                                             width: parent.width
                                             spacing: Theme.spacingXS
                                             visible: root.advancedDropdown && root.hasSpendableClaudeReset(modelData)
+                                                    && root.claudeResetStatus.state !== "attempted"
 
                                             CompactAction {
                                                 text: claudeResetProcess.running ? "Using reset..."
@@ -3247,6 +3295,15 @@ PluginComponent {
                                                 enabled: !claudeResetProcess.running
                                                 onClicked: root.claudeResetConfirm = false
                                             }
+                                        }
+
+                                        // The retry resends the saved grant and request id, so it
+                                        // cannot spend a second reset and needs no second click.
+                                        CompactAction {
+                                            text: claudeResetProcess.running ? "Checking reset..." : "Retry unconfirmed reset"
+                                            enabled: !claudeResetProcess.running && !usageProcess.running
+                                            visible: root.claudeResetStatus.state === "attempted"
+                                            onClicked: root.runClaudeReset("use", "")
                                         }
 
                                         NoticeRow {

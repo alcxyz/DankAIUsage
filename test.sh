@@ -81,6 +81,9 @@ assert component_text.count('"--refresh-interval", "" + root.refreshInterval') =
 assert 'var command = ["dankaiusage", "claude-reset", action, "--refresh-interval", "" + root.refreshInterval]' in component_text
 assert 'if (action === "use" && grantId) command.push("--grant", grantId)' in component_text
 assert component_text.count('root.runClaudeReset("use", root.claudeResetGrantId(modelData))') == 1
+assert component_text.count('onClicked: root.runClaudeReset("use", "")') == 1, 'one retry action for an unconfirmed attempt'
+assert 'visible: root.claudeResetStatus.state === "attempted"' in component_text
+assert 'if (action === "use") claudeResetConfirm = false' in component_text
 assert 'if (root.claudeResetConfirm) root.runClaudeReset("use"' in component_text
 assert 'else root.claudeResetConfirm = true' in component_text
 assert 'running: root.claudeResetConfirm' in component_text
@@ -597,6 +600,7 @@ for (const provider of [null, {id: "codex", meta: {availableResetCount: 1, claud
 }
 equal(claudeVisible(false, {stateKnown: true, state: "attempted"}), true, "uncertain Claude reset attempt stays visible");
 equal(claudeVisible(false, {stateKnown: true, state: "failed", error: "failed"}), true, "Claude reset errors stay visible");
+equal(claudeVisible(false, {stateKnown: true, state: "failed"}), true, "a saved failed outcome stays visible after a status reload");
 equal(claudeVisible(false, {stateKnown: true, state: "used", justUsed: true}), true, "this session's result stays visible");
 const grantScope = {providerResets: bindQmlFunction("providerResets", {})};
 const grantId = bindQmlFunction("claudeResetGrantId", grantScope);

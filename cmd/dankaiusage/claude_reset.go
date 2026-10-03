@@ -68,15 +68,16 @@ type claudeResetAvailability struct {
 }
 
 type claudeResetState struct {
-	Version     int    `json:"version"`
-	State       string `json:"state"`
-	GrantID     string `json:"grantId,omitempty"`
-	RequestID   string `json:"requestId,omitempty"`
-	AttemptedAt string `json:"attemptedAt,omitempty"`
-	Outcome     string `json:"outcome,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	Message     string `json:"message"`
-	ResetsLeft  *int   `json:"resetsLeft,omitempty"`
+	Version        int    `json:"version"`
+	State          string `json:"state"`
+	GrantID        string `json:"grantId,omitempty"`
+	RequestID      string `json:"requestId,omitempty"`
+	OrganizationID string `json:"organizationId,omitempty"`
+	AttemptedAt    string `json:"attemptedAt,omitempty"`
+	Outcome        string `json:"outcome,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+	Message        string `json:"message"`
+	ResetsLeft     *int   `json:"resetsLeft,omitempty"`
 }
 
 type claudeResetStatus struct {
@@ -236,6 +237,15 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 		case "use":
 			requested, refreshUsage, actionErr = useClaudeReset(&state, grantID, deps)
 			return nil
+		case "forget":
+			// Drops an unconfirmed attempt record without contacting Claude.
+			// Only for an account switch; the server keeps the real outcome.
+			state = defaultClaudeResetState()
+			state.Message = "Earlier reset attempt forgotten; check Settings → Usage on claude.ai for its outcome"
+			if err := saveClaudeResetState(deps.StatePath, state); err != nil {
+				return errors.New("could not save Claude reset state")
+			}
+			return nil
 		default:
 			actionErr = fmt.Errorf("unknown claude-reset action %q", action)
 			return nil
@@ -283,16 +293,32 @@ func useClaudeReset(state *claudeResetState, grantID string, deps claudeResetDep
 	now := deps.Now()
 	pending := state.State == "attempted" && claudeResetGrantIDPattern.MatchString(state.GrantID) &&
 		claudeResetRequestIDPattern.MatchString(state.RequestID)
+	// Credentials are read before anything is saved, so a sign-in problem
+	// leaves an earlier unconfirmed attempt, and its request id, untouched.
+	token, _, err := deps.ReadToken(now)
+	if err != nil {
+		return false, false, errors.New("Couldn't reset with this login · nothing was sent · " + err.Error())
+	}
+	organization, err := deps.OrganizationID()
+	if err != nil {
+		return false, false, errors.New("Couldn't reset with this login · nothing was sent · " + err.Error())
+	}
 	var grant claudeResetGrant
 	requestID := ""
 	if pending {
 		if grantID != "" && grantID != state.GrantID {
 			return false, false, fmt.Errorf("an earlier attempt to use reset %s is unconfirmed; retry it before choosing another reset", state.GrantID)
 		}
+		if state.OrganizationID != "" && state.OrganizationID != organization {
+			return false, false, errors.New("an earlier reset attempt belongs to a different Claude account; sign back in to retry it, or run `dankaiusage claude-reset forget`")
+		}
 		grant = claudeResetGrant{ID: state.GrantID}
 		requestID = state.RequestID
 	} else {
-		availability, _ := claudeResetAvailabilityFromCache(deps.UsageCachePath)
+		availability, ok := claudeResetAvailabilityForUse(deps.UsageCachePath, now, deps.RefreshInterval)
+		if !ok {
+			return false, false, errors.New("Claude usage data is stale; refresh usage first")
+		}
 		if !availability.Reported {
 			return false, false, errors.New("Claude reset availability is unknown; refresh usage first")
 		}
@@ -314,31 +340,23 @@ func useClaudeReset(state *claudeResetState, grantID string, deps claudeResetDep
 		requestID = id
 	}
 
-	// Credentials are read before anything is saved, so a sign-in problem
-	// leaves an earlier unconfirmed attempt, and its request id, untouched.
-	token, _, err := deps.ReadToken(now)
-	if err != nil {
-		return false, false, errors.New("Couldn't reset with this login · nothing was sent · " + err.Error())
-	}
-	organization, err := deps.OrganizationID()
-	if err != nil {
-		return false, false, errors.New("Couldn't reset with this login · nothing was sent · " + err.Error())
-	}
-
 	*state = claudeResetState{
-		Version:     claudeResetStateVersion,
-		State:       "attempted",
-		GrantID:     grant.ID,
-		RequestID:   requestID,
-		AttemptedAt: now.UTC().Format(time.RFC3339),
-		Message:     "Reset requested; waiting for Claude to confirm",
+		Version:        claudeResetStateVersion,
+		State:          "attempted",
+		GrantID:        grant.ID,
+		RequestID:      requestID,
+		OrganizationID: organization,
+		AttemptedAt:    now.UTC().Format(time.RFC3339),
+		Message:        "Reset requested; waiting for Claude to confirm",
 	}
 	if err := saveClaudeResetState(deps.StatePath, *state); err != nil {
 		return false, false, errors.New("could not save Claude reset state before the request")
 	}
+	// The same Claude Code version as the usage fetch, so both requests come
+	// from one consistent client identity.
 	result, err := deps.Claim(claudeResetClaimRequest{
 		Token:          token,
-		Version:        deps.ClaudeVersion(""),
+		Version:        deps.ClaudeVersion(loadClaudeOAuthUsageCache(deps.UsageCachePath).ClaudeVersion),
 		OrganizationID: organization,
 		GrantID:        grant.ID,
 		RequestID:      requestID,
@@ -386,6 +404,13 @@ func useClaudeReset(state *claudeResetState, grantID string, deps claudeResetDep
 	default:
 		state.State = "failed"
 		state.Message = "Couldn't reset your limits · nothing was used · try again in a moment"
+		actionErr = errors.New(state.Message)
+	}
+	// None of these answers says what became of the earlier request; a retry
+	// of an unconfirmed attempt must stay unconfirmed and keep its request id.
+	if pending && state.State == "failed" {
+		state.State = "attempted"
+		state.Message = "Couldn't confirm the earlier reset went through · " + strings.TrimPrefix(state.Message, "Couldn't reset your limits · ")
 		actionErr = errors.New(state.Message)
 	}
 	if err := saveClaudeResetState(deps.StatePath, *state); err != nil {
@@ -505,20 +530,28 @@ func claudeResetMeta(availability claudeResetAvailability, now time.Time) map[st
 
 // claudeResetsFromUsageCache lists grants from the cached usage body under the
 // same staleness rule as the quota windows: a body kept through failed
-// refreshes is trusted only within the stale-serve window.
-func claudeResetsFromUsageCache(path string, now time.Time) ([]UsageReset, map[string]any) {
-	cache := loadClaudeOAuthUsageCache(path)
-	if cache.LastError != "" {
-		fetchedAt, err := time.Parse(time.RFC3339Nano, cache.FetchedAt)
-		if err != nil || now.Sub(fetchedAt) >= claudeOAuthUsageStaleTTL {
-			return nil, nil
-		}
-	}
-	availability, _ := claudeResetAvailabilityFromCache(path)
-	if !availability.Reported {
+// refreshes is trusted only within max(stale TTL, two intervals).
+func claudeResetsFromUsageCache(path string, now time.Time, interval time.Duration) ([]UsageReset, map[string]any) {
+	availability, ok := claudeResetAvailabilityForUse(path, now, interval)
+	if !ok || !availability.Reported {
 		return nil, nil
 	}
 	return claudeAvailableResets(availability, now), claudeResetMeta(availability, now)
+}
+
+// claudeResetAvailabilityForUse applies the quota collector's stale-serve rule
+// before a grant may be redeemed: a body kept through failed refreshes is
+// trusted only within max(stale TTL, two intervals).
+func claudeResetAvailabilityForUse(path string, now time.Time, interval time.Duration) (claudeResetAvailability, bool) {
+	cache := loadClaudeOAuthUsageCache(path)
+	if cache.LastError != "" {
+		fetchedAt, err := time.Parse(time.RFC3339Nano, cache.FetchedAt)
+		if err != nil || now.Sub(fetchedAt) >= max(claudeOAuthUsageStaleTTL, 2*normalizeUsageRefreshInterval(interval)) {
+			return claudeResetAvailability{}, false
+		}
+	}
+	availability, _ := claudeResetAvailabilityFromCache(path)
+	return availability, true
 }
 
 func claudeResetAvailabilityFromCache(path string) (claudeResetAvailability, string) {
