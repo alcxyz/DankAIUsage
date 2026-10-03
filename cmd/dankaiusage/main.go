@@ -1576,8 +1576,8 @@ func claudePrimeSessionFallback(now time.Time) (Allowance, map[string]any, bool)
 	return allowance, meta, true
 }
 
-// cedar_ember=1 asks the usage endpoint to include granted limit resets
-// alongside the regular windows and spend data (ADR-0022).
+// The quota poll asks for windows and spend only; granted limit resets come
+// from the separate reset check in claude_reset.go (ADR-0023).
 const claudeOAuthUsageURL = "https://api.anthropic.com/api/oauth/usage"
 const claudeOAuthUsageSource = "claude usage api"
 const claudeOAuthUsageStaleTTL = 30 * time.Minute

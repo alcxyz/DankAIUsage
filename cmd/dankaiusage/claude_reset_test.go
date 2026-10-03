@@ -307,7 +307,7 @@ func TestRunClaudeResetActionRefusesWithoutEligibleGrant(t *testing.T) {
 	empty := deps
 	empty.StatePath = filepath.Join(t.TempDir(), "claude-reset.json")
 	empty.AvailabilityCachePath = filepath.Join(filepath.Dir(empty.StatePath), "claude-reset-availability.json")
-	if status, err := runClaudeResetAction("use", "", empty); err == nil || calls != 0 || !strings.Contains(status.Message, "refresh usage first") {
+	if status, err := runClaudeResetAction("use", "", empty); err == nil || calls != 0 || !strings.Contains(status.Message, "next reset check") {
 		t.Fatalf("missing usage cache must refuse: %+v %v", status, err)
 	}
 	if status, err := runClaudeResetAction("retry", "", deps); err == nil || calls != 0 || !strings.Contains(status.Message, "no unconfirmed") {

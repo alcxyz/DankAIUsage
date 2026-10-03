@@ -35,7 +35,8 @@ minutes exhausts that budget.
   the same lock, permissions, organization binding, and stale rule shape as
   the quota cache. A failed check backs off for at least an hour, keeps the
   last body for a six-hour stale window, and records its reason in the
-  provider meta and in `claude-reset status`.
+  provider meta, which the Advanced dropdown shows as a notice, and in
+  `claude-reset status`.
 - `use` reads grants only from the availability cache. A successful redemption
   expires both caches so the next summary refetches the windows and the
   remaining grants.
@@ -55,8 +56,8 @@ minutes exhausts that budget.
 ## Consequences
 
 - One extra request every 30 minutes, far below the quota cadence. If the
-  provider rejects the check, the Claude card shows no reset and the status
-  line says why; quotas are unaffected.
+  provider rejects the check, the Claude card shows no reset, an Advanced
+  notice and `claude-reset status` say why, and quotas are unaffected.
 - The reset listing can lag a redemption or a new grant by up to 30 minutes;
   the next summary after a successful `use` refetches immediately.
 - ADR-0022's alternative "a separate status request" is superseded by this

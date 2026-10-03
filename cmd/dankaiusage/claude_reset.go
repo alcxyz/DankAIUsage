@@ -367,11 +367,14 @@ func useClaudeReset(state *claudeResetState, grantID string, retryOnly bool, dep
 		requestID = state.RequestID
 	} else {
 		availability, ok := claudeResetAvailabilityForUse(deps.AvailabilityCachePath, now, deps.RefreshInterval, organization, true)
+		if !ok && len(loadClaudeOAuthUsageCache(deps.AvailabilityCachePath).Body) == 0 {
+			return false, false, errors.New("Claude reset availability is unknown until the next reset check")
+		}
 		if !ok {
-			return false, false, errors.New("Claude usage data is stale or not tied to this sign-in; refresh usage first")
+			return false, false, errors.New("Claude reset availability is stale or not tied to this sign-in; it is checked again within half an hour")
 		}
 		if !availability.Reported {
-			return false, false, errors.New("Claude reset availability is unknown; refresh usage first")
+			return false, false, errors.New("Claude reset availability is unknown until the next reset check")
 		}
 		if !availability.Eligible {
 			return false, false, errors.New(claudeResetIneligibleMessage(availability.IneligibleReason))
@@ -588,9 +591,6 @@ func claudeResetMeta(availability claudeResetAvailability, now time.Time) map[st
 	return out
 }
 
-// claudeResetsFromUsageCache lists grants from the cached usage body under the
-// same staleness rule as the quota windows: a body kept through failed
-// refreshes is trusted only within max(stale TTL, two intervals).
 // claudeResetsForSummary refreshes the reset availability cache when its own
 // cadence allows and lists the grants it holds. A failed check is reported in
 // meta and never touches the quota cache.
@@ -649,12 +649,11 @@ func refreshClaudeResetAvailability(path string, now time.Time, interval time.Du
 		if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
 			return errors.New("could not reserve Claude reset check")
 		}
-		fail := func(message string, backoff time.Duration, status int) error {
-			cache.LastError = message
-			cache.DiagnosticCategory, cache.DiagnosticHTTPStatus = classifyDiagnosticError("claude", errors.New(message))
-			if status != 0 {
-				cache.DiagnosticHTTPStatus = status
-			}
+		// Classify on the original error, whose wording the diagnostics code
+		// knows, then name the reset check in the stored message.
+		fail := func(cause error, backoff time.Duration) error {
+			cache.DiagnosticCategory, cache.DiagnosticHTTPStatus = classifyDiagnosticError("claude", cause)
+			cache.LastError = strings.Replace(cause.Error(), "Claude usage API", "Claude reset check", 1)
 			wait := max(cadence, backoff, claudeResetAvailabilityBackoff)
 			cache.DiagnosticCooldownSeconds = int64(wait / time.Second)
 			cache.NextAttemptAt = now.Add(wait).UTC().Format(time.RFC3339Nano)
@@ -665,7 +664,7 @@ func refreshClaudeResetAvailability(path string, now time.Time, interval time.Du
 		}
 		token, _, err := readClaudeOAuthToken(now)
 		if err != nil {
-			return fail(err.Error(), 0, 0)
+			return fail(err, 0)
 		}
 		// Read with the token, before the request, so an account switch during
 		// the fetch cannot tag this body with the next sign-in (ADR-0022).
@@ -673,11 +672,11 @@ func refreshClaudeResetAvailability(path string, now time.Time, interval time.Du
 		cache.ClaudeVersion = claudeCodeVersionString(cache.ClaudeVersion)
 		body, backoff, err := fetchClaudeOAuthJSON(claudeResetAvailabilityURL, token, claudeResetClientUserAgent(cache.ClaudeVersion))
 		if err != nil {
-			return fail(strings.Replace(err.Error(), "Claude usage API", "Claude reset check", 1), backoff, 0)
+			return fail(err, backoff)
 		}
 		var root map[string]any
 		if err := json.Unmarshal(body, &root); err != nil {
-			return fail("Claude reset check returned an unsupported response", 0, 0)
+			return fail(errors.New("Claude usage API returned an unsupported response"), 0)
 		}
 		cache.Body = body
 		cache.OrganizationID = organization

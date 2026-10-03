@@ -97,6 +97,7 @@ assert 'running: root.claudeResetForgetConfirm' in component_text
 assert 'if (action === "use" || action === "retry") claudeResetConfirm = false' in component_text
 assert 'status.justUsed = status.requested === true' in component_text
 assert 'if (!root.claudeResetConfirm) {' in component_text
+assert 'add("Limit-reset check failed: " + provider.meta.claudeResetCheckError, "warning")' in component_text, 'a failed reset check is explained in Advanced'
 assert 'running: root.claudeResetConfirm' in component_text
 assert 'runClaudeReset("use"' not in component_text.split('function runClaudeReset(action, grantId)')[0], 'no automatic Claude reset use before the explicit action'
 for forbidden in ('runClaudeReset("check"', 'runClaudeReset("arm"'):
