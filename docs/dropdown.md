@@ -79,6 +79,14 @@ expiry date and a countdown, soonest first; a title shared by all of them is
 shown once in the header line, otherwise each line carries its own. Expired or
 unreported expiries are labelled as such.
 
+### Available Claude resets
+
+Claude limit resets granted to your plan appear under the Claude card the same
+way, with the title, expiry and countdown, plus what the reset clears and
+whether it needs a limit. Advanced adds a **Use reset now** action that asks
+for a second click before sending the request. See
+[Claude limit resets](claude-reset.md).
+
 ### Why does Spark have two bars?
 
 Spark has [separate usage limits](https://learn.chatgpt.com/docs/agent-configuration/speed#codex-spark).

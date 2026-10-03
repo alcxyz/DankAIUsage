@@ -16,13 +16,17 @@ import (
 
 // Never contacts a server or uses the user's CLI credentials.
 type claudeRefreshTransport struct {
-	calls      atomic.Int32
-	status     int
-	retryAfter string
+	calls         atomic.Int32
+	status        int
+	retryAfter    string
+	lastUserAgent string
+	lastURL       string
 }
 
 func (transport *claudeRefreshTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	transport.calls.Add(1)
+	transport.lastUserAgent = request.Header.Get("User-Agent")
+	transport.lastURL = request.URL.String()
 	return &http.Response{
 		StatusCode: transport.status,
 		Header:     http.Header{"Retry-After": []string{transport.retryAfter}},
@@ -34,6 +38,7 @@ func (transport *claudeRefreshTransport) RoundTrip(request *http.Request) (*http
 func setupClaudeRefreshTest(t *testing.T) (*claudeRefreshTransport, time.Time) {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	config := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", config)
 	t.Setenv("PATH", t.TempDir())

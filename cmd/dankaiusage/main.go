@@ -203,6 +203,10 @@ func main() {
 		runCodexResetCommand(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "claude-reset" {
+		runClaudeResetCommand(os.Args[2:])
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "history" {
 		runUsageHistoryCommand(os.Args[2:])
 		return
@@ -367,6 +371,10 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 	}
 	if limitErr != nil {
 		setProviderMeta(&provider, "limitError", limitErr.Error())
+	}
+	if resets, resetMeta := claudeResetsFromUsageCache(claudeOAuthUsageCachePath(), now, opts.RefreshInterval); resetMeta != nil {
+		provider.Resets = resets
+		mergeProviderMeta(&provider, resetMeta)
 	}
 
 	projects := filepath.Join(root, "projects")
@@ -1568,7 +1576,9 @@ func claudePrimeSessionFallback(now time.Time) (Allowance, map[string]any, bool)
 	return allowance, meta, true
 }
 
-const claudeOAuthUsageURL = "https://api.anthropic.com/api/oauth/usage"
+// cedar_ember=1 asks the usage endpoint to include granted limit resets
+// alongside the regular windows and spend data (ADR-0022).
+const claudeOAuthUsageURL = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1"
 const claudeOAuthUsageSource = "claude usage api"
 const claudeOAuthUsageStaleTTL = 30 * time.Minute
 const claudeFallbackCodeVersion = "2.1.185"
@@ -1583,6 +1593,7 @@ type claudeOAuthUsageCache struct {
 	DiagnosticCooldownSeconds int64           `json:"diagnosticCooldownSeconds,omitempty"`
 	ClaudeVersion             string          `json:"claudeVersion,omitempty"`
 	Invalidated               bool            `json:"invalidated,omitempty"`
+	OrganizationID            string          `json:"organizationId,omitempty"`
 }
 
 func claudeOAuthUsageCachePath() string {
@@ -1660,17 +1671,27 @@ func claudeCodeVersionString(cached string) string {
 	return claudeFallbackCodeVersion
 }
 
-// The claude-code User-Agent matters: anonymous clients land in an
-// aggressively rate-limited bucket and get persistent 429s.
+// claudeOAuthUserAgent is the User-Agent Claude Code's own OAuth API client
+// sends. It matters twice: anonymous clients land in an aggressively
+// rate-limited bucket with persistent 429s, and the usage endpoint only
+// reports limit resets for a recognised surface (ADR-0022).
+func claudeOAuthUserAgent(version string) string {
+	return "claude-cli/" + version + " (external, cli)"
+}
+
+func setClaudeOAuthHeaders(req *http.Request, token string, version string) {
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", claudeOAuthUserAgent(version))
+}
+
 func fetchClaudeOAuthUsage(token string, version string) ([]byte, time.Duration, error) {
 	req, err := http.NewRequest(http.MethodGet, claudeOAuthUsageURL, nil)
 	if err != nil {
 		return nil, 5 * time.Minute, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "claude-code/"+version)
+	setClaudeOAuthHeaders(req, token, version)
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -2104,6 +2125,9 @@ func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Du
 			actionErr = err
 			return nil
 		}
+		// Read alongside the token, before the request, so an account switch
+		// during the fetch cannot tag this body with the next sign-in.
+		organization, _ := claudeOrganizationID()
 		cache.ClaudeVersion = claudeCodeVersionString(cache.ClaudeVersion)
 		body, backoff, err := fetchClaudeOAuthUsage(token, cache.ClaudeVersion)
 		if err != nil {
@@ -2154,6 +2178,9 @@ func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Du
 		}
 		recovered = cache.LastError != "" || cache.DiagnosticCategory != ""
 		cache.Body = body
+		// Remember whose usage this is, so limit resets listed from the cache
+		// are never redeemed under a different sign-in (ADR-0022).
+		cache.OrganizationID = organization
 		cache.FetchedAt = now.UTC().Format(time.RFC3339Nano)
 		cache.NextAttemptAt = now.Add(interval).UTC().Format(time.RFC3339Nano)
 		cache.LastError = ""

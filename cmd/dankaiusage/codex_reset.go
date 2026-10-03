@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -589,37 +588,7 @@ func withCodexResetLock(path string, fn func() error) error {
 }
 
 func withCodexResetLockTimeout(path string, timeout time.Duration, fn func() error) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return errors.New("could not create Codex reset state directory")
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return errors.New("could not protect Codex reset state directory")
-	}
-	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return errors.New("could not open Codex reset state lock")
-	}
-	defer lock.Close()
-	if err := lock.Chmod(0o600); err != nil {
-		return errors.New("could not protect Codex reset state lock")
-	}
-	deadline := time.Now().Add(timeout)
-	for {
-		err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
-			return errors.New("could not lock Codex reset state")
-		}
-		if !time.Now().Before(deadline) {
-			return errors.New("timed out waiting for Codex reset state lock")
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) //nolint:errcheck
-	return fn()
+	return withStateFileLock(path, timeout, "Codex reset state", fn)
 }
 
 func loadCodexResetState(path string) (codexResetState, error) {

@@ -49,6 +49,22 @@ dankaiusage codex-reset disarm
 
 See [One-shot Codex reset](codex-reset.md).
 
+## Claude limit reset
+
+```sh
+dankaiusage claude-reset status
+dankaiusage claude-reset use
+dankaiusage claude-reset use --grant <id>
+dankaiusage claude-reset retry
+dankaiusage claude-reset forget
+```
+
+`status` reads the cached usage data and the helper's attempt record without
+contacting a server. `use` sends one redemption request for the grant Claude
+offers next, or the given grant, and retries an unconfirmed attempt first.
+`retry` only resends an unconfirmed attempt and refuses otherwise. `forget` drops an unconfirmed attempt record after an account switch. See
+[Claude limit resets](claude-reset.md).
+
 ## History and diagnostics
 
 ```sh
