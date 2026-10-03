@@ -62,7 +62,7 @@ dankaiusage claude-reset forget
 `status` reads the cached usage data and the helper's attempt record without
 contacting a server. `use` sends one redemption request for the grant Claude
 offers next, or the given grant, and retries an unconfirmed attempt first.
-`retry` only resends an unconfirmed attempt and refuses otherwise. `forget` drops an unconfirmed attempt record after an account switch. See
+`retry` only resends an unconfirmed attempt and refuses otherwise. `forget` drops an unconfirmed attempt record after an account switch, and replaces a saved record the helper cannot read. See
 [Claude limit resets](claude-reset.md).
 
 ## History and diagnostics

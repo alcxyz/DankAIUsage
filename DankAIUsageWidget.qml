@@ -129,6 +129,8 @@ PluginComponent {
     property string _claudeResetOutput: ""
     property string _claudeResetAction: ""
     property bool claudeResetConfirm: false
+    // The grant shown by the first click; the second click sends only that one.
+    property string claudeResetConfirmGrantId: ""
     property bool claudeResetForgetConfirm: false
 
     Connections {
@@ -456,6 +458,12 @@ PluginComponent {
         return (advancedDropdown && hasSpendableClaudeReset(provider)) || claudeResetNeedsAttention()
     }
 
+    // The helper could not read its own attempt record (corrupt, or from
+    // another version). Nothing can be used until forget replaces it.
+    function claudeResetStateUnreadable() {
+        return claudeResetStatus.state === "error" && claudeResetStatus.stateKnown === false
+    }
+
     // Uncertain or failed attempts and the result of this session's use stay
     // visible in either dropdown mode; a settled idle state stays quiet.
     // Failures, including this session's, fall under the one-hour limit.
@@ -475,10 +483,10 @@ PluginComponent {
 
     // A grant that needs a limit is offered as-is; Claude answers not_limited
     // and keeps it when the user is not at one. Say so before the click.
-    function claudeResetRequiresLimitNow(provider) {
+    function claudeResetRequiresLimitNow(provider, grantId) {
         var meta = provider && provider.meta ? provider.meta.claudeReset : null
         if (!meta || meta.atLimit === true || !meta.grants) return false
-        var grantId = claudeResetGrantId(provider)
+        if (!grantId) grantId = claudeResetGrantId(provider)
         for (var i = 0; i < meta.grants.length; i++) {
             if (meta.grants[i] && meta.grants[i].id === grantId) return meta.grants[i].useRequiresLimit === true
         }
@@ -694,8 +702,9 @@ PluginComponent {
         return message
     }
 
+    // Describes the grant the first click chose, not whatever is offered now.
     function claudeResetConfirmText(provider) {
-        var grantId = claudeResetGrantId(provider)
+        var grantId = claudeResetConfirmGrantId || claudeResetGrantId(provider)
         var resets = providerResets(provider)
         var detail = ""
         for (var i = 0; i < resets.length; i++) {
@@ -705,7 +714,7 @@ PluginComponent {
             }
         }
         return "Refills your Claude limits now; this cannot be undone. Your weekly reset day stays the same."
-                + (claudeResetRequiresLimitNow(provider) ? "\nThis reset can only be used while you are at a limit; Claude keeps it otherwise." : "")
+                + (claudeResetRequiresLimitNow(provider, grantId) ? "\nThis reset can only be used while you are at a limit; Claude keeps it otherwise." : "")
                 + (detail !== "" ? "\n" + detail : "")
     }
 
@@ -3298,16 +3307,25 @@ PluginComponent {
                                             width: parent.width
                                             spacing: Theme.spacingXS
                                             visible: root.advancedDropdown && root.hasSpendableClaudeReset(modelData)
-                                                    && root.claudeResetStatus.state !== "attempted"
+                                                    && root.claudeResetStatus.state !== "attempted" && !root.claudeResetStateUnreadable()
 
+                                            // The second click sends the grant the first click showed. If
+                                            // the offered grant changed meanwhile, it asks again instead.
                                             CompactAction {
                                                 text: claudeResetProcess.running && root._claudeResetAction === "use" ? "Using reset..."
                                                         : root.claudeResetConfirm ? "Confirm: use reset now" : "Use reset now"
                                                 enabled: !claudeResetProcess.running && !usageProcess.running
                                                 warning: root.claudeResetConfirm
                                                 onClicked: {
-                                                    if (root.claudeResetConfirm) root.runClaudeReset("use", root.claudeResetGrantId(modelData))
-                                                    else root.claudeResetConfirm = true
+                                                    var grantId = root.claudeResetGrantId(modelData)
+                                                    if (!root.claudeResetConfirm) {
+                                                        root.claudeResetConfirmGrantId = grantId
+                                                        root.claudeResetConfirm = grantId !== ""
+                                                    } else if (grantId !== "" && grantId === root.claudeResetConfirmGrantId) {
+                                                        root.runClaudeReset("use", grantId)
+                                                    } else {
+                                                        root.claudeResetConfirm = false
+                                                    }
                                                 }
                                             }
 
@@ -3324,16 +3342,18 @@ PluginComponent {
                                         Flow {
                                             width: parent.width
                                             spacing: Theme.spacingXS
-                                            visible: root.claudeResetStatus.state === "attempted"
+                                            visible: root.claudeResetStatus.state === "attempted" || root.claudeResetStateUnreadable()
 
                                             CompactAction {
                                                 text: claudeResetProcess.running && root._claudeResetAction === "retry" ? "Retrying reset..." : "Retry unconfirmed reset"
                                                 enabled: !claudeResetProcess.running && !usageProcess.running
+                                                visible: root.claudeResetStatus.state === "attempted"
                                                 onClicked: root.runClaudeReset("retry", "")
                                             }
 
                                             // Forget contacts nothing; it only drops the local record once the
-                                            // user has checked the outcome elsewhere.
+                                            // user has checked the outcome elsewhere. It also replaces a record
+                                            // the helper could not read.
                                             CompactAction {
                                                 text: root.claudeResetForgetConfirm ? "Confirm: forget attempt" : "Forget attempt"
                                                 enabled: !claudeResetProcess.running

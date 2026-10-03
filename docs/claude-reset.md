@@ -23,8 +23,11 @@ unconfirmed reset** action replaces the use button in both modes. The retry
 repeats the same request for the same grant, so it cannot spend a second reset;
 only `Limits reset` or `already used` settle it. If it keeps failing, check
 Settings → Usage on claude.ai and then use **Forget attempt** (two clicks); it
-drops only the local record. Only the provider decides whether a reset is
-eligible. A reset that can only be used at a limit is offered as-is; Claude
+drops only the local record. The same action replaces a saved record the helper
+cannot read, for example after a downgrade. The second click of **Use reset
+now** sends the grant the first click described; if Claude offers a different
+grant in between, the button simply asks again. Only the provider decides
+whether a reset is eligible. A reset that can only be used at a limit is offered as-is; Claude
 keeps it if you are not at one, and the confirmation says so beforehand.
 
 Nothing uses a reset automatically. There is no setting to arm, and refreshing

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -698,5 +699,56 @@ func TestClaudeOrganizationIDReadsConfig(t *testing.T) {
 	id, err := claudeOrganizationID()
 	if err != nil || id != "org-synthetic-1" {
 		t.Fatalf("id=%q err=%v", id, err)
+	}
+}
+
+func TestRunClaudeResetActionForgetRecoversUnreadableState(t *testing.T) {
+	dir := t.TempDir()
+	writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
+	var requests []claudeResetClaimRequest
+	deps, _ := testClaudeResetDeps(t, dir, func(request claudeResetClaimRequest) (claudeResetClaimResult, error) {
+		requests = append(requests, request)
+		return claudeResetClaimResult{Result: "reset"}, nil
+	})
+	if err := os.WriteFile(deps.StatePath, []byte(`{"version": 99, "state": "attempted"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, action := range []string{"status", "use", "retry"} {
+		status, err := runClaudeResetAction(action, "", deps)
+		if err == nil || status.StateKnown || status.State != "error" || !strings.Contains(status.Error, "claude-reset forget") {
+			t.Fatalf("%s on an unreadable record: %+v error=%v", action, status, err)
+		}
+	}
+	if len(requests) != 0 {
+		t.Fatalf("an unreadable record must block every request: %+v", requests)
+	}
+
+	status, err := runClaudeResetAction("forget", "", deps)
+	if err != nil || !status.StateKnown || status.State != "idle" || status.Error != "" {
+		t.Fatalf("forget: %+v error=%v", status, err)
+	}
+	status, err = runClaudeResetAction("status", "", deps)
+	if err != nil || !status.StateKnown || status.State != "idle" {
+		t.Fatalf("status after forget: %+v error=%v", status, err)
+	}
+}
+
+func TestSafeClaudeResetErrorDropsRequestURL(t *testing.T) {
+	wrapped := &url.Error{
+		Op:  "Post",
+		URL: "https://api.anthropic.com/api/organizations/org-secret-uuid/reset_rate_limits",
+		Err: errors.New("context deadline exceeded (Client.Timeout exceeded while awaiting headers)"),
+	}
+	message := safeClaudeResetError(wrapped)
+	if strings.Contains(message, "org-secret-uuid") || strings.Contains(message, "api.anthropic.com") {
+		t.Fatalf("message leaks the request URL: %q", message)
+	}
+	if !strings.Contains(message, "context deadline exceeded") {
+		t.Fatalf("message lost the cause: %q", message)
+	}
+	long := errors.New(strings.Repeat("x", 400))
+	if got := safeClaudeResetError(long); len(got) != 160 {
+		t.Fatalf("long message not bounded: %d", len(got))
 	}
 }

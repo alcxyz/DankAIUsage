@@ -80,7 +80,14 @@ assert component_text.count('"--refresh-interval", "" + root.refreshInterval') =
 # (ADR-0022); the widget never redeems one on its own.
 assert 'var command = ["dankaiusage", "claude-reset", action, "--refresh-interval", "" + root.refreshInterval]' in component_text
 assert 'if (action === "use" && grantId) command.push("--grant", grantId)' in component_text
-assert component_text.count('root.runClaudeReset("use", root.claudeResetGrantId(modelData))') == 1
+# The second click sends the grant the first click showed (saved in
+# claudeResetConfirmGrantId); a changed offer asks again instead of spending.
+assert component_text.count('root.runClaudeReset("use", grantId)') == 1
+assert 'root.claudeResetConfirmGrantId = grantId' in component_text
+assert 'root.claudeResetConfirm = grantId !== ""' in component_text
+assert '} else if (grantId !== "" && grantId === root.claudeResetConfirmGrantId) {' in component_text
+assert 'root.runClaudeReset("use", root.claudeResetGrantId(modelData))' not in component_text, 'the confirmed click never recomputes the grant'
+assert 'visible: root.claudeResetStatus.state === "attempted" || root.claudeResetStateUnreadable()' in component_text, 'forget recovers an unreadable record'
 assert component_text.count('onClicked: root.runClaudeReset("retry", "")') == 1, 'one retry action for an unconfirmed attempt'
 assert 'runClaudeReset("use", "")' not in component_text, 'the widget never sends an unqualified use'
 assert 'visible: root.claudeResetStatus.state === "attempted"' in component_text
@@ -89,8 +96,7 @@ assert 'if (root.claudeResetForgetConfirm) root.runClaudeReset("forget", "")' in
 assert 'running: root.claudeResetForgetConfirm' in component_text
 assert 'if (action === "use" || action === "retry") claudeResetConfirm = false' in component_text
 assert 'status.justUsed = status.requested === true' in component_text
-assert 'if (root.claudeResetConfirm) root.runClaudeReset("use"' in component_text
-assert 'else root.claudeResetConfirm = true' in component_text
+assert 'if (!root.claudeResetConfirm) {' in component_text
 assert 'running: root.claudeResetConfirm' in component_text
 assert 'runClaudeReset("use"' not in component_text.split('function runClaudeReset(action, grantId)')[0], 'no automatic Claude reset use before the explicit action'
 for forbidden in ('runClaudeReset("check"', 'runClaudeReset("arm"'):

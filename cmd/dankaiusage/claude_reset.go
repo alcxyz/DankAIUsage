@@ -227,11 +227,13 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 	requested := false
 	err := withStateFileLock(deps.StatePath, claudeResetLockTimeout, "Claude reset state", func() error {
 		loaded, err := loadClaudeResetState(deps.StatePath)
-		if err != nil {
-			return errors.New("saved Claude reset state is unreadable")
+		if err != nil && action != "forget" {
+			return errors.New("saved Claude reset state is unreadable; check Settings → Usage on claude.ai, then run `dankaiusage claude-reset forget` to discard it")
 		}
-		state = loaded
-		stateKnown = true
+		if err == nil {
+			state = loaded
+			stateKnown = true
+		}
 		switch action {
 		case "status":
 			return nil
@@ -244,12 +246,14 @@ func runClaudeResetAction(action, grantID string, deps claudeResetDeps) (claudeR
 			return nil
 		case "forget":
 			// Drops an unconfirmed attempt record without contacting Claude.
-			// Only for an account switch; the server keeps the real outcome.
+			// For an account switch or an unreadable record; the server keeps
+			// the real outcome.
 			state = defaultClaudeResetState()
 			state.Message = "Earlier reset attempt forgotten; check Settings → Usage on claude.ai for its outcome"
 			if err := saveClaudeResetState(deps.StatePath, state); err != nil {
 				return errors.New("could not save Claude reset state")
 			}
+			stateKnown = true
 			return nil
 		default:
 			actionErr = fmt.Errorf("unknown claude-reset action %q", action)
@@ -935,8 +939,13 @@ func parseClaudeResetClaimResponse(data []byte) (claudeResetClaimResult, error) 
 }
 
 // safeClaudeResetError keeps transport errors short and free of request
-// details before they reach the widget.
+// details before they reach the widget. A url.Error repeats the request URL,
+// which names the organization, so only its underlying cause is kept.
 func safeClaudeResetError(err error) string {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		err = urlErr.Err
+	}
 	message := err.Error()
 	if len(message) > 160 {
 		message = message[:160]
