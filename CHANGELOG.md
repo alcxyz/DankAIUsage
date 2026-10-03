@@ -6,7 +6,11 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-03
+
 - Fixed Claude quotas failing to refresh with HTTP 429 after 1.3.0: the quota poll identifies itself as Claude Code again, and the limit-reset check is a separate request under Claude Code's OAuth client identity at most every 30 minutes, backing off for an hour when rate limited. A failed reset check now shows its reason and never blanks the quota windows.
+
+For Nix release packaging, use `github:alcxyz/DankAIUsage/v1.3.1#release`. Manual release packaging is available from a clean `v1.3.1` checkout with `python3 scripts/package.py --release --output dist/release`. Install the packaged plugin directory together with its helper.
 
 ## [1.3.0] - 2026-10-03
 
