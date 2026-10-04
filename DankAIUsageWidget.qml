@@ -724,17 +724,18 @@ PluginComponent {
         return null
     }
 
-    // "5-hour and weekly", in the helper's wording; "" when not reported.
-    function claudeResetClearsText(grant) {
-        var names = []
-        var clears = grant && grant.clears ? grant.clears : []
-        for (var i = 0; i < clears.length; i++) {
-            if (clears[i] === "five_hour") names.push("5-hour")
-            else if (clears[i] === "seven_day") names.push("weekly")
-            else if (clears[i] === "seven_day_overage_included") continue
-            else if (clears[i]) names.push(("" + clears[i]).replace(/^seven_day_/, "").replace(/_/g, " "))
+    // "5-hour and weekly" taken from the helper's reset description, so the
+    // names match the rest of the UI; "" when the helper reported none.
+    function claudeResetClearsText(provider, grantId) {
+        var resets = providerResets(provider)
+        for (var i = 0; i < resets.length; i++) {
+            if (!resets[i] || resets[i].id !== grantId) continue
+            var parts = ("" + (resets[i].description || "")).split(" · ")
+            for (var j = 0; j < parts.length; j++) {
+                if (parts[j].indexOf("clears ") === 0) return parts[j].substring(7)
+            }
         }
-        return names.join(" and ")
+        return ""
     }
 
     // One sentence naming what the chosen grant clears; the only extra line
@@ -742,7 +743,7 @@ PluginComponent {
     function claudeResetConfirmText(provider) {
         var grantId = claudeResetConfirmGrantId || claudeResetGrantId(provider)
         var grant = claudeGrantInfo(provider, grantId)
-        var clears = claudeResetClearsText(grant)
+        var clears = claudeResetClearsText(provider, grantId)
         return "Refills your " + (clears !== "" ? clears + " limits" : "Claude limits") + " now; this cannot be undone."
                 + (claudeResetRequiresLimitNow(provider, grantId) ? "\nOnly works while you are at a limit; Claude keeps it otherwise." : "")
                 + (grant && grant.resetsLeft > 1 ? "\n" + grant.resetsLeft + " uses of this reset left." : "")

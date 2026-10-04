@@ -7,12 +7,12 @@ Code's `/limit-reset` command.
 
 ## In the dropdown
 
-When your account has a usable reset, the Claude card lists it like a Codex
-reset: its title, expiry and countdown, plus what it clears and whether it can
-be used before you hit a limit. In **Advanced**, a **Use reset now** action
-sits under it. The first click shows what will happen; a second click within
-fifteen seconds sends the request. **Keep it** cancels. Simple mode only notes
-that a reset is available.
+When your account has a usable reset, the Claude card in **Advanced** lists
+it like a Codex reset: its title, expiry and countdown, with a **Use reset
+now** action under it. The first click shows what will happen, naming the
+limits the reset clears, whether it only works at a limit, and the uses left
+when there is more than one; a second click within fifteen seconds sends the
+request. **Keep it** cancels. Simple mode does not mention resets.
 
 The outcome appears under the card. `Limits reset` means Claude confirmed it
 and the quotas refresh right away. Answers such as `not available`, a

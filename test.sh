@@ -631,12 +631,13 @@ confirmScope.claudeGrantInfo = bindQmlFunction("claudeGrantInfo", confirmScope);
 confirmScope.claudeResetClearsText = bindQmlFunction("claudeResetClearsText", confirmScope);
 confirmScope.claudeResetRequiresLimitNow = bindQmlFunction("claudeResetRequiresLimitNow", confirmScope);
 const confirmText = bindQmlFunction("claudeResetConfirmText", confirmScope);
-const grantProvider = (grant) => ({id: "claude", meta: {claudeReset: {eligible: true, nextGrantId: "grant-1", grants: [grant]}}, resets: [claudeReset]});
-const bothText = confirmText(grantProvider({id: "grant-1", clears: ["five_hour", "seven_day", "seven_day_overage_included"], resetsLeft: 1}));
+// The cleared limits come from the helper's own description text.
+const grantProvider = (grant, description) => ({id: "claude", meta: {claudeReset: {eligible: true, nextGrantId: "grant-1", grants: [grant]}}, resets: [{...claudeReset, description}]});
+const bothText = confirmText(grantProvider({id: "grant-1", resetsLeft: 1}, "1 left · clears 5-hour and weekly · usable any time"));
 equal(bothText.startsWith("Refills your 5-hour and weekly limits now"), true, "confirmation names the cleared limits: " + bothText);
 equal(bothText.includes("uses of this reset left"), false, "a single use adds no count");
-const fiveText = confirmText(grantProvider({id: "grant-1", clears: ["five_hour"], resetsLeft: 3, useRequiresLimit: true}));
-equal(fiveText.startsWith("Refills your 5-hour limits now"), true, "a five-hour-only grant says so: " + fiveText);
+const fiveText = confirmText(grantProvider({id: "grant-1", resetsLeft: 3, useRequiresLimit: true}, "3 left · clears 5-hour and Opus · use at a limit"));
+equal(fiveText.startsWith("Refills your 5-hour and Opus limits now"), true, "scoped names keep the helper's wording: " + fiveText);
 equal(fiveText.includes("Only works while you are at a limit"), true, "the at-limit condition is stated");
 equal(fiveText.includes("3 uses of this reset left"), true, "several uses are counted");
 equal(confirmText(claudeProvider).startsWith("Refills your Claude limits now"), true, "unknown scope falls back to a generic sentence");
