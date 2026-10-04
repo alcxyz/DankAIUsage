@@ -859,6 +859,16 @@ func TestFailedResetCheckStaysQuietWhileListingIsFresh(t *testing.T) {
 	if resets != nil || meta == nil || !strings.Contains(fmt.Sprint(meta["claudeResetCheckError"]), "429") {
 		t.Fatalf("a stale listing must surface the failed check: resets=%v meta=%v", resets, meta)
 	}
+	// A server-side sign-in rejection is news even beside a fresh listing.
+	cache.LastError = "Claude reset check auth failed (HTTP 403); run any Claude Code session to refresh sign-in"
+	cache.DiagnosticCategory, cache.DiagnosticHTTPStatus = "authentication", 403
+	if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
+		t.Fatal(err)
+	}
+	resets, meta = claudeResetsForSummary(fetchedAt.Add(30*time.Minute), 5*time.Minute)
+	if len(resets) != 1 || meta == nil || !strings.Contains(fmt.Sprint(meta["claudeResetCheckError"]), "403") {
+		t.Fatalf("a sign-in rejection must stay visible beside the listing: resets=%v meta=%v", resets, meta)
+	}
 }
 
 func TestSafeClaudeResetErrorDropsRequestURL(t *testing.T) {

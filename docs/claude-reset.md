@@ -60,7 +60,8 @@ itself never does. If Claude answers that the client or plan is not eligible,
 or rate-limits the check, the card shows no reset and `status` names the
 reason while the quotas keep refreshing. The Advanced warning for a failed
 check appears only when no listing from the last six hours is available; a
-single rate-limited check while a recent result is still shown stays quiet. The reset remains usable on
+rate-limited or unreachable check while a recent result is still shown stays
+quiet. A sign-in rejection by Claude is shown beside the listing right away. The reset remains usable on
 claude.ai. A new grant, or one spent elsewhere, can take up to 30 minutes to
 show.
 
