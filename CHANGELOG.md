@@ -6,6 +6,8 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+- The Advanced warning about a failed Claude limit-reset check now appears only when no listing from the last six hours is available; a single rate-limited check while a recent result is still shown stays quiet.
+
 - Trimmed the dropdown and settings page. The dropdown no longer repeats the refresh time per provider, shows token totals only in the overview row, and drops the static notes about local-only tokens and reset availability; notices appear for failures, unconfirmed attempts, sign-in problems, and the result of a prime you just ran, and Simple keeps a one-line "Claude prime is on" indication. Claude reset lines no longer carry description paragraphs; the confirmation is one sentence naming the limits the reset clears. Settings descriptions are one line each, the refresh interval says what it governs, Include cached tokens moved to Display, the legacy token history slider is gone (its saved value still applies), the Codex earned reset has its own group, and Automation and notifications starts collapsed.
 
 ## [1.3.1] - 2026-10-03

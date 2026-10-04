@@ -825,6 +825,42 @@ func TestRunClaudeResetActionForgetRecoversUnreadableState(t *testing.T) {
 	}
 }
 
+func TestFailedResetCheckStaysQuietWhileListingIsFresh(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	dir := filepath.Dir(claudeResetAvailabilityCachePath())
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fixture := writeClaudeResetUsageFixture(t, dir, claudeResetUsageFixture)
+	if err := os.Rename(fixture, claudeResetAvailabilityCachePath()); err != nil {
+		t.Fatal(err)
+	}
+	path := claudeResetAvailabilityCachePath()
+	cache, err := loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetchedAt := mustParseTime(t, cache.FetchedAt)
+	cache.LastError = "Claude reset check rate limited (HTTP 429)"
+	// A long backoff keeps both reads below from attempting a fetch.
+	cache.NextAttemptAt = fetchedAt.Add(24 * time.Hour).UTC().Format(time.RFC3339Nano)
+	if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
+		t.Fatal(err)
+	}
+	// Half an hour on, the listing is fresh: grants are served, no warning.
+	resets, meta := claudeResetsForSummary(fetchedAt.Add(30*time.Minute), 5*time.Minute)
+	if len(resets) != 1 || meta == nil || meta["claudeResetCheckError"] != nil {
+		t.Fatalf("a fresh listing must be served quietly: resets=%v meta=%v", resets, meta)
+	}
+	// Past the stale window the listing is gone and the reason is shown.
+	resets, meta = claudeResetsForSummary(fetchedAt.Add(claudeResetAvailabilityStaleTTL+time.Minute), 5*time.Minute)
+	if resets != nil || meta == nil || !strings.Contains(fmt.Sprint(meta["claudeResetCheckError"]), "429") {
+		t.Fatalf("a stale listing must surface the failed check: resets=%v meta=%v", resets, meta)
+	}
+}
+
 func TestSafeClaudeResetErrorDropsRequestURL(t *testing.T) {
 	// Through the real claim path: http.Client wraps a transport failure in a
 	// url.Error that repeats the organization URL.

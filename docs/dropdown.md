@@ -24,7 +24,8 @@ The header line shows when usage was last updated, whether it is stale, and
 (in Advanced) the next scheduled refresh; it is the only place that time is
 shown. Notices under a provider card appear when something needs you, or
 reports what you just did: a refresh or sign-in failure, stale data, an
-unconfirmed reset attempt, a failed limit-reset check, or the result of a
+unconfirmed reset attempt, a failed limit-reset check with no recent listing
+to fall back on, or the result of a
 Claude prime until the next refresh. Simple mode keeps a one-line "Claude
 prime is on" indication while that automation is enabled. Caveats that never
 change, such as Claude token totals covering local Claude Code history only,

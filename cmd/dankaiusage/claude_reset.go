@@ -593,13 +593,18 @@ func claudeResetMeta(availability claudeResetAvailability, now time.Time) map[st
 
 // claudeResetsForSummary refreshes the reset availability cache when its own
 // cadence allows and lists the grants it holds. A failed check is reported in
-// meta and never touches the quota cache.
+// meta only while no recent listing can be served: a 429 on one check with a
+// fresh body still in hand is a skipped refresh, not news. It never touches
+// the quota cache.
 func claudeResetsForSummary(now time.Time, interval time.Duration) ([]UsageReset, map[string]any) {
 	path := claudeResetAvailabilityCachePath()
 	refreshErr := refreshClaudeResetAvailability(path, now, interval)
 	resets, meta := claudeResetsFromAvailabilityCache(path, now, interval)
 	cache := loadClaudeOAuthUsageCache(path)
 	checkError := cache.LastError
+	if meta != nil {
+		checkError = ""
+	}
 	// Missing local credentials are not news: the quota poll reports them in
 	// its own way, and a statusline-only setup has no reset to check.
 	if cache.DiagnosticCategory == "authentication" && cache.DiagnosticHTTPStatus == 0 {
