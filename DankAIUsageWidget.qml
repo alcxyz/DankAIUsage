@@ -534,8 +534,9 @@ PluginComponent {
     // cache. Otherwise every reset check could arrive inside the cooldown and
     // never receive the fresh data required to authorize consumption.
     function refreshCycle() {
-        // A finished prime's result is this cycle's news only.
-        if (!isPrimingClaude && !claudePrimeProcess.running) claudePrimeText = ""
+        // A finished prime's result is this cycle's news only, except a failed
+        // automatic prime: its message explains why scheduling has stopped.
+        if (!isPrimingClaude && !claudePrimeProcess.running && !lastClaudeAutoPrimeFailed) claudePrimeText = ""
         // The saved Claude reset record (an unconfirmed attempt after a crash
         // or timeout) is local state; reading it never contacts a server.
         if (showClaude && !claudeResetProcess.running) runClaudeReset("status")
