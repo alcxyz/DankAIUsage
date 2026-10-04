@@ -209,6 +209,9 @@ PluginComponent {
             if (pluginService && pluginService.savePluginState)
                 pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeFailed", false)
             maybeAutoPrimeClaude()
+        } else if (wasEnabled && !enableClaudePrime) {
+            // Turning prime off settles its last result; nothing is scheduled.
+            claudePrimeText = ""
         }
     }
 
@@ -230,6 +233,9 @@ PluginComponent {
             tokenHistoryRange = migratedPeriodRange(periodDays)
         }
         lastClaudeAutoPrimeAt = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeAt", 0) || 0
+        // loadSettings() already ran: when prime is enabled it has cleared this
+        // flag, so a restart re-enables automatic priming and no paused-state
+        // explanation is needed here.
         lastClaudeAutoPrimeFailed = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeFailed", false) === true
         if (cached && cached.providers) applySummary(cached, false)
     }
@@ -534,6 +540,9 @@ PluginComponent {
     // cache. Otherwise every reset check could arrive inside the cooldown and
     // never receive the fresh data required to authorize consumption.
     function refreshCycle() {
+        // A finished prime's result is this cycle's news only, except a failed
+        // automatic prime: its message explains why scheduling has stopped.
+        if (!isPrimingClaude && !claudePrimeProcess.running && !lastClaudeAutoPrimeFailed) claudePrimeText = ""
         // The saved Claude reset record (an unconfirmed attempt after a crash
         // or timeout) is local state; reading it never contacts a server.
         if (showClaude && !claudeResetProcess.running) runClaudeReset("status")
@@ -704,20 +713,40 @@ PluginComponent {
         return message
     }
 
-    // Describes the grant the first click chose, not whatever is offered now.
-    function claudeResetConfirmText(provider) {
-        var grantId = claudeResetConfirmGrantId || claudeResetGrantId(provider)
+    // The grant as the helper reported it, for the limits it clears and the
+    // uses left; null when the provider meta does not carry it.
+    function claudeGrantInfo(provider, grantId) {
+        var meta = provider && provider.meta ? provider.meta.claudeReset : null
+        if (!meta || !meta.grants || !grantId) return null
+        for (var i = 0; i < meta.grants.length; i++) {
+            if (meta.grants[i] && meta.grants[i].id === grantId) return meta.grants[i]
+        }
+        return null
+    }
+
+    // "5-hour and weekly" taken from the helper's reset description, so the
+    // names match the rest of the UI; "" when the helper reported none.
+    function claudeResetClearsText(provider, grantId) {
         var resets = providerResets(provider)
-        var detail = ""
         for (var i = 0; i < resets.length; i++) {
-            if (resets[i] && resets[i].id === grantId) {
-                detail = resets[i].description || ""
-                break
+            if (!resets[i] || resets[i].id !== grantId) continue
+            var parts = ("" + (resets[i].description || "")).split(" · ")
+            for (var j = 0; j < parts.length; j++) {
+                if (parts[j].indexOf("clears ") === 0) return parts[j].substring(7)
             }
         }
-        return "Refills your Claude limits now; this cannot be undone. Your weekly reset day stays the same."
-                + (claudeResetRequiresLimitNow(provider, grantId) ? "\nThis reset can only be used while you are at a limit; Claude keeps it otherwise." : "")
-                + (detail !== "" ? "\n" + detail : "")
+        return ""
+    }
+
+    // One sentence naming what the chosen grant clears; the only extra line
+    // is the one that changes what the click does.
+    function claudeResetConfirmText(provider) {
+        var grantId = claudeResetConfirmGrantId || claudeResetGrantId(provider)
+        var grant = claudeGrantInfo(provider, grantId)
+        var clears = claudeResetClearsText(provider, grantId)
+        return "Refills your " + (clears !== "" ? clears + " limits" : "Claude limits") + " now; this cannot be undone."
+                + (claudeResetRequiresLimitNow(provider, grantId) ? "\nOnly works while you are at a limit; Claude keeps it otherwise." : "")
+                + (grant && grant.resetsLeft > 1 ? "\n" + grant.resetsLeft + " uses of this reset left." : "")
     }
 
     function primeClaude(automatic) {
@@ -1475,7 +1504,9 @@ PluginComponent {
                 message = root._claudePrimeError.trim()
             }
             if (message === "") message = exitCode === 0 ? "Claude account limits refreshed" : "Claude account refresh failed"
-            root.claudePrimeText = message
+            // A prime that finishes after the user turned prime off has no
+            // notice to leave behind.
+            root.claudePrimeText = root.enableClaudePrime ? message : ""
             root.isPrimingClaude = false
             root.lastClaudeAutoPrimeAt = Date.now()
             root.lastClaudeAutoPrimeFailed = exitCode !== 0 && root.claudePrimeAutomatic
@@ -1931,19 +1962,6 @@ PluginComponent {
         var left = at - resetClock
         return "Expires " + formatShortDateTime(reset.expiresAt) + " · "
                 + (left <= 0 ? "expired" : "in " + resetDuration(left)) + title
-    }
-
-    // Provider-supplied detail per reset: what it clears, whether it needs a
-    // limit. Titles are added only when several resets are listed.
-    function providerResetDescriptions(provider) {
-        var resets = providerResetsByExpiry(provider)
-        var out = []
-        for (var i = 0; i < resets.length; i++) {
-            var description = resets[i] && resets[i].description ? resets[i].description : ""
-            if (description === "") continue
-            out.push(resets.length > 1 && resets[i].title ? resets[i].title + " · " + description : description)
-        }
-        return out
     }
 
     function providerResetDetail(provider) {
@@ -2446,15 +2464,7 @@ PluginComponent {
             if (provider.meta.usageRefreshError) staleNote += ": " + provider.meta.usageRefreshError
             add(staleNote, "warning")
         }
-        if (advancedDropdown && provider.meta.usageCached === true) {
-            var cacheNote = "Cached usage"
-            var nextRefresh = formatShortDateTime(provider.meta.usageNextRefreshAt)
-            if (nextRefresh !== "") cacheNote += " · next refresh " + nextRefresh
-            add(cacheNote, "info")
-        }
         if (provider.id === "claude" && claudePrimeText !== "") add(claudePrimeText, "info")
-        if (advancedDropdown && provider.id === "claude" && provider.meta.tokenDataIncludesWeb === false)
-            add("Claude tokens are local Claude Code only, not web", "info")
         if (provider.id === "claude" && provider.meta.sessionFallbackSource)
             add("Session timer from Claude prime; account limits unavailable", "warning")
         // The limit-reset check is separate from the quota poll; its failure
@@ -3149,12 +3159,6 @@ PluginComponent {
                                         }
                                     }
 
-                                    TokenHistoryResult {
-                                        width: parent.width
-                                        visible: root.advancedDropdown
-                                        value: root.providerTokenBreakdown(modelData)
-                                    }
-
                                     Item {
                                         width: parent.width
                                         height: 20
@@ -3217,26 +3221,6 @@ PluginComponent {
                                                 color: Theme.surfaceVariantText
                                                 elide: Text.ElideRight
                                                 maximumLineCount: 1
-                                            }
-                                        }
-                                    }
-
-                                    Column {
-                                        id: resetDescriptionList
-                                        width: parent.width
-                                        visible: root.advancedDropdown && modelData.id === "claude"
-                                                && root.providerResetDescriptions(modelData).length > 0
-
-                                        Repeater {
-                                            model: root.advancedDropdown && modelData.id === "claude" ? root.providerResetDescriptions(modelData) : []
-
-                                            StyledText {
-                                                x: resetsIcon.width + Theme.spacingXS
-                                                width: parent.width - x
-                                                text: modelData
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                color: Theme.surfaceVariantText
-                                                wrapMode: Text.WordWrap
                                             }
                                         }
                                     }
@@ -3397,14 +3381,7 @@ PluginComponent {
                                     NoticeRow {
                                         width: parent.width
                                         level: "info"
-                                        text: "Claude limit reset available · use it in Advanced"
-                                        visible: !root.advancedDropdown && modelData.id === "claude" && root.hasSpendableClaudeReset(modelData)
-                                    }
-
-                                    NoticeRow {
-                                        width: parent.width
-                                        level: "info"
-                                        text: "Claude session scheduling is enabled · manage in Advanced or settings"
+                                        text: "Claude prime is on"
                                         visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime
                                     }
 
@@ -3975,38 +3952,6 @@ PluginComponent {
                     onClicked: root.cancelHistoryExplanation()
                 }
             }
-        }
-    }
-
-    component TokenHistoryResult: Item {
-        id: tokenResult
-        property string value: ""
-        height: 48
-        Accessible.role: Accessible.StaticText
-        Accessible.name: root.tokenHistoryLabel() + ": " + value
-
-        StyledText {
-            text: root.tokenHistoryLabel()
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.topMargin: 4
-            font.pixelSize: Theme.fontSizeSmall
-            color: Theme.surfaceVariantText
-            elide: Text.ElideRight
-        }
-        StyledText {
-            id: resultValue
-            text: tokenResult.value
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: 4
-            font.pixelSize: Theme.fontSizeSmall
-            font.weight: Font.Medium
-            color: Theme.surfaceText
-            elide: Text.ElideRight
-            horizontalAlignment: Text.AlignLeft
         }
     }
 

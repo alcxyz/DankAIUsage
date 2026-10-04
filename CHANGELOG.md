@@ -6,6 +6,8 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+- Trimmed the dropdown and settings page. The dropdown no longer repeats the refresh time per provider, shows token totals only in the overview row, and drops the static notes about local-only tokens and reset availability; notices appear for failures, unconfirmed attempts, sign-in problems, and the result of a prime you just ran, and Simple keeps a one-line "Claude prime is on" indication. Claude reset lines no longer carry description paragraphs; the confirmation is one sentence naming the limits the reset clears. Settings descriptions are one line each, the refresh interval says what it governs, Include cached tokens moved to Display, the legacy token history slider is gone (its saved value still applies), the Codex earned reset has its own group, and Automation and notifications starts collapsed.
+
 ## [1.3.1] - 2026-10-03
 
 - Fixed Claude quotas failing to refresh with HTTP 429 after 1.3.0: the quota poll identifies itself as Claude Code again, and the limit-reset check is a separate request under Claude Code's OAuth client identity at most every 30 minutes, backing off for an hour when rate limited. A failed reset check shows its reason in Advanced and in `claude-reset status`, and never blanks the quota windows.
