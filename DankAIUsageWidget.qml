@@ -233,11 +233,10 @@ PluginComponent {
             tokenHistoryRange = migratedPeriodRange(periodDays)
         }
         lastClaudeAutoPrimeAt = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeAt", 0) || 0
+        // loadSettings() already ran: when prime is enabled it has cleared this
+        // flag, so a restart re-enables automatic priming and no paused-state
+        // explanation is needed here.
         lastClaudeAutoPrimeFailed = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeFailed", false) === true
-        // The failure message itself is not saved; restore the reason the
-        // scheduling is paused so Simple does not just say prime is on.
-        if (lastClaudeAutoPrimeFailed && enableClaudePrime && claudePrimeText === "")
-            claudePrimeText = "Automatic Claude prime failed; it resumes when a session starts or prime is re-enabled"
         if (cached && cached.providers) applySummary(cached, false)
     }
 
@@ -1504,7 +1503,9 @@ PluginComponent {
                 message = root._claudePrimeError.trim()
             }
             if (message === "") message = exitCode === 0 ? "Claude account limits refreshed" : "Claude account refresh failed"
-            root.claudePrimeText = message
+            // A prime that finishes after the user turned prime off has no
+            // notice to leave behind.
+            root.claudePrimeText = root.enableClaudePrime ? message : ""
             root.isPrimingClaude = false
             root.lastClaudeAutoPrimeAt = Date.now()
             root.lastClaudeAutoPrimeFailed = exitCode !== 0 && root.claudePrimeAutomatic
