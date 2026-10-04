@@ -209,6 +209,9 @@ PluginComponent {
             if (pluginService && pluginService.savePluginState)
                 pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeFailed", false)
             maybeAutoPrimeClaude()
+        } else if (wasEnabled && !enableClaudePrime) {
+            // Turning prime off settles its last result; nothing is scheduled.
+            claudePrimeText = ""
         }
     }
 
@@ -231,6 +234,10 @@ PluginComponent {
         }
         lastClaudeAutoPrimeAt = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeAt", 0) || 0
         lastClaudeAutoPrimeFailed = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeFailed", false) === true
+        // The failure message itself is not saved; restore the reason the
+        // scheduling is paused so Simple does not just say prime is on.
+        if (lastClaudeAutoPrimeFailed && enableClaudePrime && claudePrimeText === "")
+            claudePrimeText = "Automatic Claude prime failed; it resumes when a session starts or prime is re-enabled"
         if (cached && cached.providers) applySummary(cached, false)
     }
 
