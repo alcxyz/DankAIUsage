@@ -146,12 +146,7 @@ assert 'return allowanceLabel(bucket.allowance, false)' in component_text
 assert 'return allowanceLabel(bucket.allowance)' in component_text
 assert 'component TokenHistoryRow: StyledRect' in component_text
 assert component_text.count('TokenHistoryRow {') == 1, 'only the overview owns a range selector'
-assert component_text.count('TokenHistoryResult {') == 1, 'provider repeater uses read-only results'
-result_component = component_text.split('component TokenHistoryResult: Item {', 1)[1].split('component TokenHistoryRow:', 1)[0]
-assert 'root.tokenHistoryLabel()' in result_component
-assert 'Accessible.StaticText' in result_component
-for forbidden in ('MouseArea', 'onClicked', 'selectorOpen', 'selectTokenHistoryRange'):
-    assert forbidden not in result_component, 'provider token results must not be interactive'
+assert 'TokenHistoryResult' not in component_text, 'token totals are shown once, in the overview row'
 assert 'property string tokenHistoryRange: "7d"' in component_text
 for token_range in ('5h', '7d', '30d', '90d', 'tracked'):
     assert f'{{ key: "{token_range}"' in component_text
@@ -208,11 +203,11 @@ assert 'text: "Default 5 min"' in settings_text
 assert 'onClicked: refreshIntervalSetting.setMinutes(5)' in settings_text
 assert 'Accessible.onPressAction: if (enabled) refreshIntervalSetting.setMinutes(5)' in settings_text
 assert 'root.saveValue("refreshInterval", seconds)' in settings_text
-assert 'long intervals can delay detection or miss a brief expiry window' in settings_text
+assert 'Quotas only' in settings_text, 'the interval description says what it governs'
 assert 'provider.meta.usageRefreshPending === true' in component_text
 assert 'provider.meta.usageStale === true || provider.meta.usageDataStale === true' in component_text
-assert 'advancedDropdown && provider.meta.usageCached === true' in component_text
-assert 'formatShortDateTime(provider.meta.usageNextRefreshAt)' in component_text
+assert 'Cached usage' not in component_text, 'the header already shows the refresh time'
+assert 'not web' not in component_text, 'static caveats live in the docs, not the dropdown'
 assert 'provider requests respect the selected interval' in component_text
 
 schema = plugin["settings_schema"]
@@ -303,9 +298,7 @@ for expected in (
     'visible: modelData.id === "codex" && root.resetControlsVisible(modelData)',
     'visible: modelData.id === "claude" && root.claudeResetControlsVisible(modelData)',
     'visible: root.advancedDropdown && root.hasSpendableClaudeReset(modelData)',
-    'visible: !root.advancedDropdown && modelData.id === "claude" && root.hasSpendableClaudeReset(modelData)',
     'visible: (root.advancedDropdown && (root.showCodex || root.showClaude))',
-    'visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime',
 ):
     assert expected in component, f"missing dropdown visibility contract: {expected}"
 assert component.count("visible: root.advancedDropdown\n") >= 3

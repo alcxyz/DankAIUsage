@@ -18,15 +18,15 @@ header; both labels are visible and the active one is highlighted.
 New installations start in Simple; existing installations with a cached usage
 summary retain Advanced on upgrade. Either choice leaves the top-bar layout,
 tracking, and automation settings unchanged. Armed Codex resets remain visible
-and cancellable in Simple, as do reset errors or unknown outcomes. Enabled
-Claude session scheduling is also indicated there.
+and cancellable in Simple, as do reset errors or unknown outcomes.
 
 The header line shows when usage was last updated, whether it is stale, and
-(in Advanced) the next scheduled refresh. Failures and prompts that need a
-decision appear above the provider cards. Routine information such as cached
-usage or local-history caveats uses neutral styling; sign-in or refresh
-failures use warning and error colors. The dropdown scrolls when it would
-otherwise exceed the screen.
+(in Advanced) the next scheduled refresh; it is the only place that time is
+shown. Notices under a provider card appear only when something needs you:
+a refresh or sign-in failure, stale data, an unconfirmed reset attempt, or a
+failed limit-reset check. Caveats that never change, such as Claude token
+totals covering local Claude Code history only, live in this guide instead.
+The dropdown scrolls when it would otherwise exceed the screen.
 
 ## Quota bars
 
@@ -82,10 +82,11 @@ unreported expiries are labelled as such.
 ### Available Claude resets
 
 Claude limit resets granted to your plan appear under the Claude card the same
-way, with the title, expiry and countdown, plus what the reset clears and
-whether it needs a limit. Advanced adds a **Use reset now** action that asks
-for a second click before sending the request. See
-[Claude limit resets](claude-reset.md).
+way, as one line with the title, expiry and countdown. Advanced adds a
+**Use reset now** action that asks for a second click before sending the
+request; the confirmation is one sentence, plus a note when the reset only
+works at a limit. What a reset clears is listed by `dankaiusage claude-reset
+status`. See [Claude limit resets](claude-reset.md).
 
 ### Why does Spark have two bars?
 
@@ -113,9 +114,10 @@ selection is remembered and does not make another provider request. The row
 supports keyboard activation and shows unavailable or partial collection
 explicitly.
 
-In Advanced mode, the token-history selector above the provider cards controls
-one shared range. The Codex and Claude rows show read-only results for that
-range, including its label; they do not have separate selectors.
+In Advanced mode, the token-history row above the provider cards is the only
+place token totals are shown; it holds the shared range selector and the
+combined Input / Cached / Output totals. Per-provider token counts are
+available from `dankaiusage summary`.
 
 Claude token totals are local Claude Code history only; usage from claude.ai,
 mobile, or other online surfaces is not written to those transcripts.

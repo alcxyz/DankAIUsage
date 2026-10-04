@@ -221,7 +221,7 @@ test("armed Codex reset stays discoverable and the collapsed group holds only co
     assert.equal(collapsed.length, 1, "exactly one group starts collapsed");
     assert.match(qml.slice(collapsed[0].start, collapsed[0].end), /collapsible: true/);
     const collapsedKeys = settingControls.filter(c => c.chain.includes(collapsed[0])).map(c => c.key).sort();
-    assert.deepEqual(collapsedKeys, ["includeCachedTokens", "periodDays"]);
+    assert.deepEqual(collapsedKeys, ["enableClaudePrime", "publicResetAnnouncements", "systemNotifications"]);
 });
 
 test("test.sh's refresh migration extraction keeps finding the refresh-interval loadValue first", () => {

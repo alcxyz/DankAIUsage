@@ -11,6 +11,8 @@ collapsing a group never changes a saved value.
 - **Show used allowance:** percentages and bar fill show what is used instead
   of what is left, in the bar and the dropdown. The dropdown's Left / Used
   switch changes the same setting.
+- **Include cached tokens:** controls combined totals; the Input / Cached /
+  Output split is always shown.
 
 ## Top bar
 
@@ -74,20 +76,29 @@ remain visible in the dropdown.
 ## Collection
 
 - **Usage refresh interval:** three to sixty minutes, five-minute default,
-  with a reset-to-default action. See
-  [Refresh interval and cooldown](data-sources.md#refresh-interval-and-cooldown)
+  with a reset-to-default action. It governs quota polling only; Claude limit
+  resets are checked separately, about every 30 minutes, because Claude
+  rate-limits that check ([ADR-0023](adr/ADR-0023-separate-claude-reset-availability-check.md)).
+  See [Refresh interval and cooldown](data-sources.md#refresh-interval-and-cooldown)
   for how the shared cooldown behaves.
 - **Refresh when the dropdown opens:** off by default. Opening the dropdown
   runs the same refresh as its Refresh button, at most every 30 seconds. The
   shared cooldown still applies, so inside the refresh interval this reloads
-  cached quotas and local token history without contacting providers.
+  cached quotas and local token history without contacting providers, and it
+  never triggers a reset check.
+
+## Codex earned reset
+
+- **Auto-use one reset:** off by default; uses one eligible earned reset at
+  99% general Codex usage or shortly before it expires, then turns itself
+  off. DMS must be running. The armed state, its expiry, and a cancel action
+  are always shown here and in the dropdown. See
+  [ADR-0010](adr/ADR-0010-one-shot-codex-reset.md).
 
 ## Automation and notifications
 
-- **Codex earned reset (Auto-use one reset):** off by default; uses one
-  eligible earned reset, then turns itself off. The armed state, its expiry,
-  and a cancel action are always shown here and in the dropdown. See
-  [ADR-0010](adr/ADR-0010-one-shot-codex-reset.md).
+Collapsed by default; expand the heading to show it.
+
 - **Enable Claude prime:** off by default; starts session windows with a tiny
   request that consumes usage. See [Claude prime](data-sources.md#claude-prime).
 - **Public reset announcements (Alpha):** off by default; reads a third-party
@@ -97,15 +108,9 @@ remain visible in the dropdown.
   for new reset history changes and new public reset announcements. See
   [Notifications](reset-history.md#notifications).
 
-## Token history and compatibility
-
-Collapsed by default; expand the heading to show it.
-
-- **Include cached tokens:** controls combined totals; the Input / Cached /
-  Output split is always shown.
-- **Legacy token history (days):** kept for older cached summaries. The
-  configured range stays available in the dropdown's range selector when it
-  differs from the presets.
+The legacy token history period (`periodDays`) no longer has a control; a
+previously saved value still appears in the dropdown's range selector when it
+differs from the presets.
 
 ## Reset history filters
 

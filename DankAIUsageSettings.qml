@@ -264,26 +264,33 @@ PluginSettings {
 
     SettingsGroup {
         title: "Display"
-        summary: "Codex limits come from its local app server. Claude uses its existing sign-in, with statusline data as a fallback. Left / Used and Simple / Advanced also switch from the dropdown."
+        summary: "Left / Used and Simple / Advanced also switch from the dropdown."
 
         ToggleSetting {
             settingKey: "showCodex"
             label: "Show Codex"
-            description: "Subscription limits and local token history from Codex"
+            description: "Codex limits and local token history"
             defaultValue: true
         }
 
         ToggleSetting {
             settingKey: "showClaude"
             label: "Show Claude"
-            description: "Cached Claude Code subscription limits and local token history"
+            description: "Claude limits and local token history"
             defaultValue: true
         }
 
         ToggleSetting {
             settingKey: "showUsed"
             label: "Show used allowance"
-            description: "Percentages and bar fill show what is used instead of what is left, in the bar and the dropdown"
+            description: "Show what is used instead of what is left"
+            defaultValue: false
+        }
+
+        ToggleSetting {
+            settingKey: "includeCachedTokens"
+            label: "Include cached tokens"
+            description: "Count cached tokens in combined token totals"
             defaultValue: false
         }
     }
@@ -295,21 +302,21 @@ PluginSettings {
         ToggleSetting {
             settingKey: "barShowProviderLogos"
             label: "Provider logos"
-            description: "Show the OpenAI and Claude logos beside their quotas. When off, provider names are shown instead."
+            description: "Logos beside each provider's quotas; names when off"
             defaultValue: true
         }
 
         ToggleSetting {
             settingKey: "brandLogoColors"
             label: "Brand-colored logos"
-            description: "Claude in orange and OpenAI in white (black on light themes) instead of the theme accent, in the bar and the dropdown"
+            description: "Brand colors instead of the theme accent"
             defaultValue: false
         }
 
         ToggleSetting {
             settingKey: "barShowPluginIcon"
             label: "Plugin icon"
-            description: "Show the generic monitoring icon at the start of the pill"
+            description: "Generic monitoring icon at the start of the pill"
             defaultValue: false
         }
 
@@ -318,14 +325,14 @@ PluginSettings {
 
             settingKey: "barQuotaBars"
             label: "Quota bars instead of text"
-            description: "Small stacked bars per provider (5-hour on top, then weekly and model limits) instead of percentages. Credits stay in the dropdown and Compact pill does not apply while this is on. Options appear below."
+            description: "Small stacked bars per provider instead of percentages"
             defaultValue: false
         }
 
         ToggleSetting {
             settingKey: "compactPill"
             label: "Compact pill"
-            description: "Show only the most constrained selected quota for each visible provider"
+            description: "One quota per provider: the most constrained"
             defaultValue: false
             visible: !barQuotaBarsToggle.value
         }
@@ -348,14 +355,14 @@ PluginSettings {
             ToggleSetting {
                 settingKey: "barUsageColors"
                 label: "Color bars by usage"
-                description: "Green through yellow and orange to dark red as usage approaches 100%, instead of the theme accent with warning and error colors when low"
+                description: "Green to dark red as usage approaches 100%"
                 defaultValue: false
             }
 
             SelectionSetting {
                 settingKey: "barLabelLeft"
                 label: "Left label"
-                description: "Text left of each bar. Reset time counts down to the reset (elapsed window time with Used); percent follows Left / Used."
+                description: "Text left of each bar"
                 options: root.barLabelOptions
                 defaultValue: "none"
             }
@@ -371,7 +378,7 @@ PluginSettings {
             ToggleSetting {
                 settingKey: "barPaceMarker"
                 label: "Pace marker"
-                description: "Tick at the even-pace point for the time passed in each window. With Left, fill short of the tick means you are ahead of pace; with Used, fill beyond it."
+                description: "Tick where the fill would be at an even pace"
                 defaultValue: false
             }
         }
@@ -384,14 +391,14 @@ PluginSettings {
         ToggleSetting {
             settingKey: "barShowClaudeSession"
             label: "Claude 5-hour session"
-            description: "Include Claude's current five-hour window"
+            description: "Claude's current five-hour window"
             defaultValue: true
         }
 
         ToggleSetting {
             settingKey: "barShowClaudeWeekly"
             label: "New Claude weekly limits by default"
-            description: "Default for reported weekly limits without an individual choice. Individual choices below take precedence."
+            description: "Default for weekly limits without a choice below"
             defaultValue: true
         }
 
@@ -459,14 +466,14 @@ PluginSettings {
         ToggleSetting {
             settingKey: "barShowClaudeCredits"
             label: "Claude extra-use credits"
-            description: "Include Claude's paid extra-usage credit balance in the text pill. Quota-bar mode keeps credits in the dropdown."
+            description: "Credit balance in the text pill"
             defaultValue: false
         }
 
         ToggleSetting {
             settingKey: "barShowCodexCredits"
             label: "Codex credits"
-            description: "Include Codex's prepaid credit balance in the text pill when reported. Quota-bar mode keeps credits in the dropdown."
+            description: "Credit balance in the text pill"
             defaultValue: false
         }
     }
@@ -514,7 +521,7 @@ PluginSettings {
             }
 
             StyledText {
-                text: "Less frequent updates reduce background activity and local history scans. Automatic reset checks use the same interval, so long intervals can delay detection or miss a brief expiry window."
+                text: "Quotas only. Limit resets are checked separately, about every 30 minutes."
                 width: parent.width
                 wrapMode: Text.WordWrap
                 font.pixelSize: Theme.fontSizeSmall
@@ -620,14 +627,13 @@ PluginSettings {
         ToggleSetting {
             settingKey: "refreshOnOpen"
             label: "Refresh when the dropdown opens"
-            description: "Runs the same refresh as the Refresh button, at most every 30 seconds. Providers are still only contacted once the refresh interval has passed; until then cached quotas and local token history are reloaded."
+            description: "Same as the Refresh button; never contacts providers inside the refresh interval"
             defaultValue: false
         }
     }
 
     SettingsGroup {
-        title: "Automation and notifications"
-        summary: "Everything here is off by default except desktop notifications. An armed Codex reset always shows its state here and in the dropdown."
+        title: "Codex earned reset"
 
         Column {
             id: codexResetSetting
@@ -674,7 +680,7 @@ PluginSettings {
 
             StyledText {
                 width: parent.width
-                text: "Uses one eligible earned reset at 99% general Codex usage or shortly before the reset expires, then turns itself off. DMS must be running. If no eligible reset is available, the one-shot stays off. Also available from the Advanced dropdown when a reset is available."
+                text: "Uses one eligible reset at 99% usage or just before it expires, then turns itself off."
                 textFormat: Text.PlainText
                 wrapMode: Text.WordWrap
                 font.pixelSize: Theme.fontSizeSmall
@@ -692,49 +698,32 @@ PluginSettings {
                         : root.codexResetStatus.armed === true ? Theme.warning : Theme.surfaceVariantText
             }
         }
+    }
+
+    SettingsGroup {
+        title: "Automation and notifications"
+        collapsible: true
+        expanded: false
 
         ToggleSetting {
             settingKey: "enableClaudePrime"
             label: "Enable Claude prime"
-            description: "Automatically run a tiny Claude request when no active session timer is known. This consumes usage."
+            description: "Start a new session window with a tiny request; consumes usage"
             defaultValue: false
         }
 
         ToggleSetting {
             settingKey: "publicResetAnnouncements"
             label: "Public reset announcements (Alpha)"
-            description: "Experimental third-party reports, advance alerts, and reset matching via TokenResets. May be incomplete or incorrect; do not rely on them to spend quota or redeem resets. The feed host sees your IP address and ordinary request metadata; no account data is sent. Checks every 15 minutes. Announcements are not guarantees for your account."
+            description: "Experimental third-party reports via TokenResets; not guarantees for your account. The feed host sees your IP address; no account data is sent."
             defaultValue: false
         }
 
         ToggleSetting {
             settingKey: "systemNotifications"
             label: "Desktop notifications"
-            description: "Send a desktop notification for new reset history changes and, when enabled, new public reset announcements. Items already viewed in the dropdown are not announced."
+            description: "Notify on new reset history changes and announcements"
             defaultValue: true
-        }
-    }
-
-    SettingsGroup {
-        title: "Token history and compatibility"
-        summary: "Cached-token totals and the legacy history period. Choose 5h, 7d, 30d, 90d, or Tracked in the dropdown."
-        collapsible: true
-        expanded: false
-
-        ToggleSetting {
-            settingKey: "includeCachedTokens"
-            label: "Include cached tokens"
-            description: "Include cached tokens in combined totals. The Input / Cached / Output breakdown always shows cached tokens separately."
-            defaultValue: false
-        }
-
-        SliderSetting {
-            settingKey: "periodDays"
-            label: "Legacy token history (days)"
-            description: "Kept for compatibility with older cached summaries. The configured range stays available in the dropdown's range selector when it differs from the presets."
-            minimum: 1
-            maximum: 90
-            defaultValue: 7
         }
     }
 }
