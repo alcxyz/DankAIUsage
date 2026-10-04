@@ -203,7 +203,7 @@ assert 'text: "Default 5 min"' in settings_text
 assert 'onClicked: refreshIntervalSetting.setMinutes(5)' in settings_text
 assert 'Accessible.onPressAction: if (enabled) refreshIntervalSetting.setMinutes(5)' in settings_text
 assert 'root.saveValue("refreshInterval", seconds)' in settings_text
-assert 'Quotas only' in settings_text, 'the interval description says what it governs'
+assert 'long intervals can miss a brief expiry window' in settings_text, 'the interval description says what it governs'
 assert 'provider.meta.usageRefreshPending === true' in component_text
 assert 'provider.meta.usageStale === true || provider.meta.usageDataStale === true' in component_text
 assert 'Cached usage' not in component_text, 'the header already shows the refresh time'
@@ -299,6 +299,7 @@ for expected in (
     'visible: modelData.id === "claude" && root.claudeResetControlsVisible(modelData)',
     'visible: root.advancedDropdown && root.hasSpendableClaudeReset(modelData)',
     'visible: (root.advancedDropdown && (root.showCodex || root.showClaude))',
+    'visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime',
 ):
     assert expected in component, f"missing dropdown visibility contract: {expected}"
 assert component.count("visible: root.advancedDropdown\n") >= 3
@@ -622,6 +623,23 @@ equal(failedScope({stateKnown: true, state: "used", justUsed: true, lastAttemptA
 equal(claudeVisible(false, {stateKnown: true, state: "used", justUsed: true}), true, "this session's result stays visible");
 const grantScope = {providerResets: bindQmlFunction("providerResets", {}), resetClock, Date};
 const grantId = bindQmlFunction("claudeResetGrantId", grantScope);
+// The confirmation names what the chosen grant clears (ADR-0022), never a bare "limits".
+const confirmScope = {claudeResetConfirmGrantId: "", resetClock, Date, isFinite};
+confirmScope.providerResets = bindQmlFunction("providerResets", confirmScope);
+confirmScope.claudeResetGrantId = bindQmlFunction("claudeResetGrantId", confirmScope);
+confirmScope.claudeGrantInfo = bindQmlFunction("claudeGrantInfo", confirmScope);
+confirmScope.claudeResetClearsText = bindQmlFunction("claudeResetClearsText", confirmScope);
+confirmScope.claudeResetRequiresLimitNow = bindQmlFunction("claudeResetRequiresLimitNow", confirmScope);
+const confirmText = bindQmlFunction("claudeResetConfirmText", confirmScope);
+const grantProvider = (grant) => ({id: "claude", meta: {claudeReset: {eligible: true, nextGrantId: "grant-1", grants: [grant]}}, resets: [claudeReset]});
+const bothText = confirmText(grantProvider({id: "grant-1", clears: ["five_hour", "seven_day", "seven_day_overage_included"], resetsLeft: 1}));
+equal(bothText.startsWith("Refills your 5-hour and weekly limits now"), true, "confirmation names the cleared limits: " + bothText);
+equal(bothText.includes("uses of this reset left"), false, "a single use adds no count");
+const fiveText = confirmText(grantProvider({id: "grant-1", clears: ["five_hour"], resetsLeft: 3, useRequiresLimit: true}));
+equal(fiveText.startsWith("Refills your 5-hour limits now"), true, "a five-hour-only grant says so: " + fiveText);
+equal(fiveText.includes("Only works while you are at a limit"), true, "the at-limit condition is stated");
+equal(fiveText.includes("3 uses of this reset left"), true, "several uses are counted");
+equal(confirmText(claudeProvider).startsWith("Refills your Claude limits now"), true, "unknown scope falls back to a generic sentence");
 equal(grantId(claudeProvider), "grant-1", "grant id prefers the offered grant");
 equal(grantId({id: "claude", meta: {claudeReset: {}}, resets: [claudeReset]}), "grant-1", "grant id falls back to the listed reset");
 equal(grantId({id: "claude", meta: {}, resets: [{...claudeReset, resetType: "codexRateLimits"}]}), "", "no Claude grant yields no id");

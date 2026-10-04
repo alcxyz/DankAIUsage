@@ -6,7 +6,7 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
-- Trimmed the dropdown and settings page. The dropdown no longer repeats the refresh time per provider, shows token totals only in the overview row, and drops static notes about local-only tokens, Claude prime, and reset availability; notices now appear only for failures, unconfirmed attempts, and sign-in problems. Claude reset lines no longer carry description paragraphs, and the confirmation is one sentence. Settings descriptions are one line each, the refresh interval says it governs quotas only, Include cached tokens moved to Display, the legacy token history slider is gone (its saved value still applies), the Codex earned reset has its own group, and Automation and notifications starts collapsed.
+- Trimmed the dropdown and settings page. The dropdown no longer repeats the refresh time per provider, shows token totals only in the overview row, and drops the static notes about local-only tokens and reset availability; notices appear for failures, unconfirmed attempts, sign-in problems, and the result of a prime you just ran, and Simple keeps a one-line "Claude prime is on" indication. Claude reset lines no longer carry description paragraphs; the confirmation is one sentence naming the limits the reset clears. Settings descriptions are one line each, the refresh interval says what it governs, Include cached tokens moved to Display, the legacy token history slider is gone (its saved value still applies), the Codex earned reset has its own group, and Automation and notifications starts collapsed.
 
 ## [1.3.1] - 2026-10-03
 

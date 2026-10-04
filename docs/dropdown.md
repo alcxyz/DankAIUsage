@@ -22,10 +22,13 @@ and cancellable in Simple, as do reset errors or unknown outcomes.
 
 The header line shows when usage was last updated, whether it is stale, and
 (in Advanced) the next scheduled refresh; it is the only place that time is
-shown. Notices under a provider card appear only when something needs you:
-a refresh or sign-in failure, stale data, an unconfirmed reset attempt, or a
-failed limit-reset check. Caveats that never change, such as Claude token
-totals covering local Claude Code history only, live in this guide instead.
+shown. Notices under a provider card appear when something needs you, or
+reports what you just did: a refresh or sign-in failure, stale data, an
+unconfirmed reset attempt, a failed limit-reset check, or the result of a
+Claude prime until the next refresh. Simple mode keeps a one-line "Claude
+prime is on" indication while that automation is enabled. Caveats that never
+change, such as Claude token totals covering local Claude Code history only,
+live in this guide instead.
 The dropdown scrolls when it would otherwise exceed the screen.
 
 ## Quota bars
@@ -84,9 +87,9 @@ unreported expiries are labelled as such.
 Claude limit resets granted to your plan appear under the Claude card the same
 way, as one line with the title, expiry and countdown. Advanced adds a
 **Use reset now** action that asks for a second click before sending the
-request; the confirmation is one sentence, plus a note when the reset only
-works at a limit. What a reset clears is listed by `dankaiusage claude-reset
-status`. See [Claude limit resets](claude-reset.md).
+request; the confirmation names the limits the reset clears, adds a note when
+it only works at a limit, and the number of uses left when there is more than
+one. See [Claude limit resets](claude-reset.md).
 
 ### Why does Spark have two bars?
 

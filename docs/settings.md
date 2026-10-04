@@ -76,16 +76,18 @@ remain visible in the dropdown.
 ## Collection
 
 - **Usage refresh interval:** three to sixty minutes, five-minute default,
-  with a reset-to-default action. It governs quota polling only; Claude limit
-  resets are checked separately, about every 30 minutes, because Claude
+  with a reset-to-default action. It paces quota polling, local history
+  scans, and the check of an armed Codex reset, so long intervals can miss a
+  brief expiry window. Claude limit resets are checked separately, at least
+  30 minutes apart and never closer than two intervals, because Claude
   rate-limits that check ([ADR-0023](adr/ADR-0023-separate-claude-reset-availability-check.md)).
   See [Refresh interval and cooldown](data-sources.md#refresh-interval-and-cooldown)
   for how the shared cooldown behaves.
 - **Refresh when the dropdown opens:** off by default. Opening the dropdown
-  runs the same refresh as its Refresh button, at most every 30 seconds. The
-  shared cooldown still applies, so inside the refresh interval this reloads
-  cached quotas and local token history without contacting providers, and it
-  never triggers a reset check.
+  runs the same refresh cycle as its Refresh button, at most every 30
+  seconds. Quotas are fetched only once the refresh interval has passed;
+  like any cycle it may run a Claude reset check that is due or the check of
+  an armed Codex reset.
 
 ## Codex earned reset
 

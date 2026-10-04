@@ -204,7 +204,7 @@ test("quota bar options follow the bar mode toggle without touching values", () 
     }
 });
 
-test("armed Codex reset stays discoverable and the collapsed group holds only compatibility options", () => {
+test("armed Codex reset stays discoverable and only the automation group starts collapsed", () => {
     const resetOffset = qml.indexOf("id: codexAutoResetToggle");
     assert.ok(resetOffset > 0);
     for (const span of enclosing(resetOffset)) {

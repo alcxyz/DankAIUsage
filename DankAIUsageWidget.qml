@@ -534,6 +534,8 @@ PluginComponent {
     // cache. Otherwise every reset check could arrive inside the cooldown and
     // never receive the fresh data required to authorize consumption.
     function refreshCycle() {
+        // A finished prime's result is this cycle's news only.
+        if (!isPrimingClaude && !claudePrimeProcess.running) claudePrimeText = ""
         // The saved Claude reset record (an unconfirmed attempt after a crash
         // or timeout) is local state; reading it never contacts a server.
         if (showClaude && !claudeResetProcess.running) runClaudeReset("status")
@@ -704,12 +706,39 @@ PluginComponent {
         return message
     }
 
-    // One sentence about the grant the first click chose; the only extra
-    // line is the one that changes what the click does.
+    // The grant as the helper reported it, for the limits it clears and the
+    // uses left; null when the provider meta does not carry it.
+    function claudeGrantInfo(provider, grantId) {
+        var meta = provider && provider.meta ? provider.meta.claudeReset : null
+        if (!meta || !meta.grants || !grantId) return null
+        for (var i = 0; i < meta.grants.length; i++) {
+            if (meta.grants[i] && meta.grants[i].id === grantId) return meta.grants[i]
+        }
+        return null
+    }
+
+    // "5-hour and weekly", in the helper's wording; "" when not reported.
+    function claudeResetClearsText(grant) {
+        var names = []
+        var clears = grant && grant.clears ? grant.clears : []
+        for (var i = 0; i < clears.length; i++) {
+            if (clears[i] === "five_hour") names.push("5-hour")
+            else if (clears[i] === "seven_day") names.push("weekly")
+            else if (clears[i] === "seven_day_overage_included") continue
+            else if (clears[i]) names.push(("" + clears[i]).replace(/^seven_day_/, "").replace(/_/g, " "))
+        }
+        return names.join(" and ")
+    }
+
+    // One sentence naming what the chosen grant clears; the only extra line
+    // is the one that changes what the click does.
     function claudeResetConfirmText(provider) {
         var grantId = claudeResetConfirmGrantId || claudeResetGrantId(provider)
-        return "Refills your Claude limits now; this cannot be undone."
+        var grant = claudeGrantInfo(provider, grantId)
+        var clears = claudeResetClearsText(grant)
+        return "Refills your " + (clears !== "" ? clears + " limits" : "Claude limits") + " now; this cannot be undone."
                 + (claudeResetRequiresLimitNow(provider, grantId) ? "\nOnly works while you are at a limit; Claude keeps it otherwise." : "")
+                + (grant && grant.resetsLeft > 1 ? "\n" + grant.resetsLeft + " uses of this reset left." : "")
     }
 
     function primeClaude(automatic) {
@@ -3337,6 +3366,13 @@ PluginComponent {
                                             text: root.claudeResetDetailText()
                                             visible: root.claudeResetNeedsAttention() && root.claudeResetDetailText() !== ""
                                         }
+                                    }
+
+                                    NoticeRow {
+                                        width: parent.width
+                                        level: "info"
+                                        text: "Claude prime is on"
+                                        visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime
                                     }
 
                                     Repeater {

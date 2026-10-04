@@ -521,7 +521,7 @@ PluginSettings {
             }
 
             StyledText {
-                text: "Quotas only. Limit resets are checked separately, about every 30 minutes."
+                text: "Quota polling and local history scans. An armed Codex reset is checked at the same pace, so long intervals can miss a brief expiry window. Claude limit resets are checked separately, at least 30 minutes apart."
                 width: parent.width
                 wrapMode: Text.WordWrap
                 font.pixelSize: Theme.fontSizeSmall
@@ -627,7 +627,7 @@ PluginSettings {
         ToggleSetting {
             settingKey: "refreshOnOpen"
             label: "Refresh when the dropdown opens"
-            description: "Same as the Refresh button; never contacts providers inside the refresh interval"
+            description: "Same as the Refresh button; quotas are fetched only once the refresh interval has passed"
             defaultValue: false
         }
     }
