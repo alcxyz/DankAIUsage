@@ -1594,6 +1594,9 @@ type claudeOAuthUsageCache struct {
 	ClaudeVersion             string          `json:"claudeVersion,omitempty"`
 	Invalidated               bool            `json:"invalidated,omitempty"`
 	OrganizationID            string          `json:"organizationId,omitempty"`
+	// RateLimitedSince marks the first of the consecutive HTTP 429 answers a
+	// reset check has received; the quota cache leaves it empty (ADR-0024).
+	RateLimitedSince string `json:"rateLimitedSince,omitempty"`
 }
 
 func claudeOAuthUsageCachePath() string {
@@ -1717,8 +1720,8 @@ func fetchClaudeOAuthJSON(endpoint string, token string, userAgent string) ([]by
 	}
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests:
-		backoff := claudeUsageRetryDelay(resp.Header.Get("Retry-After"), time.Now())
-		return nil, backoff, errors.New("Claude usage API rate limited (HTTP 429)")
+		retryAfter := claudeRetryAfterHeader(resp.Header.Get("Retry-After"), time.Now())
+		return nil, max(claudeUsageRetryMinimum, retryAfter), &claudeRateLimitError{retryAfter: retryAfter}
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return nil, 5 * time.Minute, fmt.Errorf("Claude usage API auth failed (HTTP %d); run any Claude Code session to refresh sign-in", resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:
@@ -1727,20 +1730,39 @@ func fetchClaudeOAuthJSON(endpoint string, token string, userAgent string) ([]by
 	return body, 0, nil
 }
 
-func claudeUsageRetryDelay(value string, now time.Time) time.Duration {
-	const minimum = 15 * time.Minute
+// claudeUsageRetryMinimum is the shortest backoff after an HTTP 429 from the
+// usage API, whatever Retry-After says (ADR-0001).
+const claudeUsageRetryMinimum = 15 * time.Minute
+
+// claudeRateLimitError is an HTTP 429 from the usage API with the wait the
+// server asked for; zero when it sent none, or told the client not to wait.
+type claudeRateLimitError struct {
+	retryAfter time.Duration
+}
+
+func (e *claudeRateLimitError) Error() string {
+	return "Claude usage API rate limited (HTTP 429)"
+}
+
+// claudeRetryAfterHeader parses a Retry-After header into a wait, zero when
+// the header is missing, malformed, or already in the past.
+func claudeRetryAfterHeader(value string, now time.Time) time.Duration {
 	value = strings.TrimSpace(value)
 	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds > 0 {
 		const longest = time.Duration(1<<63 - 1)
 		if seconds > int64(longest/time.Second) {
 			return longest
 		}
-		return max(minimum, time.Duration(seconds)*time.Second)
+		return time.Duration(seconds) * time.Second
 	}
 	if deadline, err := http.ParseTime(value); err == nil {
-		return max(minimum, deadline.Sub(now))
+		return max(0, deadline.Sub(now))
 	}
-	return minimum
+	return 0
+}
+
+func claudeUsageRetryDelay(value string, now time.Time) time.Duration {
+	return max(claudeUsageRetryMinimum, claudeRetryAfterHeader(value, now))
 }
 
 func parseClaudeOAuthUsage(data []byte, now time.Time) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, error) {
