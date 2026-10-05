@@ -653,8 +653,10 @@ func claudeResetNextCheckText(path string, now time.Time) string {
 }
 
 // refreshClaudeResetAvailability fetches the cedar_ember block under Claude
-// Code's client identity at most once per cadence. Failures back off for at
-// least an hour and keep the last body for the stale window.
+// Code's client identity at most once per cadence. Failures keep the last
+// body for the stale window and back off for at least an hour, except a rate
+// limit asking for no wait, which is retried at quota cadence for a while
+// (claudeResetCheckQuickRetry).
 func refreshClaudeResetAvailability(path string, now time.Time, interval time.Duration) error {
 	cadence := claudeResetAvailabilityCadence(interval)
 	return withUsageRefreshLock(path, func() error {
@@ -737,11 +739,12 @@ func refreshClaudeResetAvailability(path string, now time.Time, interval time.Du
 // draw an hour can lose the listing for a day (ADR-0024). A 429 asking for no
 // wait longer than the retry interval is retried at that interval for one
 // window after the first consecutive 429; later ones back off for the hour.
-// Other failures are untouched. The window starts on any 429 and a success
-// clears it.
+// Other failures keep their backoff and end the streak, as a success does,
+// so the window counts consecutive 429 answers only.
 func claudeResetCheckQuickRetry(cache *claudeOAuthUsageCache, cause error, now time.Time, interval time.Duration) (time.Duration, bool) {
 	var limited *claudeRateLimitError
 	if !errors.As(cause, &limited) {
+		cache.RateLimitedSince = ""
 		return 0, false
 	}
 	since, err := parseOptionalRefreshTime(cache.RateLimitedSince)

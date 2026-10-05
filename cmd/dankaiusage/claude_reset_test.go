@@ -620,8 +620,19 @@ func TestClaudeResetCheckRateLimitRetryWindow(t *testing.T) {
 		t.Fatalf("server error check: calls=%d %v", transport.calls.Load(), err)
 	}
 	cache, err = loadClaudeOAuthUsageCacheStrict(path)
-	if err != nil || cache.NextAttemptAt != fresh.Add(72*time.Minute).UTC().Format(time.RFC3339Nano) {
-		t.Fatalf("a 502 must not use the quick retry: %+v %v", cache, err)
+	if err != nil || cache.NextAttemptAt != fresh.Add(72*time.Minute).UTC().Format(time.RFC3339Nano) || cache.RateLimitedSince != "" {
+		t.Fatalf("a 502 must not use the quick retry and ends the 429 streak: %+v %v", cache, err)
+	}
+	// The next 429 after that opens a fresh window instead of inheriting
+	// the old one.
+	transport.status = http.StatusTooManyRequests
+	after := fresh.Add(72 * time.Minute)
+	if err := refreshClaudeResetAvailability(path, after, interval); err != nil || transport.calls.Load() != 7 {
+		t.Fatalf("429 after a server error: calls=%d %v", transport.calls.Load(), err)
+	}
+	cache, err = loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || cache.NextAttemptAt != after.Add(5*time.Minute).UTC().Format(time.RFC3339Nano) || cache.RateLimitedSince != after.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("a 429 after another failure starts a new window: %+v %v", cache, err)
 	}
 }
 

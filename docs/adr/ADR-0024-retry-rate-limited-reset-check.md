@@ -27,7 +27,8 @@ from the previous change appeared with nothing the user could do about it.
 - A reset check answered with HTTP 429 and no requested wait longer than the
   retry interval is retried at the quota interval, no closer than five
   minutes, for one hour after the first consecutive 429. The cache records
-  that first 429 (`rateLimitedSince`); a successful check clears it.
+  that first 429 (`rateLimitedSince`); a successful check, or any failure
+  other than a 429, clears it, so the window counts consecutive 429s only.
 - After that hour, and for a 429 naming a longer wait, ADR-0023's backoff
   applies unchanged: at least an hour, honouring `Retry-After`.
 - Other failures keep ADR-0023's rules. The quota poll is untouched; its

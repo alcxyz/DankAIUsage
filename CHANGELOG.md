@@ -6,7 +6,7 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
-- A Claude limit-reset check answered with a rate limit that asks for no wait is now retried at the quota interval for up to an hour before backing off, so the reset listing recovers within the hour instead of staying missing for most of a day when the check keeps losing to Claude Code's own requests.
+- A Claude limit-reset check answered with a rate limit that asks for no wait is now retried at the quota interval for up to an hour before backing off, which usually brings the reset listing back within the hour instead of leaving it missing for most of a day when the check keeps losing to Claude Code's own requests.
 
 - The Advanced warning about a failed Claude limit-reset check now appears only when no listing from the last six hours is available; a rate-limited or unreachable check while a recent result is still shown stays quiet. A sign-in rejection by Claude is still shown beside the listing.
 
