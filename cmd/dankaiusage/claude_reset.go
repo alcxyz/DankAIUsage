@@ -38,7 +38,11 @@ const (
 	claudeResetAvailabilityURL      = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1"
 	claudeResetAvailabilityInterval = 30 * time.Minute
 	claudeResetAvailabilityBackoff  = time.Hour
-	claudeResetAvailabilityStaleTTL = 6 * time.Hour
+	// A 429 that asks for no wait is retried at quota cadence, no closer than
+	// this, for one retry window after the first such answer (ADR-0024).
+	claudeResetAvailabilityRetryInterval = 5 * time.Minute
+	claudeResetAvailabilityRetryWindow   = time.Hour
+	claudeResetAvailabilityStaleTTL      = 6 * time.Hour
 )
 
 func claudeResetAvailabilityCachePath() string {
@@ -683,6 +687,9 @@ func refreshClaudeResetAvailability(path string, now time.Time, interval time.Du
 			cache.DiagnosticCategory, cache.DiagnosticHTTPStatus = classifyDiagnosticError("claude", cause)
 			cache.LastError = strings.Replace(cause.Error(), "Claude usage API", "Claude reset check", 1)
 			wait := max(cadence, backoff, claudeResetAvailabilityBackoff)
+			if retry, ok := claudeResetCheckQuickRetry(&cache, cause, now, interval); ok {
+				wait = retry
+			}
 			cache.DiagnosticCooldownSeconds = int64(wait / time.Second)
 			cache.NextAttemptAt = now.Add(wait).UTC().Format(time.RFC3339Nano)
 			if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
@@ -715,11 +722,38 @@ func refreshClaudeResetAvailability(path string, now time.Time, interval time.Du
 		cache.DiagnosticHTTPStatus = 0
 		cache.DiagnosticCooldownSeconds = 0
 		cache.Invalidated = false
+		cache.RateLimitedSince = ""
 		if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
 			return errors.New("could not save Claude reset check")
 		}
 		return nil
 	})
+}
+
+// claudeResetCheckQuickRetry decides whether a failed check is retried at
+// quota cadence instead of the hourly backoff. The client identity is lossy:
+// the endpoint answers most requests with HTTP 429 and Retry-After 0 while
+// Claude Code sessions share its budget, and the odd attempt succeeds, so one
+// draw an hour can lose the listing for a day (ADR-0024). A 429 asking for no
+// wait longer than the retry interval is retried at that interval for one
+// window after the first consecutive 429; later ones back off for the hour.
+// Other failures are untouched. The window starts on any 429 and a success
+// clears it.
+func claudeResetCheckQuickRetry(cache *claudeOAuthUsageCache, cause error, now time.Time, interval time.Duration) (time.Duration, bool) {
+	var limited *claudeRateLimitError
+	if !errors.As(cause, &limited) {
+		return 0, false
+	}
+	since, err := parseOptionalRefreshTime(cache.RateLimitedSince)
+	if err != nil || since.IsZero() || since.After(now) {
+		since = now
+		cache.RateLimitedSince = now.UTC().Format(time.RFC3339Nano)
+	}
+	retry := max(claudeResetAvailabilityRetryInterval, normalizeUsageRefreshInterval(interval))
+	if limited.retryAfter > retry || now.Sub(since) >= claudeResetAvailabilityRetryWindow {
+		return 0, false
+	}
+	return retry, true
 }
 
 // claudeResetAvailabilityForUse applies a stale-serve rule before a grant may

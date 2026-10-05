@@ -4,6 +4,8 @@
 **Date:** 2026-10-03
 **Applies to:** `cmd/dankaiusage` (Claude usage headers, `claude-reset`)
 **Amends:** ADR-0022's single usage request under the `claude-cli` User-Agent.
+**Amended by:** [ADR-0024](ADR-0024-retry-rate-limited-reset-check.md) retries a
+rate-limited check at quota cadence for an hour before the hourly backoff.
 
 ## Context
 

@@ -25,3 +25,4 @@
 | [ADR-0021](ADR-0021-top-bar-quota-bars.md) | Optional quota bars in the horizontal top bar | widget + settings |
 | [ADR-0022](ADR-0022-manual-claude-limit-reset.md) | Explicit, confirmed use of Claude limit resets | widget + cmd/dankaiusage |
 | [ADR-0023](ADR-0023-separate-claude-reset-availability-check.md) | Separate low-cadence request for Claude reset availability | cmd/dankaiusage |
+| [ADR-0024](ADR-0024-retry-rate-limited-reset-check.md) | Retry a rate-limited Claude reset check at quota cadence | cmd/dankaiusage |

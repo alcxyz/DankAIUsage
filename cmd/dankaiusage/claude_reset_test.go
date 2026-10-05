@@ -491,7 +491,8 @@ func TestClaudeResetAvailabilityCheckIdentityAndCadence(t *testing.T) {
 	if err := refreshClaudeResetAvailability(path, now.Add(31*time.Minute), 5*time.Minute); err != nil || transport.calls.Load() != 2 {
 		t.Fatalf("a check after the cadence must fetch: calls=%d %v", transport.calls.Load(), err)
 	}
-	// A 429 backs off for at least an hour and keeps the last body.
+	// A 429 asking for no wait is retried at quota cadence and keeps the last
+	// body; the retry window starts at this first rate limit.
 	transport.status = http.StatusTooManyRequests
 	transport.retryAfter = "0"
 	at := now.Add(62 * time.Minute)
@@ -502,11 +503,33 @@ func TestClaudeResetAvailabilityCheckIdentityAndCadence(t *testing.T) {
 	if err != nil || !strings.Contains(cache.LastError, "429") || !strings.Contains(cache.LastError, "reset check") || len(cache.Body) == 0 {
 		t.Fatalf("cache after 429: %+v %v", cache, err)
 	}
-	next, err := parseOptionalRefreshTime(cache.NextAttemptAt)
-	if err != nil || next.Before(at.Add(claudeResetAvailabilityBackoff)) {
-		t.Fatalf("429 backoff too short: %s %v", cache.NextAttemptAt, err)
+	if cache.NextAttemptAt != at.Add(5*time.Minute).UTC().Format(time.RFC3339Nano) || cache.RateLimitedSince != at.UTC().Format(time.RFC3339Nano) || cache.DiagnosticCooldownSeconds != 300 {
+		t.Fatalf("a Retry-After 0 answer must be retried at quota cadence: %+v", cache)
 	}
-	if err := refreshClaudeResetAvailability(path, at.Add(59*time.Minute), 5*time.Minute); err != nil || transport.calls.Load() != 3 {
+	if err := refreshClaudeResetAvailability(path, at.Add(4*time.Minute), 5*time.Minute); err != nil || transport.calls.Load() != 3 {
+		t.Fatalf("retry must wait for the quota cadence: calls=%d %v", transport.calls.Load(), err)
+	}
+	if err := refreshClaudeResetAvailability(path, at.Add(5*time.Minute), 5*time.Minute); err != nil || transport.calls.Load() != 4 {
+		t.Fatalf("retry at quota cadence: calls=%d %v", transport.calls.Load(), err)
+	}
+	cache, err = loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || cache.NextAttemptAt != at.Add(10*time.Minute).UTC().Format(time.RFC3339Nano) || cache.RateLimitedSince != at.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("a second 429 keeps the window start: %+v %v", cache, err)
+	}
+	// Once the window has passed, a 429 backs off for at least an hour.
+	held := at.Add(61 * time.Minute)
+	if err := refreshClaudeResetAvailability(path, held, 5*time.Minute); err != nil || transport.calls.Load() != 5 {
+		t.Fatalf("check after the retry window: calls=%d %v", transport.calls.Load(), err)
+	}
+	cache, err = loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || len(cache.Body) == 0 {
+		t.Fatalf("cache after the window: %+v %v", cache, err)
+	}
+	next, err := parseOptionalRefreshTime(cache.NextAttemptAt)
+	if err != nil || next.Before(held.Add(claudeResetAvailabilityBackoff)) {
+		t.Fatalf("429 backoff too short after the retry window: %s %v", cache.NextAttemptAt, err)
+	}
+	if err := refreshClaudeResetAvailability(path, held.Add(59*time.Minute), 5*time.Minute); err != nil || transport.calls.Load() != 5 {
 		t.Fatalf("backoff must hold: calls=%d %v", transport.calls.Load(), err)
 	}
 	// The quota cache is untouched by all of this.
@@ -516,16 +539,16 @@ func TestClaudeResetAvailabilityCheckIdentityAndCadence(t *testing.T) {
 	// status explains the failed check instead of claiming ignorance.
 	deps, _ := testClaudeResetDeps(t, filepath.Dir(path), nil)
 	deps.AvailabilityCachePath = path
-	deps.Now = func() time.Time { return at.Add(time.Minute) }
+	deps.Now = func() time.Time { return held.Add(time.Minute) }
 	status, err := runClaudeResetAction("status", "", deps)
 	if err != nil || !strings.Contains(status.AvailabilityError, "429") || !strings.Contains(status.Message, "could not report") {
 		t.Fatalf("status after a failed check: %+v %v", status, err)
 	}
 	// The summary surfaces the failure; a refusal quotes the real next attempt.
-	if _, meta := claudeResetsForSummary(at.Add(time.Minute), 5*time.Minute); meta == nil || !strings.Contains(fmt.Sprint(meta["claudeResetCheckError"]), "429") {
+	if _, meta := claudeResetsForSummary(held.Add(time.Minute), 5*time.Minute); meta == nil || !strings.Contains(fmt.Sprint(meta["claudeResetCheckError"]), "429") {
 		t.Fatalf("summary meta must carry the check error: %v", meta)
 	}
-	if text := claudeResetNextCheckText(path, at.Add(time.Minute)); !strings.Contains(text, "59 minutes") {
+	if text := claudeResetNextCheckText(path, held.Add(time.Minute)); !strings.Contains(text, "59 minutes") {
 		t.Fatalf("next check text: %q", text)
 	}
 	// Missing credentials are not reported as a failed check: the quota side
@@ -533,13 +556,72 @@ func TestClaudeResetAvailabilityCheckIdentityAndCadence(t *testing.T) {
 	if err := os.Remove(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), ".credentials.json")); err != nil {
 		t.Fatal(err)
 	}
-	later := at.Add(2 * time.Hour)
+	later := held.Add(2 * time.Hour)
 	if _, meta := claudeResetsForSummary(later, 5*time.Minute); meta != nil {
 		t.Fatalf("a credentials failure must stay quiet in the summary: %v", meta)
 	}
 	cache, err = loadClaudeOAuthUsageCacheStrict(path)
 	if err != nil || cache.DiagnosticCategory != "authentication" || !strings.Contains(cache.LastError, "credentials") {
 		t.Fatalf("the cache still records the credentials failure: %+v %v", cache, err)
+	}
+}
+
+func TestClaudeResetCheckRateLimitRetryWindow(t *testing.T) {
+	transport, now := setupClaudeRefreshTest(t)
+	path := claudeResetAvailabilityCachePath()
+	interval := 5 * time.Minute
+	if err := refreshClaudeResetAvailability(path, now, interval); err != nil || transport.calls.Load() != 1 {
+		t.Fatalf("first check: calls=%d %v", transport.calls.Load(), err)
+	}
+	// A 429 that names a wait longer than the retry interval is honoured and
+	// still opens the window.
+	transport.status = http.StatusTooManyRequests
+	transport.retryAfter = "1800"
+	at := now.Add(31 * time.Minute)
+	if err := refreshClaudeResetAvailability(path, at, interval); err != nil || transport.calls.Load() != 2 {
+		t.Fatalf("rate-limited check: calls=%d %v", transport.calls.Load(), err)
+	}
+	cache, err := loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || cache.NextAttemptAt != at.Add(time.Hour).UTC().Format(time.RFC3339Nano) || cache.RateLimitedSince != at.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("Retry-After 1800 must keep the hourly backoff: %+v %v", cache, err)
+	}
+	// Past the window, a Retry-After 0 answer backs off for the hour again.
+	transport.retryAfter = ""
+	again := at.Add(time.Hour)
+	if err := refreshClaudeResetAvailability(path, again, 12*time.Minute); err != nil || transport.calls.Load() != 3 {
+		t.Fatalf("check after backoff: calls=%d %v", transport.calls.Load(), err)
+	}
+	cache, err = loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || cache.NextAttemptAt != again.Add(time.Hour).UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("a 429 after the window backs off for the hour: %+v %v", cache, err)
+	}
+	// A success closes the window; the next 429 opens a fresh one.
+	transport.status = http.StatusOK
+	later := again.Add(time.Hour)
+	if err := refreshClaudeResetAvailability(path, later, interval); err != nil || transport.calls.Load() != 4 {
+		t.Fatalf("recovered check: calls=%d %v", transport.calls.Load(), err)
+	}
+	cache, err = loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || cache.RateLimitedSince != "" || cache.LastError != "" {
+		t.Fatalf("success must clear the window: %+v %v", cache, err)
+	}
+	transport.status = http.StatusTooManyRequests
+	fresh := later.Add(31 * time.Minute)
+	if err := refreshClaudeResetAvailability(path, fresh, 12*time.Minute); err != nil || transport.calls.Load() != 5 {
+		t.Fatalf("new 429: calls=%d %v", transport.calls.Load(), err)
+	}
+	cache, err = loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || cache.NextAttemptAt != fresh.Add(12*time.Minute).UTC().Format(time.RFC3339Nano) || cache.RateLimitedSince != fresh.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("a fresh window retries at the quota interval: %+v %v", cache, err)
+	}
+	// A server error is not a rate limit and keeps the hourly backoff.
+	transport.status = http.StatusBadGateway
+	if err := refreshClaudeResetAvailability(path, fresh.Add(12*time.Minute), interval); err != nil || transport.calls.Load() != 6 {
+		t.Fatalf("server error check: calls=%d %v", transport.calls.Load(), err)
+	}
+	cache, err = loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || cache.NextAttemptAt != fresh.Add(72*time.Minute).UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("a 502 must not use the quick retry: %+v %v", cache, err)
 	}
 }
 
