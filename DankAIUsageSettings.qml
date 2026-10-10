@@ -12,7 +12,7 @@ PluginSettings {
     readonly property var barLabelOptions: [
         { label: "None", value: "none" },
         { label: "Quota (5h / w / model initial)", value: "tag" },
-        { label: "Reset time", value: "time" },
+        { label: "Reset time (amount for credits)", value: "time" },
         { label: "Percent", value: "percent" }
     ]
 

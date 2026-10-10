@@ -10,6 +10,7 @@ as its GitHub release notes.
 - Added a **Provider order** setting to show Claude before Codex in the top bar and dropdown.
 - Shortened the window-time hover text on quota bars.
 - Prepaid credit balances now get a bar measured against your top-ups within the selected Local tokens range, never fewer than the latest top-up. The credit switches add that bar in quota-bar mode, where they used to do nothing. The helper starts recording top-ups once you update, so the bar starts full.
+- With the **Reset time** bar label, credit bars show their amount left (or used), such as `1.2k`, since credits have no reset.
 - Codex credit balances show as a credit count instead of a dollar amount, since Codex reports credits, not money.
 
 - A Claude limit-reset check answered with a rate limit that asks for no wait is now retried at the quota interval for up to an hour before backing off, which usually brings the reset listing back within the hour instead of leaving it missing for most of a day when the check keeps losing to Claude Code's own requests.

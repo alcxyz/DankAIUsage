@@ -51,7 +51,8 @@ kept while bars are off.
 - **Left label / Right label:** none, a quota tag (`5h`, `w`, or the model
   initial such as `f` for Fable weekly; longer only when two would clash), the
   reset countdown (`2h05`, `4d23h`; elapsed window time with Used), or the
-  percentage.
+  percentage. Credit bars have no reset, so the countdown slot shows their
+  amount left instead (`850`, `1.2k`; the amount used with Used).
 - **Pace marker:** a tick at the even-pace point for the time passed in each
   window. With Left, fill short of the tick means you are using the quota
   faster than the window is passing; with Used, fill beyond it.
