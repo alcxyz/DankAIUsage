@@ -4092,6 +4092,7 @@ PluginComponent {
                         font.pixelSize: Theme.fontSizeSmall
                         font.weight: modelData.emphasis ? Font.Medium : Font.Normal
                         color: modelData.emphasis ? Theme.surfaceText : Theme.surfaceVariantText
+                        wrapMode: Text.NoWrap
                         elide: Text.ElideRight
                     }
                 }
@@ -4118,6 +4119,7 @@ PluginComponent {
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.weight: modelData.emphasis ? Font.Medium : Font.Normal
                                 color: modelData.emphasis ? Theme.surfaceText : Theme.surfaceVariantText
+                                wrapMode: Text.NoWrap
                             }
                         }
                     }
