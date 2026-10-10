@@ -50,7 +50,7 @@ function makeScope(overrides = {}) {
     for (const name of ["knownAllowance", "displayPercent", "allowanceLabel", "allowanceSeverity",
             "allowanceColor", "resetTiming", "barFillColor", "providerQuotaBuckets", "claudeBucketShownInBar",
             "providerBarBuckets", "barProviderGroups", "barLabelKind", "barLabelText", "barWindowTag",
-            "barQuotaTags", "barLabelTemplate", "barTimeLabel", "usageGradientColor", "providerLogoColor",
+            "barQuotaTags", "barLabelTemplate", "barTimeLabel", "barCreditAmount", "compactAmount", "usageGradientColor", "providerLogoColor",
             "providerBrandColor", "displayQuotaBuckets", "creditDisplayBucket", "creditLedgerAllowance",
             "tokenRangeStartMs", "creditMoney"])
         scope[name] = bindQmlFunction(name, scope);
@@ -178,6 +178,29 @@ test("time labels count down, show elapsed time with Used, and never guess", () 
     assert.equal(scope.barTimeLabel(at(61, 300)), "3h59");
     assert.equal(scope.barTimeLabel(at(400, 300)), "", "reset beyond the window has no elapsed time");
     assert.equal(scope.barTimeLabel(at(61)), "", "unknown window length has no elapsed time");
+});
+
+test("credit bars show their amount in the time slot", () => {
+    const scope = makeScope();
+    assert.equal(scope.compactAmount(0), "0");
+    assert.equal(scope.compactAmount(4.5), "4.5");
+    assert.equal(scope.compactAmount(9), "9");
+    assert.equal(scope.compactAmount(850.4), "850");
+    assert.equal(scope.compactAmount(999.6), "1k");
+    assert.equal(scope.compactAmount(1234), "1.2k");
+    assert.equal(scope.compactAmount(12345), "12k");
+    assert.equal(scope.compactAmount(999700), "1M");
+    assert.equal(scope.compactAmount(2500000), "2.5M");
+    const ledger = {kind: "credits", creditLedger: true, valueLabel: "1000",
+        allowance: {known: true, used: 500, remaining: 1000, limit: 1500}};
+    assert.equal(scope.barLabelText("time", ledger, "cr"), "1k");
+    const spend = {kind: "credits", valueLabel: "$12.50 / $50.00",
+        allowance: {known: true, used: 1250, remaining: 3750, limit: 5000}};
+    assert.equal(scope.barLabelText("time", spend, "cr"), "38");
+    assert.equal(scope.barCreditAmount({kind: "credits", allowance: {known: false}}), "");
+    scope.showUsed = true;
+    assert.equal(scope.barLabelText("time", ledger, "cr"), "500");
+    assert.equal(scope.barLabelText("time", spend, "cr"), "13");
 });
 
 test("labels and their column widths", () => {

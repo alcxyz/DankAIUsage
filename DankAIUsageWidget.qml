@@ -2469,9 +2469,31 @@ PluginComponent {
     function barLabelText(kind, bucket, tag) {
         if (!bucket) return ""
         if (kind === "tag") return tag || ""
-        if (kind === "time") return barTimeLabel(bucket.allowance)
+        if (kind === "time") return bucket.kind === "credits" ? barCreditAmount(bucket) : barTimeLabel(bucket.allowance)
         if (kind === "percent") return allowanceLabel(bucket.allowance, false)
         return ""
+    }
+
+    // Credits have no reset, so the time slot shows the amount left (or used):
+    // 850, 4.5, 1.2k, 12k. A spend limit counts in minor units, which its
+    // label's decimals undo; a top-up ledger already counts whole credits.
+    function barCreditAmount(bucket) {
+        var allowance = bucket ? bucket.allowance : null
+        if (!knownAllowance(allowance)) return ""
+        var amount = Math.max(0, (showUsed ? allowance.used : allowance.remaining) || 0)
+        var fraction = bucket.creditLedger ? null : (bucket.valueLabel || "").match(/\.([0-9]+)/)
+        if (fraction) amount /= Math.pow(10, fraction[1].length)
+        return compactAmount(amount)
+    }
+
+    function compactAmount(value) {
+        function scaled(amount, suffix) {
+            var text = amount < 9.95 ? amount.toFixed(1) : "" + Math.round(amount)
+            return text.replace(/\.0$/, "") + suffix
+        }
+        if (value >= 999500) return scaled(value / 1000000, "M")
+        if (value >= 999.5) return scaled(value / 1000, "k")
+        return scaled(value, "")
     }
 
     // Window tag from its length: 5h, 1d, w (six days or longer).
