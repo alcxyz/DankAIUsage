@@ -5,6 +5,7 @@
 **Applies to:** `DankAIUsageWidget.qml`, settings
 **Builds on:** ADR-0009, ADR-0013 and ADR-0018
 **Amends:** ADR-0018 with the opt-in color exceptions below.
+**Amended by:** ADR-0025 (credit switches add a credit bar in quota-bar mode).
 
 ## Context
 

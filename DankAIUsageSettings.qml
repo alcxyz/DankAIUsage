@@ -479,14 +479,14 @@ PluginSettings {
         ToggleSetting {
             settingKey: "barShowClaudeCredits"
             label: "Claude extra-use credits"
-            description: "Credit balance in the text pill"
+            description: "Credit balance in the pill, or a bar in quota-bar mode"
             defaultValue: false
         }
 
         ToggleSetting {
             settingKey: "barShowCodexCredits"
             label: "Codex credits"
-            description: "Credit balance in the text pill"
+            description: "Credit balance in the pill, or a bar in quota-bar mode"
             defaultValue: false
         }
     }

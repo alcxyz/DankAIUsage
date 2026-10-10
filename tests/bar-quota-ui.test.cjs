@@ -43,13 +43,16 @@ function makeScope(overrides = {}) {
         brandLogoColors: false, barUsageColors: false, usageColorStops: gradientStops,
         Qt: {rgba: (r, g, b) => [r, g, b].map(v => Math.round(v * 100) / 100).join(",")},
         hasError: false, barShowClaudeSession: true, barShowClaudeWeekly: true,
-        barShowClaudeCredits: false, barClaudeWeeklyOverrides: {}, providers: []}, overrides);
+        barShowClaudeCredits: false, barShowCodexCredits: false, barClaudeWeeklyOverrides: {}, providers: [],
+        tokenHistoryRange: "7d", periodDays: 7, trackingStatus: {},
+        formatShortDateTime: value => value}, overrides);
     scope.root = scope;
     for (const name of ["knownAllowance", "displayPercent", "allowanceLabel", "allowanceSeverity",
             "allowanceColor", "resetTiming", "barFillColor", "providerQuotaBuckets", "claudeBucketShownInBar",
             "providerBarBuckets", "barProviderGroups", "barLabelKind", "barLabelText", "barWindowTag",
             "barQuotaTags", "barLabelTemplate", "barTimeLabel", "usageGradientColor", "providerLogoColor",
-            "providerBrandColor"])
+            "providerBrandColor", "displayQuotaBuckets", "creditDisplayBucket", "creditLedgerAllowance",
+            "tokenRangeStartMs", "creditMoney"])
         scope[name] = bindQmlFunction(name, scope);
     scope.visibleProviders = () => scope.providers;
     return scope;
@@ -65,22 +68,52 @@ const weekly = bucket("weekly", "Weekly", 10080, "weekly");
 const fableWeekly = bucket("scoped", "Fable · weekly", 10080, "weekly");
 const credits = {id: "credits", kind: "credits", label: "Credits", allowance: {known: true, percentRemaining: 50}};
 
-test("quota bars skip credits and keep Claude's per-quota choices", () => {
+test("quota bars add credits only when their switch is on and keep Claude's per-quota choices", () => {
     const scope = makeScope();
+    const balanceOnly = {id: "balance", kind: "credits", label: "Credits", allowance: {known: false}, valueLabel: "$5.00"};
     const claude = {id: "claude", quotaBuckets: [session, weekly, fableWeekly, credits]};
-    const codex = {id: "codex", quotaBuckets: [session, weekly, credits]};
+    const codex = {id: "codex", quotaBuckets: [session, weekly, credits, balanceOnly]};
     assert.deepEqual(scope.providerBarBuckets(codex), [session, weekly]);
+    assert.deepEqual(scope.providerBarBuckets(claude), [session, weekly, fableWeekly]);
     scope.barShowClaudeCredits = true;
     scope.barShowCodexCredits = true;
-    assert.deepEqual(scope.providerBarBuckets(codex), [session, weekly], "Codex credit preference is for text mode only");
-    assert.deepEqual(scope.providerBarBuckets(claude), [session, weekly, fableWeekly]);
+    assert.deepEqual(scope.providerBarBuckets(codex), [session, weekly, credits],
+        "a balance without a top-up ledger has no bar");
+    assert.deepEqual(scope.providerBarBuckets(claude), [session, weekly, fableWeekly, credits]);
     scope.barShowClaudeSession = false;
     scope.barClaudeWeeklyOverrides = {[weekly.id]: false};
+    scope.barShowClaudeCredits = false;
     assert.deepEqual(scope.providerBarBuckets(claude), [fableWeekly]);
     scope.providers = [codex, {id: "claude", quotaBuckets: [credits]}];
     const groups = scope.barProviderGroups();
     assert.equal(groups.length, 1, "providers without bar quotas are omitted");
-    assert.deepEqual(groups[0].tags, ["5h", "w"]);
+    assert.deepEqual(groups[0].tags, ["5h", "w", "cr"]);
+});
+
+test("a prepaid balance is measured against the top-ups in the token range", () => {
+    const day = 86400000;
+    const at = daysAgo => new Date(now - daysAgo * day).toISOString();
+    // Bought 1000 ten days ago, spent 500, bought 500 more two days ago.
+    const prepaid = {id: "codex-credits", kind: "credits", label: "Credits", allowance: {known: false},
+        valueLabel: "$1000.00", balance: 1000,
+        balanceHistory: {since: at(10), topUps: [{at: at(10), amount: 1000, before: 0}, {at: at(2), amount: 500, before: 500}]}};
+    const scope = makeScope({tokenHistoryRange: "30d"});
+
+    let allowance = scope.creditLedgerAllowance(prepaid, now);
+    assert.deepEqual([allowance.limit, allowance.remaining, allowance.percentRemaining], [1500, 1000, 67]);
+    scope.tokenHistoryRange = "7d";
+    allowance = scope.creditLedgerAllowance(prepaid, now);
+    assert.deepEqual([allowance.limit, allowance.remaining], [1000, 1000], "leftover before the latest buy carries over");
+    scope.tokenHistoryRange = "5h";
+    assert.equal(scope.creditLedgerAllowance(prepaid, now).limit, 1000, "the latest buy is always included");
+    scope.tokenHistoryRange = "tracked";
+    assert.equal(scope.creditLedgerAllowance(prepaid, now).limit, 1500, "tracked without a start uses every top-up");
+
+    const shown = scope.creditDisplayBucket(prepaid);
+    assert.equal(shown.creditLedger, true);
+    assert.equal(shown.detail, `$1000.00 left of $1500.00 since ${at(10)}`);
+    assert.equal(scope.creditLedgerAllowance(Object.assign({}, prepaid, {balanceHistory: null}), now), null);
+    assert.equal(scope.creditLedgerAllowance(credits, now), null, "a spend limit keeps its own allowance");
 });
 
 test("provider names identify quota-bar groups when logos are disabled", () => {

@@ -135,7 +135,8 @@ if needed; the widget recovers on its next refresh.
 
 The helper reads provider sign-ins locally and never prints credentials.
 Everything the widget stores is local and bounded: quota snapshots, reset
-observations, optional explanations, hashed token checkpoints, and a
+observations, observed credit top-ups, optional explanations, hashed token
+checkpoints, and a
 diagnostics log with no raw errors or identifiers. The only optional network
 call beyond the two providers is the public reset feed, which is off by
 default.

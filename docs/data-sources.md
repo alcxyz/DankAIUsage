@@ -7,7 +7,8 @@
   resets are shown with their expiry
   ([ADR-0008](adr/ADR-0008-codex-duration-based-windows-and-banked-resets.md)).
   When the snapshot carries a `credits` object, its prepaid balance (or
-  unlimited flag) becomes a **Credits** bucket. Accounts without credits omit
+  unlimited flag) becomes a **Credits** bucket. The balance is a credit count,
+  not money, so it is shown without a currency. Accounts without credits omit
   the object and the bucket.
 - **Claude limits:** Anthropic's OAuth usage endpoint, using the local Claude
   Code sign-in ([ADR-0001](adr/ADR-0001-claude-limits-from-oauth-usage-api.md)).
