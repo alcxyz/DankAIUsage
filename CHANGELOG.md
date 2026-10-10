@@ -6,7 +6,7 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
-- The Advanced **Local tokens** row shows each provider's Input / Cached / Output split under the combined total again.
+- The Advanced **Local tokens** row shows each provider's Input / Cached / Output split again, in aligned columns under a **Total** line.
 - Added a **Provider order** setting to show Claude before Codex in the top bar and dropdown.
 - Shortened the window-time hover text on quota bars.
 

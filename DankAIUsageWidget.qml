@@ -2161,7 +2161,7 @@ PluginComponent {
         return formatTokens(displayCached(totals)) + " cached"
     }
 
-    function filteredGrandTokenBreakdown() {
+    function filteredGrandTokenStatus() {
         var list = visibleProviders()
         var available = 0
         var partial = false
@@ -2172,9 +2172,15 @@ PluginComponent {
         }
         if (tokenHistoryRange === "tracked" && trackingStatus.errors && trackingStatus.errors.length > 0)
             partial = true
-        if (available === 0) return "Unavailable"
+        if (available === 0) return "unavailable"
+        return partial ? "partial" : "complete"
+    }
+
+    function filteredGrandTokenBreakdown() {
+        var status = filteredGrandTokenStatus()
+        if (status === "unavailable") return "Unavailable"
         return formatTokens(filteredGrandInput()) + " in / " + formatTokens(filteredGrandCached()) + " cached / "
-                + formatTokens(filteredGrandOutput()) + " out" + (partial ? " (partial)" : "")
+                + formatTokens(filteredGrandOutput()) + " out" + (status === "partial" ? " (partial)" : "")
     }
 
     function tokenHistoryAvailable(provider) {
@@ -2260,22 +2266,45 @@ PluginComponent {
         return "Enable to seed a persistent total from retained local history."
     }
 
-    function providerTokenRows() {
+    // One aligned row per column set: the combined total, then each shown provider.
+    function tokenTableRows() {
         var list = visibleProviders()
         if (list.length < 2) return []
-        var out = []
-        for (var i = 0; i < list.length; i++)
-            out.push({ name: list[i].name || historyProviderName(list[i].id), value: providerTokenBreakdown(list[i]) })
-        return out
+        var status = filteredGrandTokenStatus()
+        var rows = [tokenTableRow("Total", status, filteredGrandInput(), filteredGrandCached(), filteredGrandOutput(), true)]
+        for (var i = 0; i < list.length; i++) {
+            var totals = tokenHistoryTotals(list[i])
+            rows.push(tokenTableRow(list[i].name || historyProviderName(list[i].id), providerTokenStatus(list[i]),
+                    displayInput(totals), displayCached(totals), displayOutput(totals), false))
+        }
+        return rows
+    }
+
+    function tokenTableRow(name, status, input, cached, output, emphasis) {
+        var known = status !== "unavailable"
+        return {
+            name: name + (status === "partial" ? " (partial)" : ""),
+            input: known ? formatTokens(input) + " in" : "--",
+            cached: known ? formatTokens(cached) + " cached" : "--",
+            output: known ? formatTokens(output) + " out" : "--",
+            emphasis: emphasis
+        }
+    }
+
+    function providerTokenStatus(provider) {
+        if (!tokenHistoryAvailable(provider)) return "unavailable"
+        var partial = tokenHistoryRange === "tracked"
+                ? !!(trackingStatus.errors && trackingStatus.errors.length > 0)
+                : !!(provider.meta && provider.meta.tokenDataError)
+        return partial ? "partial" : "complete"
     }
 
     function providerTokenBreakdown(provider) {
-        if (!tokenHistoryAvailable(provider)) return "Unavailable"
+        var status = providerTokenStatus(provider)
+        if (status === "unavailable") return "Unavailable"
         var totals = tokenHistoryTotals(provider)
         return inputTokenLabel(totals) + " / " + cachedTokenLabel(totals) + " / " + outputTokenLabel(totals)
-                + (tokenHistoryRange === "tracked"
-                    ? (trackingStatus.errors && trackingStatus.errors.length > 0 ? " (partial)" : "")
-                    : (provider.meta && provider.meta.tokenDataError ? " (partial)" : ""))
+                + (status === "partial" ? " (partial)" : "")
     }
 
 
@@ -3060,7 +3089,7 @@ PluginComponent {
                         width: parent.width
                         visible: root.advancedDropdown
                         value: root.filteredGrandTokenBreakdown()
-                        providerRows: root.providerTokenRows()
+                        tableRows: root.tokenTableRows()
                     }
 
                     TrackingPanel {
@@ -3972,9 +4001,9 @@ PluginComponent {
     component TokenHistoryRow: StyledRect {
         id: tokenRow
         property string value: ""
-        property var providerRows: []
+        property var tableRows: []
         property bool selectorOpen: false
-        readonly property real summaryHeight: 52 + (providerRows.length > 0 ? tokenProviderColumn.implicitHeight + 2 : 0)
+        readonly property real summaryHeight: tableRows.length > 0 ? 32 + tokenTable.implicitHeight : 52
         height: selectorOpen ? summaryHeight + 4 + tokenRangeFlow.implicitHeight + Theme.spacingXS : summaryHeight
         radius: Theme.cornerRadius
         color: Theme.withAlpha(Theme.surfaceVariant, 0.35)
@@ -3982,8 +4011,9 @@ PluginComponent {
         border.color: activeFocus ? Theme.primary : Theme.outlineVariant
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
-        Accessible.name: root.tokenHistoryLabel() + ": " + value
-                + providerRows.map(function(row) { return "; " + row.name + ": " + row.value }).join("")
+        Accessible.name: root.tokenHistoryLabel() + ": " + (tableRows.length > 0
+                ? tableRows.map(function(row) { return row.name + ": " + [row.input, row.cached, row.output].join(" / ") }).join("; ")
+                : value)
         Accessible.description: "Open token history range selector"
         Accessible.onPressAction: tokenRow.selectorOpen = !tokenRow.selectorOpen
         Keys.onSpacePressed: tokenRow.selectorOpen = !tokenRow.selectorOpen
@@ -4024,6 +4054,7 @@ PluginComponent {
         StyledText {
             id: tokenValue
             text: tokenRow.value
+            visible: tokenRow.tableRows.length === 0
             anchors.left: parent.left
             anchors.leftMargin: Theme.spacingS
             anchors.right: parent.right
@@ -4035,41 +4066,60 @@ PluginComponent {
             elide: Text.ElideRight
             horizontalAlignment: Text.AlignLeft
         }
-        Column {
-            id: tokenProviderColumn
+        // Names on the left; In, Cached and Out each right-aligned in their own column.
+        Item {
+            id: tokenTable
             anchors.left: parent.left
             anchors.leftMargin: Theme.spacingS
             anchors.right: parent.right
             anchors.rightMargin: Theme.spacingS
-            anchors.top: tokenValue.bottom
-            anchors.topMargin: 2
-            visible: tokenRow.providerRows.length > 0
+            anchors.top: tokenRowHeader.bottom
+            implicitHeight: tokenNameColumn.implicitHeight
+            visible: tokenRow.tableRows.length > 0
 
-            Repeater {
-                model: tokenRow.providerRows
+            Column {
+                id: tokenNameColumn
+                anchors.left: parent.left
+                anchors.right: tokenNumberColumns.left
+                anchors.rightMargin: Theme.spacingM
 
-                Item {
-                    width: parent.width
-                    height: tokenProviderValue.implicitHeight
+                Repeater {
+                    model: tokenRow.tableRows
 
                     StyledText {
-                        id: tokenProviderName
+                        width: parent.width
                         text: modelData.name
-                        width: Math.min(implicitWidth, parent.width / 3)
                         font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.surfaceVariantText
+                        font.weight: modelData.emphasis ? Font.Medium : Font.Normal
+                        color: modelData.emphasis ? Theme.surfaceText : Theme.surfaceVariantText
                         elide: Text.ElideRight
                     }
-                    StyledText {
-                        id: tokenProviderValue
-                        text: modelData.value
-                        anchors.left: tokenProviderName.right
-                        anchors.leftMargin: Theme.spacingS
-                        anchors.right: parent.right
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.surfaceVariantText
-                        elide: Text.ElideRight
-                        horizontalAlignment: Text.AlignRight
+                }
+            }
+
+            Row {
+                id: tokenNumberColumns
+                anchors.right: parent.right
+                spacing: Theme.spacingM
+
+                Repeater {
+                    model: ["input", "cached", "output"]
+
+                    Column {
+                        id: tokenNumberColumn
+                        property string field: modelData
+
+                        Repeater {
+                            model: tokenRow.tableRows
+
+                            StyledText {
+                                x: tokenNumberColumn.width - width
+                                text: modelData[tokenNumberColumn.field]
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.weight: modelData.emphasis ? Font.Medium : Font.Normal
+                                color: modelData.emphasis ? Theme.surfaceText : Theme.surfaceVariantText
+                            }
+                        }
                     }
                 }
             }

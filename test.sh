@@ -157,7 +157,7 @@ assert 'Keys.onSpacePressed: tokenRow.selectorOpen = !tokenRow.selectorOpen' in 
 assert 'model: root.tokenHistoryRangeChoices()' in component_text
 assert 'root.selectTokenHistoryRange(modelData.key)' in component_text
 assert 'height: selectorOpen ? summaryHeight + 4 + tokenRangeFlow.implicitHeight + Theme.spacingXS : summaryHeight' in component_text
-assert 'providerRows: root.providerTokenRows()' in component_text, 'the overview row lists per-provider token splits'
+assert 'tableRows: root.tokenTableRows()' in component_text, 'the overview row lists per-provider token splits'
 assert 'anchors.verticalCenter: tokenRowHeader.verticalCenter' in component_text
 assert 'if (days === 7 || days === 30 || days === 90) return days + "d"' in component_text
 assert 'if (tokenHistoryRange === "period") return provider.period' in component_text
@@ -167,7 +167,8 @@ assert 'var trackedProviders = trackingStatus.providers || {}' in component_text
 assert 'if (!tokenHistoryTotals(provider)) return false' in component_text
 assert 'trackingStatus.known !== true || !trackingStatus.startedAt' in component_text
 assert 'meta.tokenDataAvailable === false' in component_text
-assert 'if (available === 0) return "Unavailable"' in component_text
+assert 'if (available === 0) return "unavailable"' in component_text
+assert 'if (status === "unavailable") return "Unavailable"' in component_text
 assert 'sqlite3' not in plugin["requires"]
 
 # Persistent tracking remains helper-owned, fail-closed, and explicit.
