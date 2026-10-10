@@ -57,7 +57,9 @@ function makeScope() {
         "inputTokenLabel",
         "cachedTokenLabel",
         "outputTokenLabel",
+        "filteredGrandTokenStatus",
         "filteredGrandTokenBreakdown",
+        "providerTokenStatus",
         "providerTokenBreakdown",
     ]) scope[name] = bindQmlFunction(name, scope);
     return scope;
@@ -118,19 +120,21 @@ test("missing totals and provider names do not fabricate token components", () =
     assert.equal(scope.providerTokenBreakdown(unknownProvider), "20 in / 15 cached / 10 out");
 });
 
-test("token row lists each shown provider once both providers are visible", () => {
+test("token table aligns a total row above each shown provider", () => {
     const scope = makeScope();
     scope.historyProviderName = id => id;
-    scope.providerTokenRows = bindQmlFunction("providerTokenRows", scope);
+    for (const name of ["filteredGrandTokenStatus", "providerTokenStatus", "tokenTableRow", "tokenTableRows"])
+        scope[name] = bindQmlFunction(name, scope);
     const codex = {id: "codex", name: "Codex", available: true, totals: {total: 100, input: 80, cached: 60, output: 20}};
     const claude = {id: "claude", name: "Claude", available: false};
 
     scope.providers = [codex];
-    assert.deepEqual(scope.providerTokenRows(), []);
+    assert.deepEqual(scope.tokenTableRows(), []);
     scope.providers = [claude, codex];
-    assert.deepEqual(scope.providerTokenRows(), [
-        {name: "Claude", value: "Unavailable"},
-        {name: "Codex", value: "20 in / 60 cached / 20 out"},
+    assert.deepEqual(scope.tokenTableRows(), [
+        {name: "Total (partial)", input: "20 in", cached: "60 cached", output: "20 out", emphasis: true},
+        {name: "Claude", input: "--", cached: "--", output: "--", emphasis: false},
+        {name: "Codex", input: "20 in", cached: "60 cached", output: "20 out", emphasis: false},
     ]);
 });
 
