@@ -1830,16 +1830,20 @@ PluginComponent {
             since: topUps[first].at }
     }
 
-    // Formats an amount like the provider's balance label ($12.50, EUR 12.50,
-    // or a bare Codex credit count).
+    // Formats an amount like the provider's balance label, keeping its prefix
+    // and decimals ($12.50, JPY 1000, KWD 1.234, or a bare Codex credit count).
     function creditMoney(bucket, amount) {
         var label = bucket && bucket.valueLabel ? bucket.valueLabel : ""
         var prefix = (label.match(/^[^0-9-]*/) || [""])[0]
-        return prefix + Number(amount).toFixed(2)
+        var fraction = label.match(/\.([0-9]+)/)
+        return prefix + Number(amount).toFixed(fraction ? fraction[1].length : 0)
     }
 
+    // Reads the clock without binding to it: top-ups only change with a new
+    // summary, so the bars need not rebuild every minute.
     function creditDisplayBucket(bucket) {
-        var allowance = creditLedgerAllowance(bucket, resetClock)
+        if (!bucket || !bucket.balanceHistory) return bucket
+        var allowance = creditLedgerAllowance(bucket, Date.now())
         if (!allowance) return bucket
         var shown = Object.assign({}, bucket)
         shown.allowance = allowance

@@ -966,6 +966,10 @@ func collectCodexSubscriptionLimitsWithClock(now time.Time, refreshInterval time
 		if balance := snapshot.Credits.balanceLabel(); balance != "" {
 			meta["creditsBalance"] = balance
 		}
+	} else if snapshot.Credits != nil {
+		// An emptied balance hides the bucket; the top-up ledger still
+		// needs the zero so a later refill counts as a top-up.
+		meta[emptyCreditBucketMeta] = "codex-credits"
 	}
 	return session, weekly, codexSnapshotExtraLimits(limits.RateLimitsByLimitID, snapshot.LimitID, now), additional, resets, meta, refresh.FetchedAt, nil
 }

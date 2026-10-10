@@ -113,6 +113,9 @@ test("a prepaid balance is measured against the top-ups in the token range", () 
     assert.equal(shown.creditLedger, true);
     assert.equal(shown.detail, `$1000.00 left of $1500.00 since ${at(10)}`);
     assert.equal(scope.creditLedgerAllowance(Object.assign({}, prepaid, {balanceHistory: null}), now), null);
+    assert.equal(scope.creditMoney({valueLabel: "JPY 1000"}, 1500), "JPY 1500");
+    assert.equal(scope.creditMoney({valueLabel: "KWD 1.234"}, 1.5), "KWD 1.500");
+    assert.equal(scope.creditMoney({valueLabel: "62492.69"}, 70000), "70000.00");
     assert.equal(scope.creditLedgerAllowance(credits, now), null, "a spend limit keeps its own allowance");
 });
 

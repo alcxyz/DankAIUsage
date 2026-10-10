@@ -17,8 +17,11 @@ a bug. Neither provider reports purchases, only the current balance.
 - The helper keeps a bounded ledger per prepaid balance in the usage-history
   state: the last balance, when it was first seen, and up to 64 top-ups. The
   first sighting is recorded as a top-up from zero; afterwards any increase is
-  a top-up and any decrease is spending. Summaries attach the ledger to the
-  balance's bucket. Buckets with a spend limit keep their own allowance.
+  a top-up and any decrease is spending. Only fresh snapshots newer than the
+  ledger update it, so an older cached snapshot cannot fake a top-up, and a
+  balance reported empty (which hides its bucket) still records zero so the
+  next refill counts. Summaries attach the ledger to the balance's bucket.
+  Buckets with a spend limit keep their own allowance.
 - The widget measures the balance against every top-up within the selected
   token-history range, and never fewer than the latest one. The bar's limit is
   the balance just before the earliest counted top-up plus the counted
