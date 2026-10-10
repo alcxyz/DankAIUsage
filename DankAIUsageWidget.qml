@@ -2476,7 +2476,7 @@ PluginComponent {
 
     // Credits have no reset, so the time slot shows the amount left (or used):
     // 850, 4.5, 1.2k, 12k. A spend limit counts in minor units, which its
-    // label's decimals undo; a top-up ledger already counts whole credits.
+    // label's decimals undo; a top-up ledger already counts major units.
     function barCreditAmount(bucket) {
         var allowance = bucket ? bucket.allowance : null
         if (!knownAllowance(allowance)) return ""
@@ -2491,6 +2491,8 @@ PluginComponent {
             var text = amount < 9.95 ? amount.toFixed(1) : "" + Math.round(amount)
             return text.replace(/\.0$/, "") + suffix
         }
+        if (value >= 999.5e9) return ">1T"
+        if (value >= 999.5e6) return scaled(value / 1e9, "B")
         if (value >= 999500) return scaled(value / 1000000, "M")
         if (value >= 999.5) return scaled(value / 1000, "k")
         return scaled(value, "")

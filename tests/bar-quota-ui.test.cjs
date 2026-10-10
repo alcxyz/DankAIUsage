@@ -191,6 +191,9 @@ test("credit bars show their amount in the time slot", () => {
     assert.equal(scope.compactAmount(12345), "12k");
     assert.equal(scope.compactAmount(999700), "1M");
     assert.equal(scope.compactAmount(2500000), "2.5M");
+    assert.equal(scope.compactAmount(999.6e6), "1B");
+    assert.equal(scope.compactAmount(12e9), "12B");
+    assert.equal(scope.compactAmount(1e15), ">1T", "never wider than the column");
     const ledger = {kind: "credits", creditLedger: true, valueLabel: "1000",
         allowance: {known: true, used: 500, remaining: 1000, limit: 1500}};
     assert.equal(scope.barLabelText("time", ledger, "cr"), "1k");
