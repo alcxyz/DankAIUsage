@@ -43,7 +43,20 @@ are omitted instead of inferred from their position in an API response.
 Prepaid credits appear as a **Credits** bucket for either provider when the
 account reports a balance: Codex from its rate-limit snapshot, Claude from
 extra-usage spend. A balance without a monthly limit shows the amount instead
-of a percentage and has no progress bar, because there is no window to fill.
+of a percentage.
+
+### Credit bars
+
+A prepaid balance without a monthly limit gets a bar against what you topped
+up. The helper notes the balance each refresh; any increase counts as a
+top-up. The bar measures the balance against every top-up in the selected
+**Local tokens** range, and always at least the latest one, with any leftover
+from before it. For example, buy 1000, spend 500, then buy 500: with 30d both
+buys count and the bar shows 1000 left of 1500; with 5h only the latest buy
+counts and it shows 1000 left of 1000. Purchases before the helper first saw
+the balance are unknown, so the bar starts full. The detail line reads
+"… left of … since …", and the bar never counts as the most constrained quota.
+See [ADR-0025](adr/ADR-0025-credit-balance-bars-from-observed-top-ups.md).
 
 Bar and percentage colors follow remaining allowance: the theme's primary color
 while healthy, warning at or below 25% remaining, and error at or below 10% or

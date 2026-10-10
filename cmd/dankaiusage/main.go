@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -106,6 +107,10 @@ type QuotaBucket struct {
 	Allowance  Allowance `json:"allowance"`
 	ValueLabel string    `json:"valueLabel,omitempty"`
 	Detail     string    `json:"detail,omitempty"`
+	// Balance is a prepaid balance in major currency units; BalanceHistory
+	// lists the observed top-ups the dropdown and bar measure it against.
+	Balance        *float64              `json:"balance,omitempty"`
+	BalanceHistory *CreditBalanceHistory `json:"balanceHistory,omitempty"`
 }
 
 type UsageReset struct {
@@ -824,23 +829,32 @@ type codexCreditsSnapshot struct {
 }
 
 func (credits *codexCreditsSnapshot) balanceLabel() string {
-	if credits == nil || len(credits.Balance) == 0 {
+	value, ok := credits.balanceValue()
+	if !ok {
 		return ""
+	}
+	// Codex reports a credit count, not money.
+	return strconv.FormatFloat(value, 'f', 2, 64)
+}
+
+func (credits *codexCreditsSnapshot) balanceValue() (float64, bool) {
+	if credits == nil || len(credits.Balance) == 0 {
+		return 0, false
 	}
 	var text string
 	if err := json.Unmarshal(credits.Balance, &text); err != nil {
 		var number float64
 		if err := json.Unmarshal(credits.Balance, &number); err != nil {
-			return ""
+			return 0, false
 		}
 		text = strconv.FormatFloat(number, 'f', -1, 64)
 	}
 	text = strings.TrimSpace(strings.TrimPrefix(text, "$"))
 	value, err := strconv.ParseFloat(text, 64)
 	if err != nil || value < 0 {
-		return ""
+		return 0, false
 	}
-	return "$" + strconv.FormatFloat(value, 'f', 2, 64)
+	return value, true
 }
 
 func codexCreditsBucket(snapshot codexRateLimitSnapshot) (QuotaBucket, bool) {
@@ -849,7 +863,7 @@ func codexCreditsBucket(snapshot codexRateLimitSnapshot) (QuotaBucket, bool) {
 		return QuotaBucket{}, false
 	}
 	allowance := makeUnknownAllowance("credits", time.Time{})
-	allowance.Unit = "currency"
+	allowance.Unit = "credits"
 	allowance.Source = "codex app-server"
 	bucket := QuotaBucket{
 		ID:        "codex-credits",
@@ -868,8 +882,11 @@ func codexCreditsBucket(snapshot codexRateLimitSnapshot) (QuotaBucket, bool) {
 		bucket.Detail = "Prepaid credits available; balance not reported"
 		return bucket, true
 	}
+	if value, ok := credits.balanceValue(); ok {
+		bucket.Balance = &value
+	}
 	bucket.ValueLabel = balance
-	bucket.Detail = balance + " prepaid balance"
+	bucket.Detail = balance + " prepaid credits"
 	return bucket, true
 }
 
@@ -949,6 +966,10 @@ func collectCodexSubscriptionLimitsWithClock(now time.Time, refreshInterval time
 		if balance := snapshot.Credits.balanceLabel(); balance != "" {
 			meta["creditsBalance"] = balance
 		}
+	} else if snapshot.Credits != nil {
+		// An emptied balance hides the bucket; the top-up ledger still
+		// needs the zero so a later refill counts as a top-up.
+		meta[emptyCreditBucketMeta] = "codex-credits"
 	}
 	return session, weekly, codexSnapshotExtraLimits(limits.RateLimitsByLimitID, snapshot.LimitID, now), additional, resets, meta, refresh.FetchedAt, nil
 }
@@ -1979,6 +2000,7 @@ func parseClaudeSpendBucket(spend map[string]any) (QuotaBucket, bool) {
 	allowance.Unit = "currency"
 	allowance.Source = claudeOAuthUsageSource
 	label := formatMinorMoney(int64(balance), currency, int(exponent))
+	major := minorToMajor(int64(balance), int(exponent))
 	return QuotaBucket{
 		ID:         "claude-extra-usage",
 		Label:      "Extra usage credits",
@@ -1986,6 +2008,7 @@ func parseClaudeSpendBucket(spend map[string]any) (QuotaBucket, bool) {
 		Allowance:  allowance,
 		ValueLabel: label,
 		Detail:     label + " prepaid balance",
+		Balance:    &major,
 	}, true
 }
 
@@ -2018,6 +2041,13 @@ func makeClaudeSpendBucket(used int64, limit int64, currency string, exponent in
 		ValueLabel: formatMinorMoney(used, currency, exponent) + " / " + formatMinorMoney(limit, currency, exponent),
 		Detail:     formatMinorMoney(allowance.Remaining, currency, exponent) + " remaining",
 	}
+}
+
+func minorToMajor(amount int64, exponent int) float64 {
+	if exponent < 0 || exponent > 6 {
+		exponent = 2
+	}
+	return float64(amount) / math.Pow(10, float64(exponent))
 }
 
 func formatMinorMoney(amount int64, currency string, exponent int) string {

@@ -1780,6 +1780,80 @@ PluginComponent {
         return provider.quotaBuckets
     }
 
+    // Buckets as the dropdown and quota bars draw them: a prepaid balance with
+    // a top-up ledger becomes a bar against its range (ADR-0025).
+    function displayQuotaBuckets(provider) {
+        var buckets = providerQuotaBuckets(provider)
+        var out = []
+        for (var i = 0; i < buckets.length; i++) out.push(creditDisplayBucket(buckets[i]))
+        return out
+    }
+
+    // Start of the selected token range; Tracked starts when tracking began.
+    function tokenRangeStartMs(now) {
+        var day = 86400000
+        if (tokenHistoryRange === "5h") return now - 5 * 3600000
+        if (tokenHistoryRange === "7d") return now - 7 * day
+        if (tokenHistoryRange === "30d") return now - 30 * day
+        if (tokenHistoryRange === "90d") return now - 90 * day
+        if (tokenHistoryRange === "period") return now - periodDays * day
+        var started = Date.parse(trackingStatus.startedAt || "")
+        return isFinite(started) ? started : -Infinity
+    }
+
+    // A prepaid balance measured against every top-up in the token range, and
+    // never fewer than the latest one. The first top-up's starting balance
+    // carries over, so leftovers from older purchases count too.
+    function creditLedgerAllowance(bucket, now) {
+        if (!bucket || bucket.kind !== "credits" || knownAllowance(bucket.allowance)) return null
+        var history = bucket.balanceHistory
+        var balance = bucket.balance
+        if (!history || !history.topUps || history.topUps.length === 0
+                || typeof balance !== "number" || !isFinite(balance)) return null
+        var topUps = history.topUps
+        var start = tokenRangeStartMs(now)
+        var first = topUps.length - 1
+        for (var i = 0; i < topUps.length; i++) {
+            if (Date.parse(topUps[i].at) >= start) {
+                first = i
+                break
+            }
+        }
+        var limit = topUps[first].before || 0
+        for (var j = first; j < topUps.length; j++) limit += topUps[j].amount || 0
+        if (!(limit > 0)) return null
+        var remaining = Math.max(0, Math.min(balance, limit))
+        var percentUsed = Math.round((limit - remaining) / limit * 100)
+        return { known: true, window: "credits", unit: bucket.allowance && bucket.allowance.unit || "currency",
+            used: limit - remaining, limit: limit,
+            remaining: remaining, percentUsed: percentUsed, percentRemaining: 100 - percentUsed,
+            since: topUps[first].at }
+    }
+
+    // Formats an amount like the provider's balance label, keeping its prefix
+    // and decimals ($12.50, JPY 1000, KWD 1.234, or a bare Codex credit count).
+    function creditMoney(bucket, amount) {
+        var label = bucket && bucket.valueLabel ? bucket.valueLabel : ""
+        var prefix = (label.match(/^[^0-9-]*/) || [""])[0]
+        var fraction = label.match(/\.([0-9]+)/)
+        return prefix + Number(amount).toFixed(fraction ? fraction[1].length : 0)
+    }
+
+    // Reads the clock without binding to it: top-ups only change with a new
+    // summary, so the bars need not rebuild every minute.
+    function creditDisplayBucket(bucket) {
+        if (!bucket || !bucket.balanceHistory) return bucket
+        var allowance = creditLedgerAllowance(bucket, Date.now())
+        if (!allowance) return bucket
+        var shown = Object.assign({}, bucket)
+        shown.allowance = allowance
+        shown.creditLedger = true
+        shown.detail = (showUsed ? creditMoney(bucket, allowance.used) + " used of "
+                                 : bucket.valueLabel + " left of ")
+                + creditMoney(bucket, allowance.limit) + " since " + formatShortDateTime(allowance.since)
+        return shown
+    }
+
     function providerQuotaHeight(provider) {
         var buckets = providerQuotaBuckets(provider)
         var height = 0
@@ -1852,7 +1926,7 @@ PluginComponent {
 
     function quotaValue(bucket) {
         if (!bucket) return "--"
-        if (balanceOnlyBucket(bucket)) return bucket.valueLabel
+        if (balanceOnlyBucket(bucket) || bucket.creditLedger) return bucket.valueLabel
         return allowanceLabel(bucket.allowance)
     }
 
@@ -1864,6 +1938,7 @@ PluginComponent {
     function quotaDetail(bucket) {
         if (!bucket) return "Limit unavailable"
         if (balanceOnlyBucket(bucket)) return bucket.detail || "Prepaid balance"
+        if (bucket.creditLedger) return bucket.detail
         if (bucket.kind === "credits") {
             if (showUsed && bucket.valueLabel) return bucket.valueLabel + " used"
             if (!showUsed && bucket.detail) return bucket.detail
@@ -2348,13 +2423,19 @@ PluginComponent {
         return barUsageColors ? usageGradientColor(allowance) : allowanceColor(allowance)
     }
 
-    // Non-credit quotas in helper order (5-hour, weekly, model-scoped). Claude
-    // still honours the per-quota top-bar choices.
+    // Quotas in helper order (5-hour, weekly, model-scoped). Claude still
+    // honours the per-quota top-bar choices. Credits join when their switch
+    // is on and they have a bar: a spend limit or a top-up ledger (ADR-0025).
     function providerBarBuckets(provider) {
         var out = []
-        var buckets = providerQuotaBuckets(provider)
+        var buckets = displayQuotaBuckets(provider)
         for (var i = 0; i < buckets.length; i++) {
-            if (buckets[i].kind === "credits") continue
+            if (buckets[i].kind === "credits") {
+                var shown = provider.id === "claude" ? barShowClaudeCredits
+                          : provider.id === "codex" ? barShowCodexCredits : false
+                if (shown && knownAllowance(buckets[i].allowance)) out.push(buckets[i])
+                continue
+            }
             if (provider.id === "claude" && !claudeBucketShownInBar(buckets[i])) continue
             out.push(buckets[i])
         }
@@ -2414,6 +2495,7 @@ PluginComponent {
         for (var i = 0; i < buckets.length; i++) prefix.push(1)
         function tagAt(k) {
             var bucket = buckets[k]
+            if (bucket && bucket.kind === "credits") return "cr"
             var window = barWindowTag(bucket ? bucket.allowance : null)
             if (!bucket || bucket.kind !== "scoped") return window
             var name = (bucket.label || "").split("·")[0].replace(/\s+/g, "").toLowerCase() || "?"
@@ -3184,7 +3266,7 @@ PluginComponent {
                                         spacing: Theme.spacingS
 
                                         Repeater {
-                                            model: root.providerQuotaBuckets(modelData)
+                                            model: root.displayQuotaBuckets(modelData)
 
                                             QuotaBar {
                                                 width: parent.width

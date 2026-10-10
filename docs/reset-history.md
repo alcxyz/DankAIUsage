@@ -14,6 +14,8 @@ earned-reset count. Left/Used also controls historical allowance percentages.
 The history file is `$XDG_STATE_HOME/dankaiusage/usage-history.json`, falling
 back to `~/.local/state/dankaiusage/usage-history.json`. Read the retained
 events without contacting either provider with `dankaiusage history`.
+The same file keeps a short ledger of observed credit top-ups for the credit
+bars ([ADR-0025](adr/ADR-0025-credit-balance-bars-from-observed-top-ups.md)).
 
 ## Event categories
 

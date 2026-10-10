@@ -33,9 +33,8 @@ constrained quota.
   then weekly and model-scoped limits. Bars follow Left / Used and turn
   warning or error colored when a quota runs low, like the text. Claude
   follows the quota choices in the next group; Codex shows all its non-credit
-  quotas. Credits stay in the dropdown, even when the Codex or Claude credit
-  switch is enabled. Those switches retain their saved values for text mode.
-  The vertical bar is unchanged.
+  quotas. The Codex and Claude credit switches add a `cr` credit bar; see
+  [Credit bars](dropdown.md#credit-bars). The vertical bar is unchanged.
 - **Compact pill** (text mode only, so it is shown while quota bars are off)
   keeps one selected quota per enabled provider rather than hiding a provider.
   Its saved value is kept while quota bars are on.
@@ -72,8 +71,8 @@ remain visible in the dropdown.
   to limits without an individual choice and preserves existing preferences
   on upgrade.
 - **Claude extra-use credits** and **Codex credits** add the credit balance
-  next to the provider's quotas in text mode when the account reports one.
-  Both are off by default and do not add credits to quota-bar mode.
+  next to the provider's quotas in text mode, or a credit bar in quota-bar
+  mode, when the account reports one. Both are off by default.
 
 ## Collection
 

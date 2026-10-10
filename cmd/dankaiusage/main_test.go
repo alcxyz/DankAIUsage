@@ -739,7 +739,8 @@ func TestCodexCreditsBucket(t *testing.T) {
 	if !ok || bucket.ID != "codex-credits" || bucket.Kind != "credits" || bucket.Allowance.Known {
 		t.Fatalf("credits bucket = %+v ok=%v", bucket, ok)
 	}
-	if bucket.ValueLabel != "$12.50" || bucket.Detail != "$12.50 prepaid balance" {
+	if bucket.ValueLabel != "12.50" || bucket.Detail != "12.50 prepaid credits" || bucket.Allowance.Unit != "credits" ||
+		bucket.Balance == nil || *bucket.Balance != 12.5 {
 		t.Fatalf("credits labels = %+v", bucket)
 	}
 
@@ -753,7 +754,7 @@ func TestCodexCreditsBucket(t *testing.T) {
 	}
 
 	numeric := codexRateLimitSnapshot{Credits: &codexCreditsSnapshot{HasCredits: true, Balance: json.RawMessage(`3`)}}
-	if bucket, ok := codexCreditsBucket(numeric); !ok || bucket.ValueLabel != "$3.00" {
+	if bucket, ok := codexCreditsBucket(numeric); !ok || bucket.ValueLabel != "3.00" {
 		t.Fatalf("numeric balance = %+v ok=%v", bucket, ok)
 	}
 	unlimited := codexRateLimitSnapshot{Credits: &codexCreditsSnapshot{Unlimited: true}}
