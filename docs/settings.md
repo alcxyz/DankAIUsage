@@ -8,6 +8,8 @@ collapsing a group never changes a saved value.
 ## Display
 
 - **Show Codex / Show Claude:** disable providers you do not use.
+- **Provider order:** whether Codex or Claude comes first in the top bar, the
+  provider cards, and the per-provider token lines.
 - **Show used allowance:** percentages and bar fill show what is used instead
   of what is left, in the bar and the dropdown. The dropdown's Left / Used
   switch changes the same setting.

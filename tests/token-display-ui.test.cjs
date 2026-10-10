@@ -118,6 +118,39 @@ test("missing totals and provider names do not fabricate token components", () =
     assert.equal(scope.providerTokenBreakdown(unknownProvider), "20 in / 15 cached / 10 out");
 });
 
+test("token row lists each shown provider once both providers are visible", () => {
+    const scope = makeScope();
+    scope.historyProviderName = id => id;
+    scope.providerTokenRows = bindQmlFunction("providerTokenRows", scope);
+    const codex = {id: "codex", name: "Codex", available: true, totals: {total: 100, input: 80, cached: 60, output: 20}};
+    const claude = {id: "claude", name: "Claude", available: false};
+
+    scope.providers = [codex];
+    assert.deepEqual(scope.providerTokenRows(), []);
+    scope.providers = [claude, codex];
+    assert.deepEqual(scope.providerTokenRows(), [
+        {name: "Claude", value: "Unavailable"},
+        {name: "Codex", value: "20 in / 60 cached / 20 out"},
+    ]);
+});
+
+test("provider order puts the chosen provider first and keeps hidden ones out", () => {
+    const scope = {
+        providers: [{id: "codex"}, {id: "claude"}],
+        showCodex: true,
+        showClaude: true,
+        providerOrder: "codex",
+    };
+    const visibleProviders = bindQmlFunction("visibleProviders", scope);
+    const ids = () => visibleProviders().map(provider => provider.id);
+
+    assert.deepEqual(ids(), ["codex", "claude"]);
+    scope.providerOrder = "claude";
+    assert.deepEqual(ids(), ["claude", "codex"]);
+    scope.showClaude = false;
+    assert.deepEqual(ids(), ["codex"]);
+});
+
 test("date labels delegate ordering and clock conventions to the Qt locale", () => {
     const shortDateTime = extractFunction("formatShortDateTime");
     const reset = extractFunction("formatReset");

@@ -156,7 +156,8 @@ assert 'savePluginState(pluginId, "tokenHistoryRange", tokenHistoryRange)' in co
 assert 'Keys.onSpacePressed: tokenRow.selectorOpen = !tokenRow.selectorOpen' in component_text
 assert 'model: root.tokenHistoryRangeChoices()' in component_text
 assert 'root.selectTokenHistoryRange(modelData.key)' in component_text
-assert 'height: selectorOpen ? 56 + tokenRangeFlow.implicitHeight + Theme.spacingXS : 52' in component_text
+assert 'height: selectorOpen ? summaryHeight + 4 + tokenRangeFlow.implicitHeight + Theme.spacingXS : summaryHeight' in component_text
+assert 'providerRows: root.providerTokenRows()' in component_text, 'the overview row lists per-provider token splits'
 assert 'anchors.verticalCenter: tokenRowHeader.verticalCenter' in component_text
 assert 'if (days === 7 || days === 30 || days === 90) return days + "d"' in component_text
 assert 'if (tokenHistoryRange === "period") return provider.period' in component_text

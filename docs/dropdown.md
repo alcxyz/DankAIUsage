@@ -119,9 +119,9 @@ supports keyboard activation and shows unavailable or partial collection
 explicitly.
 
 In Advanced mode, the token-history row above the provider cards is the only
-place token totals are shown; it holds the shared range selector and the
-combined Input / Cached / Output totals. Per-provider token counts are
-available from `dankaiusage summary`.
+place token totals are shown; it holds the shared range selector, the
+combined Input / Cached / Output totals and, when both providers are shown,
+one line per provider with its own split for the same range.
 
 Claude token totals are local Claude Code history only; usage from claude.ai,
 mobile, or other online surfaces is not written to those transcripts.

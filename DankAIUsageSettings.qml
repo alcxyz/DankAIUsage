@@ -16,6 +16,11 @@ PluginSettings {
         { label: "Percent", value: "percent" }
     ]
 
+    readonly property var providerOrderOptions: [
+        { label: "Codex first", value: "codex" },
+        { label: "Claude first", value: "claude" }
+    ]
+
     property var barClaudeWeeklyOverrides: ({})
     property bool barShowClaudeWeeklyValue: true
     property var cachedClaudeWeeklyChoices: []
@@ -278,6 +283,14 @@ PluginSettings {
             label: "Show Claude"
             description: "Claude limits and local token history"
             defaultValue: true
+        }
+
+        SelectionSetting {
+            settingKey: "providerOrder"
+            label: "Provider order"
+            description: "Which provider comes first in the bar and dropdown"
+            options: root.providerOrderOptions
+            defaultValue: "codex"
         }
 
         ToggleSetting {

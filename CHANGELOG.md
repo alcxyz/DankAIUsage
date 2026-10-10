@@ -6,6 +6,10 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+- The Advanced **Local tokens** row shows each provider's Input / Cached / Output split under the combined total again.
+- Added a **Provider order** setting to show Claude before Codex in the top bar and dropdown.
+- Shortened the window-time hover text on quota bars.
+
 - A Claude limit-reset check answered with a rate limit that asks for no wait is now retried at the quota interval for up to an hour before backing off, which usually brings the reset listing back within the hour instead of leaving it missing for most of a day when the check keeps losing to Claude Code's own requests.
 
 - The Advanced warning about a failed Claude limit-reset check now appears only when no listing from the last six hours is available; a rate-limited or unreachable check while a recent result is still shown stays quiet. A sign-in rejection by Claude is still shown beside the listing.
