@@ -27,6 +27,7 @@ PluginComponent {
     property int periodDays: 7
     property bool showCodex: true
     property bool showClaude: true
+    property string providerOrder: "codex"
     property bool barShowPluginIcon: false
     property bool barShowProviderLogos: true
     property bool barShowClaudeSession: true
@@ -185,6 +186,7 @@ PluginComponent {
         periodDays = pluginService.loadPluginData(pluginId, "periodDays", 7) || 7
         showCodex = pluginService.loadPluginData(pluginId, "showCodex", true) !== false
         showClaude = pluginService.loadPluginData(pluginId, "showClaude", true) !== false
+        providerOrder = pluginService.loadPluginData(pluginId, "providerOrder", "codex") === "claude" ? "claude" : "codex"
         barShowPluginIcon = pluginService.loadPluginData(pluginId, "barShowPluginIcon", false) === true
         barShowProviderLogos = pluginService.loadPluginData(pluginId, "barShowProviderLogos", true) !== false
         barShowClaudeSession = pluginService.loadPluginData(pluginId, "barShowClaudeSession", true) !== false
@@ -1547,13 +1549,15 @@ PluginComponent {
     }
 
     function visibleProviders() {
-        var out = []
+        var first = []
+        var rest = []
         for (var i = 0; i < providers.length; i++) {
             if (providers[i].id === "codex" && !showCodex) continue
             if (providers[i].id === "claude" && !showClaude) continue
-            out.push(providers[i])
+            if (providers[i].id === providerOrder) first.push(providers[i])
+            else rest.push(providers[i])
         }
-        return out
+        return first.concat(rest)
     }
 
     function historyMatchesFilters(event) {
@@ -2254,6 +2258,15 @@ PluginComponent {
             return "Includes imported local history from before tracking was enabled."
         if (trackingStatus.startedAt) return "Totals are retained; paused usage is not backfilled on resume."
         return "Enable to seed a persistent total from retained local history."
+    }
+
+    function providerTokenRows() {
+        var list = visibleProviders()
+        if (list.length < 2) return []
+        var out = []
+        for (var i = 0; i < list.length; i++)
+            out.push({ name: list[i].name || historyProviderName(list[i].id), value: providerTokenBreakdown(list[i]) })
+        return out
     }
 
     function providerTokenBreakdown(provider) {
@@ -3047,6 +3060,7 @@ PluginComponent {
                         width: parent.width
                         visible: root.advancedDropdown
                         value: root.filteredGrandTokenBreakdown()
+                        providerRows: root.providerTokenRows()
                     }
 
                     TrackingPanel {
@@ -3958,8 +3972,10 @@ PluginComponent {
     component TokenHistoryRow: StyledRect {
         id: tokenRow
         property string value: ""
+        property var providerRows: []
         property bool selectorOpen: false
-        height: selectorOpen ? 56 + tokenRangeFlow.implicitHeight + Theme.spacingXS : 52
+        readonly property real summaryHeight: 52 + (providerRows.length > 0 ? tokenProviderColumn.implicitHeight + 2 : 0)
+        height: selectorOpen ? summaryHeight + 4 + tokenRangeFlow.implicitHeight + Theme.spacingXS : summaryHeight
         radius: Theme.cornerRadius
         color: Theme.withAlpha(Theme.surfaceVariant, 0.35)
         border.width: activeFocus ? 2 : 1
@@ -3967,6 +3983,7 @@ PluginComponent {
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
         Accessible.name: root.tokenHistoryLabel() + ": " + value
+                + providerRows.map(function(row) { return "; " + row.name + ": " + row.value }).join("")
         Accessible.description: "Open token history range selector"
         Accessible.onPressAction: tokenRow.selectorOpen = !tokenRow.selectorOpen
         Keys.onSpacePressed: tokenRow.selectorOpen = !tokenRow.selectorOpen
@@ -4018,11 +4035,50 @@ PluginComponent {
             elide: Text.ElideRight
             horizontalAlignment: Text.AlignLeft
         }
+        Column {
+            id: tokenProviderColumn
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.spacingS
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.spacingS
+            anchors.top: tokenValue.bottom
+            anchors.topMargin: 2
+            visible: tokenRow.providerRows.length > 0
+
+            Repeater {
+                model: tokenRow.providerRows
+
+                Item {
+                    width: parent.width
+                    height: tokenProviderValue.implicitHeight
+
+                    StyledText {
+                        id: tokenProviderName
+                        text: modelData.name
+                        width: Math.min(implicitWidth, parent.width / 3)
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                        elide: Text.ElideRight
+                    }
+                    StyledText {
+                        id: tokenProviderValue
+                        text: modelData.value
+                        anchors.left: tokenProviderName.right
+                        anchors.leftMargin: Theme.spacingS
+                        anchors.right: parent.right
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                        elide: Text.ElideRight
+                        horizontalAlignment: Text.AlignRight
+                    }
+                }
+            }
+        }
         MouseArea {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: 52
+            height: tokenRow.summaryHeight
             cursorShape: Qt.PointingHandCursor
             onClicked: tokenRow.selectorOpen = !tokenRow.selectorOpen
         }
@@ -4034,7 +4090,7 @@ PluginComponent {
             anchors.leftMargin: Theme.spacingXS
             anchors.rightMargin: Theme.spacingXS
             anchors.top: parent.top
-            anchors.topMargin: 56
+            anchors.topMargin: tokenRow.summaryHeight + 4
             spacing: Theme.spacingXS
             visible: tokenRow.selectorOpen
 
@@ -4482,7 +4538,6 @@ PluginComponent {
                         + "\nReset: " + root.formatShortDateTime(bucket.allowance.resetAt)
                         + (quotaBar.showTime
                            ? "\nThin bar: window time " + (root.showUsed ? "elapsed" : "remaining")
-                             + " (not quota usage)"
                              + (quotaBar.timeScale.count > 0
                                 ? "\nTicks: every " + quotaBar.timeScale.label : "") : "") : ""
             contentItem: StyledText {

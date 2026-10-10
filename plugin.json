@@ -40,6 +40,11 @@
       "type": "boolean",
       "default": true
     },
+    "providerOrder": {
+      "type": "string",
+      "enum": ["codex", "claude"],
+      "default": "codex"
+    },
     "barShowPluginIcon": {
       "type": "boolean",
       "default": false
