@@ -73,6 +73,14 @@ proximity to the limit, regardless of display mode. Both bar layouts show only
 the percentage, without repeating "left" or "used"; the dropdown retains those
 labels.
 
+### Heatmap
+
+The flame button beside **Left / Used** switches quota-bar fills between the
+theme's status colors and a cool-to-hot heatmap, in the dropdown and the top
+bar at once. It changes the same remembered **Heatmap bar colors** setting;
+its colors and whether heat follows usage or pace are chosen in
+[Settings](settings.md#display). Percentages keep the status colors.
+
 ### Reset countdowns
 
 Each quota row shows a locally updated countdown inline after its label; hover

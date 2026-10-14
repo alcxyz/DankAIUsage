@@ -35,12 +35,13 @@ function bindQmlFunction(name, scope) {
 
 
 const now = Date.parse("2026-09-23T18:00:00Z");
-const gradientStops = new Function(`return ${qml.match(/readonly property var usageColorStops: (\[[\s\S]*?\n    \])/)[1]}`)();
+const heatmapStops = new Function(`return ${qml.match(/readonly property var heatmapFixedStops: (\[[\s\S]*?\n    \])/)[1]}`)();
 const Theme = {isLightMode: false, primary: "primary", warning: "warning", error: "error", surfaceVariantText: "muted"};
 
 function makeScope(overrides = {}) {
     const scope = Object.assign({Date, isFinite, Math, Theme, resetClock: now, showUsed: false,
-        brandLogoColors: false, barUsageColors: false, usageColorStops: gradientStops,
+        brandLogoColors: false, barUsageColors: false, heatmapFixedStops: heatmapStops, heatmapPaceFloor: 0.1,
+        heatmapPalette: "fixed", heatmapBasis: "usage",
         Qt: {rgba: (r, g, b) => [r, g, b].map(v => Math.round(v * 100) / 100).join(",")},
         hasError: false, barShowClaudeSession: true, barShowClaudeWeekly: true,
         barShowClaudeCredits: false, barShowCodexCredits: false, barClaudeWeeklyOverrides: {}, providers: [],
@@ -50,7 +51,8 @@ function makeScope(overrides = {}) {
     for (const name of ["knownAllowance", "displayPercent", "allowanceLabel", "allowanceSeverity",
             "allowanceColor", "resetTiming", "barFillColor", "providerQuotaBuckets", "claudeBucketShownInBar",
             "providerBarBuckets", "barProviderGroups", "barLabelKind", "barLabelText", "barWindowTag",
-            "barQuotaTags", "barLabelTemplate", "barTimeLabel", "barCreditAmount", "compactAmount", "usageGradientColor", "providerLogoColor",
+            "barQuotaTags", "barLabelTemplate", "barTimeLabel", "barCreditAmount", "compactAmount", "heatmapStops", "heatmapHeat", "heatmapColor", "srgbToLinear", "linearToSrgb",
+            "toOklab", "oklabMix", "resetTimeProgress", "providerLogoColor",
             "providerBrandColor", "displayQuotaBuckets", "creditDisplayBucket", "creditLedgerAllowance",
             "tokenRangeStartMs", "creditMoney"])
         scope[name] = bindQmlFunction(name, scope);
@@ -233,7 +235,7 @@ test("bar mode is off by default and leaves the text pill unchanged", () => {
     assert.doesNotMatch(vertical, /barQuotaBars/, "vertical pill is unchanged");
 });
 
-test("brand logo colors and the usage gradient are off by default", () => {
+test("brand logo colors and the heatmap are off by default", () => {
     const scope = makeScope();
     assert.match(qml, /property bool brandLogoColors: false/);
     assert.match(qml, /property bool barUsageColors: false/);
@@ -256,21 +258,60 @@ test("brand logo colors apply only to healthy providers", () => {
     assert.equal(scope.providerLogoColor({id: "codex", available: true, error: "x"}), "error");
 });
 
-test("usage gradient runs green, yellow, orange, dark red over percent used", () => {
+test("heatmap runs green, yellow, orange, red over percent used", () => {
     const scope = makeScope({barUsageColors: true});
-    const used = percentUsed => scope.usageGradientColor({known: true, percentUsed});
+    const used = percentUsed => scope.heatmapColor({known: true, percentUsed});
     assert.equal(used(0), "0.26,0.63,0.28");
     assert.equal(used(50), "0.99,0.85,0.21");
     assert.equal(used(75), "0.98,0.55,0");
-    assert.equal(used(100), "0.55,0,0");
-    assert.equal(used(25), "0.63,0.74,0.25", "interpolates between stops");
+    assert.equal(used(100), "0.9,0.22,0.21", "the hottest stop stays readable on dark tracks");
+    assert.equal(used(25), "0.66,0.74,0.27", "blends in OKLab between stops");
+    assert.notEqual(used(25), "0.63,0.74,0.25", "not the muddier RGB average");
     assert.equal(used(-10), used(0), "clamps below 0");
     assert.equal(used(150), used(100), "clamps above 100");
     assert.equal(used(undefined), used(0));
-    assert.equal(scope.usageGradientColor({known: false}), "muted");
-    assert.equal(scope.usageGradientColor(null), "muted");
+    assert.equal(scope.heatmapColor({known: false}), "muted");
+    assert.equal(scope.heatmapColor(null), "muted");
     assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 25)), used(75),
-        "enabled gradient replaces severity colors");
+        "enabled heatmap replaces severity colors");
     scope.hasError = true;
     assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 80)), "error");
+});
+
+test("theme heatmap blends the theme's primary, warning, and error colors", () => {
+    const themeColors = Object.assign({}, Theme, {primary: {r: 0.2, g: 0.4, b: 0.9},
+        warning: {r: 1, g: 0.7, b: 0.1}, error: {r: 0.9, g: 0.1, b: 0.2}});
+    const scope = makeScope({barUsageColors: true, heatmapPalette: "theme", Theme: themeColors});
+    const used = percentUsed => scope.heatmapColor({known: true, percentUsed});
+    assert.equal(used(0), "0.2,0.4,0.9");
+    assert.equal(used(50), "1,0.7,0.1");
+    assert.equal(used(100), "0.9,0.1,0.2");
+    assert.notEqual(used(25), used(0));
+    assert.equal(scope.heatmapColor({known: false}), "muted");
+});
+
+test("pace heat compares usage with window time elapsed", () => {
+    const scope = makeScope({heatmapBasis: "pace"});
+    const window = (percentUsed, elapsed, windowMinutes = 300) => ({known: true, percentUsed, windowMinutes,
+        resetAt: new Date(now + (1 - elapsed) * windowMinutes * 60000).toISOString()});
+    assert.equal(scope.heatmapHeat(window(50, 0.5)), 50, "even pace is the middle");
+    assert.equal(scope.heatmapHeat(window(25, 0.5)), 25, "half pace is cooler");
+    assert.equal(scope.heatmapHeat(window(70, 0.3)), 100, "twice even pace or more is the hottest");
+    assert.equal(scope.heatmapHeat(window(95, 0.95)), 50, "late-window heavy use on pace stays in the middle");
+    assert.equal(scope.heatmapHeat(window(10, 0.01)), 50, "the first tenth of a window is floored");
+    assert.equal(scope.heatmapHeat(window(100, 0.9)), 100, "an empty quota is always the hottest");
+    assert.equal(scope.heatmapHeat({known: true, percentUsed: 40}), 40, "no window falls back to usage");
+    assert.equal(scope.heatmapHeat(window(95, 1.2)), 47.5, "an overdue reset counts as a full window");
+    scope.heatmapBasis = "usage";
+    assert.equal(scope.heatmapHeat(window(70, 0.3)), 70);
+});
+
+test("the dropdown heatmap switch is shared with the top bar", () => {
+    assert.match(qml, /readonly property color fillColor: !root\.barUsageColors \? severityColor\s*: \(root\.hasError \? Theme\.error : root\.heatmapColor\(/,
+        "with the heatmap on, errors use the error color like the top bar");
+    assert.match(qml, /radius: parent\.radius\s*color: quotaBar\.fillColor/, "dropdown allowance fill follows the heatmap");
+    assert.match(qml, /id: quotaBarValue[\s\S]*?color: quotaBar\.severityColor/, "percentages keep the status colors");
+    assert.match(qml, /onClicked: root\.setQuickSetting\("barUsageColors", !root\.barUsageColors\)/);
+    assert.match(qml, /heatmapPalette = [^\n]*=== "theme" \? "theme" : "fixed"/);
+    assert.match(qml, /heatmapBasis = [^\n]*=== "pace" \? "pace" : "usage"/);
 });

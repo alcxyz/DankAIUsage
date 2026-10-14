@@ -116,6 +116,16 @@
     "barUsageColors": {
       "type": "boolean",
       "default": false
+    },
+    "heatmapPalette": {
+      "type": "string",
+      "enum": ["fixed", "theme"],
+      "default": "fixed"
+    },
+    "heatmapBasis": {
+      "type": "string",
+      "enum": ["usage", "pace"],
+      "default": "usage"
     }
   },
   "permissions": ["settings_read", "settings_write", "process"],

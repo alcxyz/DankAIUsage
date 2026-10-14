@@ -16,6 +16,16 @@ PluginSettings {
         { label: "Percent", value: "percent" }
     ]
 
+    readonly property var heatmapPaletteOptions: [
+        { label: "Green to red", value: "fixed" },
+        { label: "Theme colors", value: "theme" }
+    ]
+
+    readonly property var heatmapBasisOptions: [
+        { label: "Usage", value: "usage" },
+        { label: "Pace", value: "pace" }
+    ]
+
     readonly property var providerOrderOptions: [
         { label: "Codex first", value: "codex" },
         { label: "Claude first", value: "claude" }
@@ -269,7 +279,7 @@ PluginSettings {
 
     SettingsGroup {
         title: "Display"
-        summary: "Left / Used and Simple / Advanced also switch from the dropdown."
+        summary: "Left / Used, Simple / Advanced, and the heatmap also switch from the dropdown."
 
         ToggleSetting {
             settingKey: "showCodex"
@@ -298,6 +308,37 @@ PluginSettings {
             label: "Show used allowance"
             description: "Show what is used instead of what is left"
             defaultValue: false
+        }
+
+        ToggleSetting {
+            id: heatmapToggle
+
+            settingKey: "barUsageColors"
+            label: "Heatmap bar colors"
+            description: "Quota bars in the top bar and dropdown shade from cool to hot instead of using the status colors. Percentages keep the status colors."
+            defaultValue: false
+        }
+
+        SettingsGroup {
+            title: "Heatmap options"
+            nested: true
+            visible: heatmapToggle.value
+
+            SelectionSetting {
+                settingKey: "heatmapPalette"
+                label: "Colors"
+                description: "Green through yellow and orange to red, or the theme's accent, warning, and error colors"
+                options: root.heatmapPaletteOptions
+                defaultValue: "fixed"
+            }
+
+            SelectionSetting {
+                settingKey: "heatmapBasis"
+                label: "Heat follows"
+                description: "Usage: how much of each quota is used. Pace: how fast, for the time passed in its window. Even pace is the middle color, twice even pace the hottest, and an empty quota is always the hottest."
+                options: root.heatmapBasisOptions
+                defaultValue: "usage"
+            }
         }
 
         ToggleSetting {
@@ -363,13 +404,6 @@ PluginSettings {
                 maximum: 120
                 defaultValue: 40
                 unit: "px"
-            }
-
-            ToggleSetting {
-                settingKey: "barUsageColors"
-                label: "Color bars by usage"
-                description: "Green to dark red as usage approaches 100%"
-                defaultValue: false
             }
 
             SelectionSetting {

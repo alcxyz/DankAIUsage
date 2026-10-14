@@ -1,7 +1,7 @@
 # Settings
 
-Open **Settings → Plugins → AI Usage**. Left / Used and Simple / Advanced stay
-in the dropdown; everything persistent about the bar lives here. The page is
+Open **Settings → Plugins → AI Usage**. Left / Used, Simple / Advanced, and the
+heatmap switch stay in the dropdown; everything persistent about the bar lives here. The page is
 organised into the groups below. Groups only change what is shown: hiding or
 collapsing a group never changes a saved value.
 
@@ -13,6 +13,23 @@ collapsing a group never changes a saved value.
 - **Show used allowance:** percentages and bar fill show what is used instead
   of what is left, in the bar and the dropdown. The dropdown's Left / Used
   switch changes the same setting.
+- **Heatmap bar colors** (off by default) shades quota-bar fills in the top bar
+  and the dropdown from cool to hot instead of the theme's severity colors.
+  The dropdown's flame button changes the same setting. Percentages, provider
+  summaries, and the vertical pill keep the severity colors, and errors still
+  use the theme's error color. While it is on, **Heatmap options** offer:
+  - **Colors:** green through yellow and orange to red (default), or the
+    theme's accent, warning, and error colors. Fixed colors may have lower
+    contrast with some light or custom themes.
+  - **Heat follows:** **Usage** (default) colors by percent used: yellow at
+    50%, orange at 75%, red at 100%. **Pace** colors by how fast a quota is
+    used for the time passed in its window: even pace is the middle color and
+    twice even pace or more is red, so heavy use late in a window stays calm
+    while a fast start shows hot. The first tenth of a window counts as a
+    tenth, an empty quota is always red, and quotas without a window, such as
+    credits, follow usage.
+
+  See [ADR-0026](adr/ADR-0026-shared-quota-bar-heatmap.md).
 - **Include cached tokens:** controls combined totals; the Input / Cached /
   Output split is always shown.
 
@@ -31,7 +48,8 @@ constrained quota.
 - **Quota bars instead of text** (off by default) replaces the percentages in
   the horizontal bar with small stacked bars per provider: five-hour on top,
   then weekly and model-scoped limits. Bars follow Left / Used and turn
-  warning or error colored when a quota runs low, like the text. Claude
+  warning or error colored when a quota runs low, like the text, unless
+  **Heatmap bar colors** is on. Claude
   follows the quota choices in the next group; Codex shows all its non-credit
   quotas. The Codex and Claude credit switches add a `cr` credit bar; see
   [Credit bars](dropdown.md#credit-bars). The vertical bar is unchanged.
@@ -43,11 +61,6 @@ constrained quota.
 kept while bars are off.
 
 - **Bar width:** 16–120 px, default 40.
-- **Color bars by usage:** off by default. Fills go from green through
-  yellow (50% used) and orange (75%) to dark red (100%) instead of the theme's
-  severity colors. This only affects horizontal quota bars; dropdown quota
-  colors stay unchanged, and errors still use the theme's error color. Fixed
-  colors may have lower contrast with some light or custom themes.
 - **Left label / Right label:** none, a quota tag (`5h`, `w`, or the model
   initial such as `f` for Fable weekly; longer only when two would clash), the
   reset countdown (`2h05`, `4d23h`; elapsed window time with Used), or the
