@@ -301,12 +301,14 @@ test("pace heat compares usage with window time elapsed", () => {
     assert.equal(scope.heatmapHeat(window(10, 0.01)), 50, "the first tenth of a window is floored");
     assert.equal(scope.heatmapHeat(window(100, 0.9)), 100, "an empty quota is always the hottest");
     assert.equal(scope.heatmapHeat({known: true, percentUsed: 40}), 40, "no window falls back to usage");
+    assert.equal(scope.heatmapHeat(window(95, 1.2)), 47.5, "an overdue reset counts as a full window");
     scope.heatmapBasis = "usage";
     assert.equal(scope.heatmapHeat(window(70, 0.3)), 70);
 });
 
 test("the dropdown heatmap switch is shared with the top bar", () => {
-    assert.match(qml, /readonly property color fillColor: root\.barUsageColors\s*\? root\.heatmapColor\(/);
+    assert.match(qml, /readonly property color fillColor: !root\.barUsageColors \? severityColor\s*: \(root\.hasError \? Theme\.error : root\.heatmapColor\(/,
+        "with the heatmap on, errors use the error color like the top bar");
     assert.match(qml, /radius: parent\.radius\s*color: quotaBar\.fillColor/, "dropdown allowance fill follows the heatmap");
     assert.match(qml, /id: quotaBarValue[\s\S]*?color: quotaBar\.severityColor/, "percentages keep the status colors");
     assert.match(qml, /onClicked: root\.setQuickSetting\("barUsageColors", !root\.barUsageColors\)/);

@@ -2428,8 +2428,10 @@ PluginComponent {
     function heatmapHeat(allowance) {
         var used = Math.max(0, Math.min(100, allowance.percentUsed || 0))
         if (heatmapBasis !== "pace" || used >= 100) return used
-        var elapsed = resetTimeProgress(allowance, resetClock, true)
-        if (elapsed < 0) return used
+        // An overdue reset counts as a full window until the next poll.
+        var timing = resetTiming(allowance, resetClock)
+        if (!timing || !(timing.durationMs > 0) || timing.remainingMs > timing.durationMs) return used
+        var elapsed = 1 - Math.max(0, timing.remainingMs) / timing.durationMs
         return Math.min(100, used / (2 * Math.max(elapsed, heatmapPaceFloor)))
     }
 
@@ -4760,8 +4762,8 @@ PluginComponent {
         readonly property bool showTime: root.advancedDropdown && timeProgress >= 0
         readonly property var timeScale: root.resetTimeScale(bucket ? bucket.allowance : null)
         readonly property color severityColor: root.allowanceColor(bucket ? bucket.allowance : null)
-        readonly property color fillColor: root.barUsageColors
-                ? root.heatmapColor(bucket ? bucket.allowance : null) : severityColor
+        readonly property color fillColor: !root.barUsageColors ? severityColor
+                : (root.hasError ? Theme.error : root.heatmapColor(bucket ? bucket.allowance : null))
         height: root.quotaRowHeight(bucket)
 
         HoverHandler { id: resetHover }
