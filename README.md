@@ -25,6 +25,7 @@ monitoring app.
 - **Top bar** with provider logos and the quotas you choose; percentages
   take the same warning colors.
 - **Left / Used** switch for all percentages and bars at once.
+- Optional **heatmap** bar colors, by usage or by pace, in fixed or theme colors.
 - **Opt-in automation**: a one-shot Codex reset that fires once near expiry
   or exhaustion, and Claude prime as a session-window scheduler. Both are off
   by default. The Codex control is always accessible in plugin settings and

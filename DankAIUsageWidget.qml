@@ -45,6 +45,8 @@ PluginComponent {
     property bool barPaceMarker: false
     property bool brandLogoColors: false
     property bool barUsageColors: false
+    property string heatmapPalette: "fixed"
+    property string heatmapBasis: "usage"
     property bool historyShowScheduledShort: false
     property bool historyShowOther: true
     property bool historyShowScheduledWeekly: false
@@ -205,6 +207,8 @@ PluginComponent {
         barPaceMarker = pluginService.loadPluginData(pluginId, "barPaceMarker", false) === true
         brandLogoColors = pluginService.loadPluginData(pluginId, "brandLogoColors", false) === true
         barUsageColors = pluginService.loadPluginData(pluginId, "barUsageColors", false) === true
+        heatmapPalette = pluginService.loadPluginData(pluginId, "heatmapPalette", "fixed") === "theme" ? "theme" : "fixed"
+        heatmapBasis = pluginService.loadPluginData(pluginId, "heatmapBasis", "usage") === "pace" ? "pace" : "usage"
         enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
         if (!wasEnabled && enableClaudePrime) {
             lastClaudeAutoPrimeFailed = false
@@ -2395,32 +2399,87 @@ PluginComponent {
         return Theme.isLightMode ? "#000000" : "#FFFFFF"
     }
 
-    // Opt-in exception to ADR-0018: fixed gradient over percent used for
-    // quota-bar fills. Stops: green, yellow at 50, orange at 75, dark red at 100.
-    readonly property var usageColorStops: [
-        [0, 0.26, 0.63, 0.28], [50, 0.99, 0.85, 0.21], [75, 0.98, 0.55, 0.0], [100, 0.55, 0.0, 0.0]
+    // Opt-in exception to ADR-0018 (ADR-0021, ADR-0026): heatmap colors for
+    // quota-bar fills in the top bar and dropdown. The fixed palette runs
+    // green, yellow at 50, orange at 75, red at 100; the theme palette runs
+    // primary, warning at 50, error at 100. Both blend in OKLab so mid-tones
+    // stay clean instead of turning brown.
+    readonly property var heatmapFixedStops: [
+        [0, 0.26, 0.63, 0.28], [50, 0.99, 0.85, 0.21], [75, 0.98, 0.55, 0.0], [100, 0.90, 0.22, 0.21]
     ]
+    // With the pace basis, the first tenth of a window counts as a tenth so a
+    // little early use does not read as a runaway rate.
+    readonly property real heatmapPaceFloor: 0.1
 
-    function usageGradientColor(allowance) {
-        if (!knownAllowance(allowance)) return Theme.surfaceVariantText
-        var p = Math.max(0, Math.min(100, allowance.percentUsed || 0))
-        var s = usageColorStops
-        for (var i = 1; i < s.length; i++) {
-            if (p > s[i][0]) continue
-            var t = (p - s[i - 1][0]) / (s[i][0] - s[i - 1][0])
-            return Qt.rgba(s[i - 1][1] + (s[i][1] - s[i - 1][1]) * t,
-                           s[i - 1][2] + (s[i][2] - s[i - 1][2]) * t,
-                           s[i - 1][3] + (s[i][3] - s[i - 1][3]) * t, 1)
+    function heatmapStops() {
+        if (heatmapPalette === "theme")
+            return [[0, Theme.primary], [50, Theme.warning], [100, Theme.error]]
+        var out = []
+        for (var i = 0; i < heatmapFixedStops.length; i++) {
+            var s = heatmapFixedStops[i]
+            out.push([s[0], {r: s[1], g: s[2], b: s[3]}])
         }
-        return Qt.rgba(s[s.length - 1][1], s[s.length - 1][2], s[s.length - 1][3], 1)
+        return out
     }
 
-    // Quota-bar mode (ADR-0021): fill uses the same severity colors as the
-    // text pill unless the usage gradient is enabled.
+    // Heat on 0-100. Usage: percent used. Pace: usage rate against window time
+    // elapsed, so even pace is 50 and twice even pace is 100. An exhausted
+    // quota is always 100; quotas without a window fall back to usage.
+    function heatmapHeat(allowance) {
+        var used = Math.max(0, Math.min(100, allowance.percentUsed || 0))
+        if (heatmapBasis !== "pace" || used >= 100) return used
+        var elapsed = resetTimeProgress(allowance, resetClock, true)
+        if (elapsed < 0) return used
+        return Math.min(100, used / (2 * Math.max(elapsed, heatmapPaceFloor)))
+    }
+
+    function heatmapColor(allowance) {
+        if (!knownAllowance(allowance)) return Theme.surfaceVariantText
+        var stops = heatmapStops()
+        var p = heatmapHeat(allowance)
+        for (var i = 1; i < stops.length; i++) {
+            if (p > stops[i][0]) continue
+            return oklabMix(stops[i - 1][1], stops[i][1], (p - stops[i - 1][0]) / (stops[i][0] - stops[i - 1][0]))
+        }
+        return oklabMix(stops[stops.length - 1][1], stops[stops.length - 1][1], 0)
+    }
+
+    function srgbToLinear(c) {
+        return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+    }
+
+    function linearToSrgb(c) {
+        c = Math.max(0, Math.min(1, c))
+        return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055
+    }
+
+    function toOklab(c) {
+        var r = srgbToLinear(c.r), g = srgbToLinear(c.g), b = srgbToLinear(c.b)
+        var l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+        var m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+        var s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+        return [0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+                1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+                0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s]
+    }
+
+    function oklabMix(from, to, t) {
+        var a = toOklab(from), b = toOklab(to)
+        var L = a[0] + (b[0] - a[0]) * t, A = a[1] + (b[1] - a[1]) * t, B = a[2] + (b[2] - a[2]) * t
+        var l = Math.pow(L + 0.3963377774 * A + 0.2158037573 * B, 3)
+        var m = Math.pow(L - 0.1055613458 * A - 0.0638541728 * B, 3)
+        var s = Math.pow(L - 0.0894841775 * A - 1.2914855480 * B, 3)
+        return Qt.rgba(linearToSrgb(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+                       linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+                       linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s), 1)
+    }
+
+    // Quota-bar fill (ADR-0021): the same severity colors as the text pill
+    // unless the heatmap is on.
     function barFillColor(bucket) {
         if (hasError) return Theme.error
         var allowance = bucket ? bucket.allowance : null
-        return barUsageColors ? usageGradientColor(allowance) : allowanceColor(allowance)
+        return barUsageColors ? heatmapColor(allowance) : allowanceColor(allowance)
     }
 
     // Quotas in helper order (5-hour, weekly, model-scoped). Claude still
@@ -2947,7 +3006,7 @@ PluginComponent {
                         }
                     }
 
-                    // View controls: detail level and allowance direction.
+                    // View controls: detail level, bar colors, and allowance direction.
                     Item {
                         width: parent.width
                         height: 30
@@ -2962,7 +3021,24 @@ PluginComponent {
                             onClicked: root.setDropdownMode(root.advancedDropdown ? "simple" : "advanced")
                         }
 
+                        DankActionButton {
+                            id: heatmapButton
+                            buttonSize: 30
+                            iconName: "local_fire_department"
+                            iconColor: root.barUsageColors ? Theme.primary : Theme.surfaceVariantText
+                            tooltipText: root.barUsageColors ? "Heatmap bar colors on; switch to status colors"
+                                                             : "Status bar colors; switch to heatmap"
+                            anchors.right: usedSwitch.left
+                            anchors.rightMargin: Theme.spacingS
+                            anchors.verticalCenter: parent.verticalCenter
+                            Accessible.role: Accessible.CheckBox
+                            Accessible.name: "Heatmap bar colors"
+                            Accessible.checked: root.barUsageColors
+                            onClicked: root.setQuickSetting("barUsageColors", !root.barUsageColors)
+                        }
+
                         SegmentSwitch {
+                            id: usedSwitch
                             anchors.right: parent.right
                             offLabel: "Left"
                             onLabel: "Used"
@@ -4684,6 +4760,8 @@ PluginComponent {
         readonly property bool showTime: root.advancedDropdown && timeProgress >= 0
         readonly property var timeScale: root.resetTimeScale(bucket ? bucket.allowance : null)
         readonly property color severityColor: root.allowanceColor(bucket ? bucket.allowance : null)
+        readonly property color fillColor: root.barUsageColors
+                ? root.heatmapColor(bucket ? bucket.allowance : null) : severityColor
         height: root.quotaRowHeight(bucket)
 
         HoverHandler { id: resetHover }
@@ -4767,7 +4845,7 @@ PluginComponent {
                 width: parent.width * root.quotaProgress(bucket) / 100
                 height: parent.height
                 radius: parent.radius
-                color: quotaBar.severityColor
+                color: quotaBar.fillColor
 
                 Behavior on width {
                     NumberAnimation { duration: Theme.mediumDuration; easing.type: Theme.standardEasing }

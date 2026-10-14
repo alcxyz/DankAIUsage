@@ -6,6 +6,7 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+- **Color bars by usage** is now **Heatmap bar colors** under Display. It also colors the dropdown's quota bars, toggles from a flame button in the dropdown, blends without muddy middle tones, and ends in a brighter red. New options use your theme's colors and follow pace (how fast you use a quota for the time passed in its window) instead of the amount used.
 - The Advanced **Local tokens** row shows each provider's Input / Cached / Output split again, in aligned columns under a **Total** line.
 - Added a **Provider order** setting to show Claude before Codex in the top bar and dropdown.
 - Shortened the window-time hover text on quota bars.

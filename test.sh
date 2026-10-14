@@ -46,6 +46,8 @@ assert plugin["settings_schema"]["barPaceMarker"] == {"type": "boolean", "defaul
 # Fixed brand and gradient colors are opt-in exceptions to ADR-0018.
 assert plugin["settings_schema"]["brandLogoColors"] == {"type": "boolean", "default": False}
 assert plugin["settings_schema"]["barUsageColors"] == {"type": "boolean", "default": False}
+assert plugin["settings_schema"]["heatmapPalette"] == {"type": "string", "enum": ["fixed", "theme"], "default": "fixed"}
+assert plugin["settings_schema"]["heatmapBasis"] == {"type": "string", "enum": ["usage", "pace"], "default": "usage"}
 assert plugin["settings_schema"]["barQuotaBarWidth"] == {"type": "integer", "default": 40, "minimum": 16, "maximum": 120}
 for side in ("barLabelLeft", "barLabelRight"):
     assert plugin["settings_schema"][side] == {"type": "string", "enum": ["none", "tag", "time", "percent"], "default": "none"}
