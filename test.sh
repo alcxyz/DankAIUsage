@@ -309,7 +309,8 @@ for expected in (
 assert component.count("visible: root.advancedDropdown\n") >= 3
 assert component.count('onClicked: root.setDropdownMode(') == 1
 assert component.count('onClicked: root.setQuickSetting("showUsed",') == 1
-assert 'model: root.displayQuotaBuckets(modelData)' in component
+assert 'model: root.displayQuotaBuckets(quotaColumn.provider).length' in component
+assert 'bucket: root.displayQuotaBuckets(quotaColumn.provider)[index] || null' in component
 assert 'visible: root.providerQuotaBuckets(modelData).length === 0' in component
 assert 'visible: text !== ""' in component
 assert 'visible: root.hasError && root.errorText !== ""' in component

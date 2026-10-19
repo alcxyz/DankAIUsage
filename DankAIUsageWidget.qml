@@ -3363,16 +3363,20 @@ PluginComponent {
                                     }
 
                                     Column {
+                                        id: quotaColumn
+                                        readonly property var provider: modelData
                                         width: parent.width
                                         height: root.providerQuotaHeight(modelData)
                                         spacing: Theme.spacingS
 
+                                        // A count model keeps the bars (and their width animation)
+                                        // when only the bucket values change.
                                         Repeater {
-                                            model: root.displayQuotaBuckets(modelData)
+                                            model: root.displayQuotaBuckets(quotaColumn.provider).length
 
                                             QuotaBar {
                                                 width: parent.width
-                                                bucket: modelData
+                                                bucket: root.displayQuotaBuckets(quotaColumn.provider)[index] || null
                                             }
                                         }
 
