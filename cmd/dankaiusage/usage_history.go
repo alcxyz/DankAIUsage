@@ -108,6 +108,7 @@ type usageHistoryState struct {
 	Observations map[string]usageHistoryObservation       `json:"observations"`
 	Credits      map[string]usageHistoryCreditObservation `json:"credits"`
 	Events       []UsageHistoryEvent                      `json:"events"`
+	Balances     map[string]creditBalanceLedger           `json:"balances,omitempty"`
 }
 
 type codexResetHistoryRecord struct {
@@ -246,6 +247,7 @@ func observeUsageHistory(path string, now time.Time, providers []ProviderUsage) 
 		for _, provider := range providers {
 			observeProviderHistory(&state, provider, now)
 		}
+		observeCreditBalances(&state, providers, now)
 		pruneUsageHistory(&state, now)
 		if err := decorateUsageHistoryEvents(state.Events); err != nil {
 			return err

@@ -65,8 +65,9 @@ this endpoint (ADR-0001); this is the same identity, stated precisely.
 - In the widget, a spendable Claude reset shows under the Claude card in
   Advanced: the generic resets line (title, expiry, countdown) and a
   **Use reset now** action that needs a second click within fifteen seconds and
-  shows what it does before that click. Simple mode only mentions that a reset
-  is available. Uncertain or failed attempts and this session's result remain
+  shows what it does before that click, naming the limits the grant clears.
+  Simple mode does not mention resets (amended 2026-10-04; it originally
+  noted that one was available). Uncertain or failed attempts and this session's result remain
   visible in either mode, and an unconfirmed attempt replaces the use button
   with a single-click retry of the same request. There is no automatic or armed use and no setting:
   spending the reset is always a deliberate, confirmed action.

@@ -35,21 +35,26 @@ function bindQmlFunction(name, scope) {
 
 
 const now = Date.parse("2026-09-23T18:00:00Z");
-const gradientStops = new Function(`return ${qml.match(/readonly property var usageColorStops: (\[[\s\S]*?\n    \])/)[1]}`)();
+const heatmapStops = new Function(`return ${qml.match(/readonly property var heatmapFixedStops: (\[[\s\S]*?\n    \])/)[1]}`)();
 const Theme = {isLightMode: false, primary: "primary", warning: "warning", error: "error", surfaceVariantText: "muted"};
 
 function makeScope(overrides = {}) {
     const scope = Object.assign({Date, isFinite, Math, Theme, resetClock: now, showUsed: false,
-        brandLogoColors: false, barUsageColors: false, usageColorStops: gradientStops,
+        brandLogoColors: false, barUsageColors: false, heatmapFixedStops: heatmapStops, heatmapPaceFloor: 0.1,
+        heatmapPalette: "fixed", heatmapBasis: "usage",
         Qt: {rgba: (r, g, b) => [r, g, b].map(v => Math.round(v * 100) / 100).join(",")},
         hasError: false, barShowClaudeSession: true, barShowClaudeWeekly: true,
-        barShowClaudeCredits: false, barClaudeWeeklyOverrides: {}, providers: []}, overrides);
+        barShowClaudeCredits: false, barShowCodexCredits: false, barClaudeWeeklyOverrides: {}, providers: [],
+        tokenHistoryRange: "7d", periodDays: 7, trackingStatus: {},
+        formatShortDateTime: value => value}, overrides);
     scope.root = scope;
     for (const name of ["knownAllowance", "displayPercent", "allowanceLabel", "allowanceSeverity",
             "allowanceColor", "resetTiming", "barFillColor", "providerQuotaBuckets", "claudeBucketShownInBar",
             "providerBarBuckets", "barProviderGroups", "barLabelKind", "barLabelText", "barWindowTag",
-            "barQuotaTags", "barLabelTemplate", "barTimeLabel", "usageGradientColor", "providerLogoColor",
-            "providerBrandColor"])
+            "barQuotaTags", "barLabelTemplate", "barTimeLabel", "barCreditAmount", "compactAmount", "heatmapStops", "heatmapHeat", "heatmapColor", "srgbToLinear", "linearToSrgb",
+            "toOklab", "oklabMix", "resetTimeProgress", "providerLogoColor",
+            "providerBrandColor", "displayQuotaBuckets", "creditDisplayBucket", "creditLedgerAllowance",
+            "tokenRangeStartMs", "creditMoney"])
         scope[name] = bindQmlFunction(name, scope);
     scope.visibleProviders = () => scope.providers;
     return scope;
@@ -65,22 +70,55 @@ const weekly = bucket("weekly", "Weekly", 10080, "weekly");
 const fableWeekly = bucket("scoped", "Fable · weekly", 10080, "weekly");
 const credits = {id: "credits", kind: "credits", label: "Credits", allowance: {known: true, percentRemaining: 50}};
 
-test("quota bars skip credits and keep Claude's per-quota choices", () => {
+test("quota bars add credits only when their switch is on and keep Claude's per-quota choices", () => {
     const scope = makeScope();
+    const balanceOnly = {id: "balance", kind: "credits", label: "Credits", allowance: {known: false}, valueLabel: "$5.00"};
     const claude = {id: "claude", quotaBuckets: [session, weekly, fableWeekly, credits]};
-    const codex = {id: "codex", quotaBuckets: [session, weekly, credits]};
+    const codex = {id: "codex", quotaBuckets: [session, weekly, credits, balanceOnly]};
     assert.deepEqual(scope.providerBarBuckets(codex), [session, weekly]);
+    assert.deepEqual(scope.providerBarBuckets(claude), [session, weekly, fableWeekly]);
     scope.barShowClaudeCredits = true;
     scope.barShowCodexCredits = true;
-    assert.deepEqual(scope.providerBarBuckets(codex), [session, weekly], "Codex credit preference is for text mode only");
-    assert.deepEqual(scope.providerBarBuckets(claude), [session, weekly, fableWeekly]);
+    assert.deepEqual(scope.providerBarBuckets(codex), [session, weekly, credits],
+        "a balance without a top-up ledger has no bar");
+    assert.deepEqual(scope.providerBarBuckets(claude), [session, weekly, fableWeekly, credits]);
     scope.barShowClaudeSession = false;
     scope.barClaudeWeeklyOverrides = {[weekly.id]: false};
+    scope.barShowClaudeCredits = false;
     assert.deepEqual(scope.providerBarBuckets(claude), [fableWeekly]);
     scope.providers = [codex, {id: "claude", quotaBuckets: [credits]}];
     const groups = scope.barProviderGroups();
     assert.equal(groups.length, 1, "providers without bar quotas are omitted");
-    assert.deepEqual(groups[0].tags, ["5h", "w"]);
+    assert.deepEqual(groups[0].tags, ["5h", "w", "cr"]);
+});
+
+test("a prepaid balance is measured against the top-ups in the token range", () => {
+    const day = 86400000;
+    const at = daysAgo => new Date(now - daysAgo * day).toISOString();
+    // Bought 1000 ten days ago, spent 500, bought 500 more two days ago.
+    const prepaid = {id: "codex-credits", kind: "credits", label: "Credits", allowance: {known: false},
+        valueLabel: "$1000.00", balance: 1000,
+        balanceHistory: {since: at(10), topUps: [{at: at(10), amount: 1000, before: 0}, {at: at(2), amount: 500, before: 500}]}};
+    const scope = makeScope({tokenHistoryRange: "30d"});
+
+    let allowance = scope.creditLedgerAllowance(prepaid, now);
+    assert.deepEqual([allowance.limit, allowance.remaining, allowance.percentRemaining], [1500, 1000, 67]);
+    scope.tokenHistoryRange = "7d";
+    allowance = scope.creditLedgerAllowance(prepaid, now);
+    assert.deepEqual([allowance.limit, allowance.remaining], [1000, 1000], "leftover before the latest buy carries over");
+    scope.tokenHistoryRange = "5h";
+    assert.equal(scope.creditLedgerAllowance(prepaid, now).limit, 1000, "the latest buy is always included");
+    scope.tokenHistoryRange = "tracked";
+    assert.equal(scope.creditLedgerAllowance(prepaid, now).limit, 1500, "tracked without a start uses every top-up");
+
+    const shown = scope.creditDisplayBucket(prepaid);
+    assert.equal(shown.creditLedger, true);
+    assert.equal(shown.detail, `$1000.00 left of $1500.00 since ${at(10)}`);
+    assert.equal(scope.creditLedgerAllowance(Object.assign({}, prepaid, {balanceHistory: null}), now), null);
+    assert.equal(scope.creditMoney({valueLabel: "JPY 1000"}, 1500), "JPY 1500");
+    assert.equal(scope.creditMoney({valueLabel: "KWD 1.234"}, 1.5), "KWD 1.500");
+    assert.equal(scope.creditMoney({valueLabel: "62492.69"}, 70000), "70000.00");
+    assert.equal(scope.creditLedgerAllowance(credits, now), null, "a spend limit keeps its own allowance");
 });
 
 test("provider names identify quota-bar groups when logos are disabled", () => {
@@ -144,6 +182,32 @@ test("time labels count down, show elapsed time with Used, and never guess", () 
     assert.equal(scope.barTimeLabel(at(61)), "", "unknown window length has no elapsed time");
 });
 
+test("credit bars show their amount in the time slot", () => {
+    const scope = makeScope();
+    assert.equal(scope.compactAmount(0), "0");
+    assert.equal(scope.compactAmount(4.5), "4.5");
+    assert.equal(scope.compactAmount(9), "9");
+    assert.equal(scope.compactAmount(850.4), "850");
+    assert.equal(scope.compactAmount(999.6), "1k");
+    assert.equal(scope.compactAmount(1234), "1.2k");
+    assert.equal(scope.compactAmount(12345), "12k");
+    assert.equal(scope.compactAmount(999700), "1M");
+    assert.equal(scope.compactAmount(2500000), "2.5M");
+    assert.equal(scope.compactAmount(999.6e6), "1B");
+    assert.equal(scope.compactAmount(12e9), "12B");
+    assert.equal(scope.compactAmount(1e15), ">1T", "never wider than the column");
+    const ledger = {kind: "credits", creditLedger: true, valueLabel: "1000",
+        allowance: {known: true, used: 500, remaining: 1000, limit: 1500}};
+    assert.equal(scope.barLabelText("time", ledger, "cr"), "1k");
+    const spend = {kind: "credits", valueLabel: "$12.50 / $50.00",
+        allowance: {known: true, used: 1250, remaining: 3750, limit: 5000}};
+    assert.equal(scope.barLabelText("time", spend, "cr"), "38");
+    assert.equal(scope.barCreditAmount({kind: "credits", allowance: {known: false}}), "");
+    scope.showUsed = true;
+    assert.equal(scope.barLabelText("time", ledger, "cr"), "500");
+    assert.equal(scope.barLabelText("time", spend, "cr"), "13");
+});
+
 test("labels and their column widths", () => {
     const scope = makeScope();
     assert.equal(scope.barLabelKind("percent"), "percent");
@@ -171,7 +235,7 @@ test("bar mode is off by default and leaves the text pill unchanged", () => {
     assert.doesNotMatch(vertical, /barQuotaBars/, "vertical pill is unchanged");
 });
 
-test("brand logo colors and the usage gradient are off by default", () => {
+test("brand logo colors and the heatmap are off by default", () => {
     const scope = makeScope();
     assert.match(qml, /property bool brandLogoColors: false/);
     assert.match(qml, /property bool barUsageColors: false/);
@@ -194,21 +258,60 @@ test("brand logo colors apply only to healthy providers", () => {
     assert.equal(scope.providerLogoColor({id: "codex", available: true, error: "x"}), "error");
 });
 
-test("usage gradient runs green, yellow, orange, dark red over percent used", () => {
+test("heatmap runs green, yellow, orange, red over percent used", () => {
     const scope = makeScope({barUsageColors: true});
-    const used = percentUsed => scope.usageGradientColor({known: true, percentUsed});
+    const used = percentUsed => scope.heatmapColor({known: true, percentUsed});
     assert.equal(used(0), "0.26,0.63,0.28");
     assert.equal(used(50), "0.99,0.85,0.21");
     assert.equal(used(75), "0.98,0.55,0");
-    assert.equal(used(100), "0.55,0,0");
-    assert.equal(used(25), "0.63,0.74,0.25", "interpolates between stops");
+    assert.equal(used(100), "0.9,0.22,0.21", "the hottest stop stays readable on dark tracks");
+    assert.equal(used(25), "0.66,0.74,0.27", "blends in OKLab between stops");
+    assert.notEqual(used(25), "0.63,0.74,0.25", "not the muddier RGB average");
     assert.equal(used(-10), used(0), "clamps below 0");
     assert.equal(used(150), used(100), "clamps above 100");
     assert.equal(used(undefined), used(0));
-    assert.equal(scope.usageGradientColor({known: false}), "muted");
-    assert.equal(scope.usageGradientColor(null), "muted");
+    assert.equal(scope.heatmapColor({known: false}), "muted");
+    assert.equal(scope.heatmapColor(null), "muted");
     assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 25)), used(75),
-        "enabled gradient replaces severity colors");
+        "enabled heatmap replaces severity colors");
     scope.hasError = true;
     assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 80)), "error");
+});
+
+test("theme heatmap blends the theme's primary, warning, and error colors", () => {
+    const themeColors = Object.assign({}, Theme, {primary: {r: 0.2, g: 0.4, b: 0.9},
+        warning: {r: 1, g: 0.7, b: 0.1}, error: {r: 0.9, g: 0.1, b: 0.2}});
+    const scope = makeScope({barUsageColors: true, heatmapPalette: "theme", Theme: themeColors});
+    const used = percentUsed => scope.heatmapColor({known: true, percentUsed});
+    assert.equal(used(0), "0.2,0.4,0.9");
+    assert.equal(used(50), "1,0.7,0.1");
+    assert.equal(used(100), "0.9,0.1,0.2");
+    assert.notEqual(used(25), used(0));
+    assert.equal(scope.heatmapColor({known: false}), "muted");
+});
+
+test("pace heat compares usage with window time elapsed", () => {
+    const scope = makeScope({heatmapBasis: "pace"});
+    const window = (percentUsed, elapsed, windowMinutes = 300) => ({known: true, percentUsed, windowMinutes,
+        resetAt: new Date(now + (1 - elapsed) * windowMinutes * 60000).toISOString()});
+    assert.equal(scope.heatmapHeat(window(50, 0.5)), 50, "even pace is the middle");
+    assert.equal(scope.heatmapHeat(window(25, 0.5)), 25, "half pace is cooler");
+    assert.equal(scope.heatmapHeat(window(70, 0.3)), 100, "twice even pace or more is the hottest");
+    assert.equal(scope.heatmapHeat(window(95, 0.95)), 50, "late-window heavy use on pace stays in the middle");
+    assert.equal(scope.heatmapHeat(window(10, 0.01)), 50, "the first tenth of a window is floored");
+    assert.equal(scope.heatmapHeat(window(100, 0.9)), 100, "an empty quota is always the hottest");
+    assert.equal(scope.heatmapHeat({known: true, percentUsed: 40}), 40, "no window falls back to usage");
+    assert.equal(scope.heatmapHeat(window(95, 1.2)), 47.5, "an overdue reset counts as a full window");
+    scope.heatmapBasis = "usage";
+    assert.equal(scope.heatmapHeat(window(70, 0.3)), 70);
+});
+
+test("the dropdown heatmap switch is shared with the top bar", () => {
+    assert.match(qml, /readonly property color fillColor: !root\.barUsageColors \? severityColor\s*: \(root\.hasError \? Theme\.error : root\.heatmapColor\(/,
+        "with the heatmap on, errors use the error color like the top bar");
+    assert.match(qml, /radius: parent\.radius\s*color: quotaBar\.fillColor/, "dropdown allowance fill follows the heatmap");
+    assert.match(qml, /id: quotaBarValue[\s\S]*?color: quotaBar\.severityColor/, "percentages keep the status colors");
+    assert.match(qml, /onClicked: root\.setQuickSetting\("barUsageColors", !root\.barUsageColors\)/);
+    assert.match(qml, /heatmapPalette = [^\n]*=== "theme" \? "theme" : "fixed"/);
+    assert.match(qml, /heatmapBasis = [^\n]*=== "pace" \? "pace" : "usage"/);
 });

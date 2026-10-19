@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -106,6 +107,10 @@ type QuotaBucket struct {
 	Allowance  Allowance `json:"allowance"`
 	ValueLabel string    `json:"valueLabel,omitempty"`
 	Detail     string    `json:"detail,omitempty"`
+	// Balance is a prepaid balance in major currency units; BalanceHistory
+	// lists the observed top-ups the dropdown and bar measure it against.
+	Balance        *float64              `json:"balance,omitempty"`
+	BalanceHistory *CreditBalanceHistory `json:"balanceHistory,omitempty"`
 }
 
 type UsageReset struct {
@@ -824,23 +829,32 @@ type codexCreditsSnapshot struct {
 }
 
 func (credits *codexCreditsSnapshot) balanceLabel() string {
-	if credits == nil || len(credits.Balance) == 0 {
+	value, ok := credits.balanceValue()
+	if !ok {
 		return ""
+	}
+	// Codex reports a credit count, not money.
+	return strconv.FormatFloat(value, 'f', 2, 64)
+}
+
+func (credits *codexCreditsSnapshot) balanceValue() (float64, bool) {
+	if credits == nil || len(credits.Balance) == 0 {
+		return 0, false
 	}
 	var text string
 	if err := json.Unmarshal(credits.Balance, &text); err != nil {
 		var number float64
 		if err := json.Unmarshal(credits.Balance, &number); err != nil {
-			return ""
+			return 0, false
 		}
 		text = strconv.FormatFloat(number, 'f', -1, 64)
 	}
 	text = strings.TrimSpace(strings.TrimPrefix(text, "$"))
 	value, err := strconv.ParseFloat(text, 64)
 	if err != nil || value < 0 {
-		return ""
+		return 0, false
 	}
-	return "$" + strconv.FormatFloat(value, 'f', 2, 64)
+	return value, true
 }
 
 func codexCreditsBucket(snapshot codexRateLimitSnapshot) (QuotaBucket, bool) {
@@ -849,7 +863,7 @@ func codexCreditsBucket(snapshot codexRateLimitSnapshot) (QuotaBucket, bool) {
 		return QuotaBucket{}, false
 	}
 	allowance := makeUnknownAllowance("credits", time.Time{})
-	allowance.Unit = "currency"
+	allowance.Unit = "credits"
 	allowance.Source = "codex app-server"
 	bucket := QuotaBucket{
 		ID:        "codex-credits",
@@ -868,8 +882,11 @@ func codexCreditsBucket(snapshot codexRateLimitSnapshot) (QuotaBucket, bool) {
 		bucket.Detail = "Prepaid credits available; balance not reported"
 		return bucket, true
 	}
+	if value, ok := credits.balanceValue(); ok {
+		bucket.Balance = &value
+	}
 	bucket.ValueLabel = balance
-	bucket.Detail = balance + " prepaid balance"
+	bucket.Detail = balance + " prepaid credits"
 	return bucket, true
 }
 
@@ -949,6 +966,10 @@ func collectCodexSubscriptionLimitsWithClock(now time.Time, refreshInterval time
 		if balance := snapshot.Credits.balanceLabel(); balance != "" {
 			meta["creditsBalance"] = balance
 		}
+	} else if snapshot.Credits != nil {
+		// An emptied balance hides the bucket; the top-up ledger still
+		// needs the zero so a later refill counts as a top-up.
+		meta[emptyCreditBucketMeta] = "codex-credits"
 	}
 	return session, weekly, codexSnapshotExtraLimits(limits.RateLimitsByLimitID, snapshot.LimitID, now), additional, resets, meta, refresh.FetchedAt, nil
 }
@@ -1594,6 +1615,9 @@ type claudeOAuthUsageCache struct {
 	ClaudeVersion             string          `json:"claudeVersion,omitempty"`
 	Invalidated               bool            `json:"invalidated,omitempty"`
 	OrganizationID            string          `json:"organizationId,omitempty"`
+	// RateLimitedSince marks the first of the consecutive HTTP 429 answers a
+	// reset check has received; the quota cache leaves it empty (ADR-0024).
+	RateLimitedSince string `json:"rateLimitedSince,omitempty"`
 }
 
 func claudeOAuthUsageCachePath() string {
@@ -1717,8 +1741,8 @@ func fetchClaudeOAuthJSON(endpoint string, token string, userAgent string) ([]by
 	}
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests:
-		backoff := claudeUsageRetryDelay(resp.Header.Get("Retry-After"), time.Now())
-		return nil, backoff, errors.New("Claude usage API rate limited (HTTP 429)")
+		retryAfter := claudeRetryAfterHeader(resp.Header.Get("Retry-After"), time.Now())
+		return nil, max(claudeUsageRetryMinimum, retryAfter), &claudeRateLimitError{retryAfter: retryAfter}
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return nil, 5 * time.Minute, fmt.Errorf("Claude usage API auth failed (HTTP %d); run any Claude Code session to refresh sign-in", resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:
@@ -1727,20 +1751,39 @@ func fetchClaudeOAuthJSON(endpoint string, token string, userAgent string) ([]by
 	return body, 0, nil
 }
 
-func claudeUsageRetryDelay(value string, now time.Time) time.Duration {
-	const minimum = 15 * time.Minute
+// claudeUsageRetryMinimum is the shortest backoff after an HTTP 429 from the
+// usage API, whatever Retry-After says (ADR-0001).
+const claudeUsageRetryMinimum = 15 * time.Minute
+
+// claudeRateLimitError is an HTTP 429 from the usage API with the wait the
+// server asked for; zero when it sent none, or told the client not to wait.
+type claudeRateLimitError struct {
+	retryAfter time.Duration
+}
+
+func (e *claudeRateLimitError) Error() string {
+	return "Claude usage API rate limited (HTTP 429)"
+}
+
+// claudeRetryAfterHeader parses a Retry-After header into a wait, zero when
+// the header is missing, malformed, or already in the past.
+func claudeRetryAfterHeader(value string, now time.Time) time.Duration {
 	value = strings.TrimSpace(value)
 	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds > 0 {
 		const longest = time.Duration(1<<63 - 1)
 		if seconds > int64(longest/time.Second) {
 			return longest
 		}
-		return max(minimum, time.Duration(seconds)*time.Second)
+		return time.Duration(seconds) * time.Second
 	}
 	if deadline, err := http.ParseTime(value); err == nil {
-		return max(minimum, deadline.Sub(now))
+		return max(0, deadline.Sub(now))
 	}
-	return minimum
+	return 0
+}
+
+func claudeUsageRetryDelay(value string, now time.Time) time.Duration {
+	return max(claudeUsageRetryMinimum, claudeRetryAfterHeader(value, now))
 }
 
 func parseClaudeOAuthUsage(data []byte, now time.Time) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, error) {
@@ -1957,6 +2000,7 @@ func parseClaudeSpendBucket(spend map[string]any) (QuotaBucket, bool) {
 	allowance.Unit = "currency"
 	allowance.Source = claudeOAuthUsageSource
 	label := formatMinorMoney(int64(balance), currency, int(exponent))
+	major := minorToMajor(int64(balance), int(exponent))
 	return QuotaBucket{
 		ID:         "claude-extra-usage",
 		Label:      "Extra usage credits",
@@ -1964,6 +2008,7 @@ func parseClaudeSpendBucket(spend map[string]any) (QuotaBucket, bool) {
 		Allowance:  allowance,
 		ValueLabel: label,
 		Detail:     label + " prepaid balance",
+		Balance:    &major,
 	}, true
 }
 
@@ -1996,6 +2041,13 @@ func makeClaudeSpendBucket(used int64, limit int64, currency string, exponent in
 		ValueLabel: formatMinorMoney(used, currency, exponent) + " / " + formatMinorMoney(limit, currency, exponent),
 		Detail:     formatMinorMoney(allowance.Remaining, currency, exponent) + " remaining",
 	}
+}
+
+func minorToMajor(amount int64, exponent int) float64 {
+	if exponent < 0 || exponent > 6 {
+		exponent = 2
+	}
+	return float64(amount) / math.Pow(10, float64(exponent))
 }
 
 func formatMinorMoney(amount int64, currency string, exponent int) string {

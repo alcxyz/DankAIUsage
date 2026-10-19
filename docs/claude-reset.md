@@ -7,12 +7,12 @@ Code's `/limit-reset` command.
 
 ## In the dropdown
 
-When your account has a usable reset, the Claude card lists it like a Codex
-reset: its title, expiry and countdown, plus what it clears and whether it can
-be used before you hit a limit. In **Advanced**, a **Use reset now** action
-sits under it. The first click shows what will happen; a second click within
-fifteen seconds sends the request. **Keep it** cancels. Simple mode only notes
-that a reset is available.
+When your account has a usable reset, the Claude card in **Advanced** lists
+it like a Codex reset: its title, expiry and countdown, with a **Use reset
+now** action under it. The first click shows what will happen, naming the
+limits the reset clears, whether it only works at a limit, and the uses left
+when there is more than one; a second click within fifteen seconds sends the
+request. **Keep it** cancels. Simple mode does not mention resets.
 
 The outcome appears under the card. `Limits reset` means Claude confirmed it
 and the quotas refresh right away. Answers such as `not available`, a
@@ -58,10 +58,17 @@ clients. The helper checks for resets at most every 30 minutes in a separate
 request that identifies itself as Claude Code's OAuth client; the quota poll
 itself never does. If Claude answers that the client or plan is not eligible,
 or rate-limits the check, the card shows no reset and `status` names the
-reason while the quotas keep refreshing. The reset remains usable on
+reason while the quotas keep refreshing. Claude answers most checks under
+that identity with a rate limit that asks for no wait, so such an answer is
+retried at the quota interval for up to an hour before the check backs off
+for an hour; a rate limit that names a longer wait is honoured. The Advanced warning for a failed
+check appears only when no listing from the last six hours is available; a
+rate-limited or unreachable check while a recent result is still shown stays
+quiet. A sign-in rejection by Claude is shown beside the listing right away. The reset remains usable on
 claude.ai. A new grant, or one spent elsewhere, can take up to 30 minutes to
 show.
 
-See [ADR-0022](adr/ADR-0022-manual-claude-limit-reset.md) and
-[ADR-0023](adr/ADR-0023-separate-claude-reset-availability-check.md) for the
-design and [Data sources](data-sources.md) for the request details.
+See [ADR-0022](adr/ADR-0022-manual-claude-limit-reset.md),
+[ADR-0023](adr/ADR-0023-separate-claude-reset-availability-check.md) and
+[ADR-0024](adr/ADR-0024-retry-rate-limited-reset-check.md) for the design and
+[Data sources](data-sources.md) for the request details.

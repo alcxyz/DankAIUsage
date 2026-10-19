@@ -184,7 +184,7 @@ test("quota bar options follow the bar mode toggle without touching values", () 
     assert.match(spanText(barToggle.chain[0]), /id: barQuotaBarsToggle/);
     const compact = settingControls.find(control => control.key === "compactPill");
     assert.match(spanText(compact.chain[0]), /visible: !barQuotaBarsToggle\.value/, "compact pill applies to the text pill only");
-    const barOptions = ["barQuotaBarWidth", "barUsageColors", "barLabelLeft", "barLabelRight", "barPaceMarker"];
+    const barOptions = ["barQuotaBarWidth", "barLabelLeft", "barLabelRight", "barPaceMarker"];
     const optionGroups = new Set();
     for (const key of barOptions) {
         const control = settingControls.find(c => c.key === key);
@@ -204,7 +204,25 @@ test("quota bar options follow the bar mode toggle without touching values", () 
     }
 });
 
-test("armed Codex reset stays discoverable and the collapsed group holds only compatibility options", () => {
+test("heatmap options follow the shared heatmap toggle in Display", () => {
+    const toggle = settingControls.find(control => control.key === "barUsageColors");
+    assert.match(spanText(toggle.chain[0]), /id: heatmapToggle/);
+    assert.match(spanText(toggle.chain[1]), /title: "Display"/, "the heatmap covers the dropdown, not only quota-bar mode");
+    const groups = new Set();
+    for (const key of ["heatmapPalette", "heatmapBasis"]) {
+        const control = settingControls.find(c => c.key === key);
+        assert.ok(control, `${key} exists`);
+        assert.equal(control.chain[1].parent, toggle.chain[1], `${key} is nested in Display`);
+        groups.add(control.chain[1]);
+    }
+    assert.equal(groups.size, 1, "heatmap options share one nested group");
+    const [group] = groups;
+    const header = qml.slice(group.start, qml.indexOf("SelectionSetting", group.start));
+    assert.match(header, /visible: heatmapToggle\.value/);
+    assert.match(header, /nested: true/);
+});
+
+test("armed Codex reset stays discoverable and only the automation group starts collapsed", () => {
     const resetOffset = qml.indexOf("id: codexAutoResetToggle");
     assert.ok(resetOffset > 0);
     for (const span of enclosing(resetOffset)) {
@@ -221,7 +239,7 @@ test("armed Codex reset stays discoverable and the collapsed group holds only co
     assert.equal(collapsed.length, 1, "exactly one group starts collapsed");
     assert.match(qml.slice(collapsed[0].start, collapsed[0].end), /collapsible: true/);
     const collapsedKeys = settingControls.filter(c => c.chain.includes(collapsed[0])).map(c => c.key).sort();
-    assert.deepEqual(collapsedKeys, ["includeCachedTokens", "periodDays"]);
+    assert.deepEqual(collapsedKeys, ["enableClaudePrime", "publicResetAnnouncements", "systemNotifications"]);
 });
 
 test("test.sh's refresh migration extraction keeps finding the refresh-interval loadValue first", () => {

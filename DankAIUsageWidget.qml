@@ -27,6 +27,7 @@ PluginComponent {
     property int periodDays: 7
     property bool showCodex: true
     property bool showClaude: true
+    property string providerOrder: "codex"
     property bool barShowPluginIcon: false
     property bool barShowProviderLogos: true
     property bool barShowClaudeSession: true
@@ -44,6 +45,8 @@ PluginComponent {
     property bool barPaceMarker: false
     property bool brandLogoColors: false
     property bool barUsageColors: false
+    property string heatmapPalette: "fixed"
+    property string heatmapBasis: "usage"
     property bool historyShowScheduledShort: false
     property bool historyShowOther: true
     property bool historyShowScheduledWeekly: false
@@ -185,6 +188,7 @@ PluginComponent {
         periodDays = pluginService.loadPluginData(pluginId, "periodDays", 7) || 7
         showCodex = pluginService.loadPluginData(pluginId, "showCodex", true) !== false
         showClaude = pluginService.loadPluginData(pluginId, "showClaude", true) !== false
+        providerOrder = pluginService.loadPluginData(pluginId, "providerOrder", "codex") === "claude" ? "claude" : "codex"
         barShowPluginIcon = pluginService.loadPluginData(pluginId, "barShowPluginIcon", false) === true
         barShowProviderLogos = pluginService.loadPluginData(pluginId, "barShowProviderLogos", true) !== false
         barShowClaudeSession = pluginService.loadPluginData(pluginId, "barShowClaudeSession", true) !== false
@@ -203,12 +207,17 @@ PluginComponent {
         barPaceMarker = pluginService.loadPluginData(pluginId, "barPaceMarker", false) === true
         brandLogoColors = pluginService.loadPluginData(pluginId, "brandLogoColors", false) === true
         barUsageColors = pluginService.loadPluginData(pluginId, "barUsageColors", false) === true
+        heatmapPalette = pluginService.loadPluginData(pluginId, "heatmapPalette", "fixed") === "theme" ? "theme" : "fixed"
+        heatmapBasis = pluginService.loadPluginData(pluginId, "heatmapBasis", "usage") === "pace" ? "pace" : "usage"
         enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
         if (!wasEnabled && enableClaudePrime) {
             lastClaudeAutoPrimeFailed = false
             if (pluginService && pluginService.savePluginState)
                 pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeFailed", false)
             maybeAutoPrimeClaude()
+        } else if (wasEnabled && !enableClaudePrime) {
+            // Turning prime off settles its last result; nothing is scheduled.
+            claudePrimeText = ""
         }
     }
 
@@ -230,6 +239,9 @@ PluginComponent {
             tokenHistoryRange = migratedPeriodRange(periodDays)
         }
         lastClaudeAutoPrimeAt = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeAt", 0) || 0
+        // loadSettings() already ran: when prime is enabled it has cleared this
+        // flag, so a restart re-enables automatic priming and no paused-state
+        // explanation is needed here.
         lastClaudeAutoPrimeFailed = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeFailed", false) === true
         if (cached && cached.providers) applySummary(cached, false)
     }
@@ -534,6 +546,9 @@ PluginComponent {
     // cache. Otherwise every reset check could arrive inside the cooldown and
     // never receive the fresh data required to authorize consumption.
     function refreshCycle() {
+        // A finished prime's result is this cycle's news only, except a failed
+        // automatic prime: its message explains why scheduling has stopped.
+        if (!isPrimingClaude && !claudePrimeProcess.running && !lastClaudeAutoPrimeFailed) claudePrimeText = ""
         // The saved Claude reset record (an unconfirmed attempt after a crash
         // or timeout) is local state; reading it never contacts a server.
         if (showClaude && !claudeResetProcess.running) runClaudeReset("status")
@@ -704,20 +719,40 @@ PluginComponent {
         return message
     }
 
-    // Describes the grant the first click chose, not whatever is offered now.
-    function claudeResetConfirmText(provider) {
-        var grantId = claudeResetConfirmGrantId || claudeResetGrantId(provider)
+    // The grant as the helper reported it, for the limits it clears and the
+    // uses left; null when the provider meta does not carry it.
+    function claudeGrantInfo(provider, grantId) {
+        var meta = provider && provider.meta ? provider.meta.claudeReset : null
+        if (!meta || !meta.grants || !grantId) return null
+        for (var i = 0; i < meta.grants.length; i++) {
+            if (meta.grants[i] && meta.grants[i].id === grantId) return meta.grants[i]
+        }
+        return null
+    }
+
+    // "5-hour and weekly" taken from the helper's reset description, so the
+    // names match the rest of the UI; "" when the helper reported none.
+    function claudeResetClearsText(provider, grantId) {
         var resets = providerResets(provider)
-        var detail = ""
         for (var i = 0; i < resets.length; i++) {
-            if (resets[i] && resets[i].id === grantId) {
-                detail = resets[i].description || ""
-                break
+            if (!resets[i] || resets[i].id !== grantId) continue
+            var parts = ("" + (resets[i].description || "")).split(" · ")
+            for (var j = 0; j < parts.length; j++) {
+                if (parts[j].indexOf("clears ") === 0) return parts[j].substring(7)
             }
         }
-        return "Refills your Claude limits now; this cannot be undone. Your weekly reset day stays the same."
-                + (claudeResetRequiresLimitNow(provider, grantId) ? "\nThis reset can only be used while you are at a limit; Claude keeps it otherwise." : "")
-                + (detail !== "" ? "\n" + detail : "")
+        return ""
+    }
+
+    // One sentence naming what the chosen grant clears; the only extra line
+    // is the one that changes what the click does.
+    function claudeResetConfirmText(provider) {
+        var grantId = claudeResetConfirmGrantId || claudeResetGrantId(provider)
+        var grant = claudeGrantInfo(provider, grantId)
+        var clears = claudeResetClearsText(provider, grantId)
+        return "Refills your " + (clears !== "" ? clears + " limits" : "Claude limits") + " now; this cannot be undone."
+                + (claudeResetRequiresLimitNow(provider, grantId) ? "\nOnly works while you are at a limit; Claude keeps it otherwise." : "")
+                + (grant && grant.resetsLeft > 1 ? "\n" + grant.resetsLeft + " uses of this reset left." : "")
     }
 
     function primeClaude(automatic) {
@@ -1475,7 +1510,9 @@ PluginComponent {
                 message = root._claudePrimeError.trim()
             }
             if (message === "") message = exitCode === 0 ? "Claude account limits refreshed" : "Claude account refresh failed"
-            root.claudePrimeText = message
+            // A prime that finishes after the user turned prime off has no
+            // notice to leave behind.
+            root.claudePrimeText = root.enableClaudePrime ? message : ""
             root.isPrimingClaude = false
             root.lastClaudeAutoPrimeAt = Date.now()
             root.lastClaudeAutoPrimeFailed = exitCode !== 0 && root.claudePrimeAutomatic
@@ -1516,13 +1553,15 @@ PluginComponent {
     }
 
     function visibleProviders() {
-        var out = []
+        var first = []
+        var rest = []
         for (var i = 0; i < providers.length; i++) {
             if (providers[i].id === "codex" && !showCodex) continue
             if (providers[i].id === "claude" && !showClaude) continue
-            out.push(providers[i])
+            if (providers[i].id === providerOrder) first.push(providers[i])
+            else rest.push(providers[i])
         }
-        return out
+        return first.concat(rest)
     }
 
     function historyMatchesFilters(event) {
@@ -1745,6 +1784,80 @@ PluginComponent {
         return provider.quotaBuckets
     }
 
+    // Buckets as the dropdown and quota bars draw them: a prepaid balance with
+    // a top-up ledger becomes a bar against its range (ADR-0025).
+    function displayQuotaBuckets(provider) {
+        var buckets = providerQuotaBuckets(provider)
+        var out = []
+        for (var i = 0; i < buckets.length; i++) out.push(creditDisplayBucket(buckets[i]))
+        return out
+    }
+
+    // Start of the selected token range; Tracked starts when tracking began.
+    function tokenRangeStartMs(now) {
+        var day = 86400000
+        if (tokenHistoryRange === "5h") return now - 5 * 3600000
+        if (tokenHistoryRange === "7d") return now - 7 * day
+        if (tokenHistoryRange === "30d") return now - 30 * day
+        if (tokenHistoryRange === "90d") return now - 90 * day
+        if (tokenHistoryRange === "period") return now - periodDays * day
+        var started = Date.parse(trackingStatus.startedAt || "")
+        return isFinite(started) ? started : -Infinity
+    }
+
+    // A prepaid balance measured against every top-up in the token range, and
+    // never fewer than the latest one. The first top-up's starting balance
+    // carries over, so leftovers from older purchases count too.
+    function creditLedgerAllowance(bucket, now) {
+        if (!bucket || bucket.kind !== "credits" || knownAllowance(bucket.allowance)) return null
+        var history = bucket.balanceHistory
+        var balance = bucket.balance
+        if (!history || !history.topUps || history.topUps.length === 0
+                || typeof balance !== "number" || !isFinite(balance)) return null
+        var topUps = history.topUps
+        var start = tokenRangeStartMs(now)
+        var first = topUps.length - 1
+        for (var i = 0; i < topUps.length; i++) {
+            if (Date.parse(topUps[i].at) >= start) {
+                first = i
+                break
+            }
+        }
+        var limit = topUps[first].before || 0
+        for (var j = first; j < topUps.length; j++) limit += topUps[j].amount || 0
+        if (!(limit > 0)) return null
+        var remaining = Math.max(0, Math.min(balance, limit))
+        var percentUsed = Math.round((limit - remaining) / limit * 100)
+        return { known: true, window: "credits", unit: bucket.allowance && bucket.allowance.unit || "currency",
+            used: limit - remaining, limit: limit,
+            remaining: remaining, percentUsed: percentUsed, percentRemaining: 100 - percentUsed,
+            since: topUps[first].at }
+    }
+
+    // Formats an amount like the provider's balance label, keeping its prefix
+    // and decimals ($12.50, JPY 1000, KWD 1.234, or a bare Codex credit count).
+    function creditMoney(bucket, amount) {
+        var label = bucket && bucket.valueLabel ? bucket.valueLabel : ""
+        var prefix = (label.match(/^[^0-9-]*/) || [""])[0]
+        var fraction = label.match(/\.([0-9]+)/)
+        return prefix + Number(amount).toFixed(fraction ? fraction[1].length : 0)
+    }
+
+    // Reads the clock without binding to it: top-ups only change with a new
+    // summary, so the bars need not rebuild every minute.
+    function creditDisplayBucket(bucket) {
+        if (!bucket || !bucket.balanceHistory) return bucket
+        var allowance = creditLedgerAllowance(bucket, Date.now())
+        if (!allowance) return bucket
+        var shown = Object.assign({}, bucket)
+        shown.allowance = allowance
+        shown.creditLedger = true
+        shown.detail = (showUsed ? creditMoney(bucket, allowance.used) + " used of "
+                                 : bucket.valueLabel + " left of ")
+                + creditMoney(bucket, allowance.limit) + " since " + formatShortDateTime(allowance.since)
+        return shown
+    }
+
     function providerQuotaHeight(provider) {
         var buckets = providerQuotaBuckets(provider)
         var height = 0
@@ -1817,7 +1930,7 @@ PluginComponent {
 
     function quotaValue(bucket) {
         if (!bucket) return "--"
-        if (balanceOnlyBucket(bucket)) return bucket.valueLabel
+        if (balanceOnlyBucket(bucket) || bucket.creditLedger) return bucket.valueLabel
         return allowanceLabel(bucket.allowance)
     }
 
@@ -1829,6 +1942,7 @@ PluginComponent {
     function quotaDetail(bucket) {
         if (!bucket) return "Limit unavailable"
         if (balanceOnlyBucket(bucket)) return bucket.detail || "Prepaid balance"
+        if (bucket.creditLedger) return bucket.detail
         if (bucket.kind === "credits") {
             if (showUsed && bucket.valueLabel) return bucket.valueLabel + " used"
             if (!showUsed && bucket.detail) return bucket.detail
@@ -1931,19 +2045,6 @@ PluginComponent {
         var left = at - resetClock
         return "Expires " + formatShortDateTime(reset.expiresAt) + " · "
                 + (left <= 0 ? "expired" : "in " + resetDuration(left)) + title
-    }
-
-    // Provider-supplied detail per reset: what it clears, whether it needs a
-    // limit. Titles are added only when several resets are listed.
-    function providerResetDescriptions(provider) {
-        var resets = providerResetsByExpiry(provider)
-        var out = []
-        for (var i = 0; i < resets.length; i++) {
-            var description = resets[i] && resets[i].description ? resets[i].description : ""
-            if (description === "") continue
-            out.push(resets.length > 1 && resets[i].title ? resets[i].title + " · " + description : description)
-        }
-        return out
     }
 
     function providerResetDetail(provider) {
@@ -2139,7 +2240,7 @@ PluginComponent {
         return formatTokens(displayCached(totals)) + " cached"
     }
 
-    function filteredGrandTokenBreakdown() {
+    function filteredGrandTokenStatus() {
         var list = visibleProviders()
         var available = 0
         var partial = false
@@ -2150,9 +2251,15 @@ PluginComponent {
         }
         if (tokenHistoryRange === "tracked" && trackingStatus.errors && trackingStatus.errors.length > 0)
             partial = true
-        if (available === 0) return "Unavailable"
+        if (available === 0) return "unavailable"
+        return partial ? "partial" : "complete"
+    }
+
+    function filteredGrandTokenBreakdown() {
+        var status = filteredGrandTokenStatus()
+        if (status === "unavailable") return "Unavailable"
         return formatTokens(filteredGrandInput()) + " in / " + formatTokens(filteredGrandCached()) + " cached / "
-                + formatTokens(filteredGrandOutput()) + " out" + (partial ? " (partial)" : "")
+                + formatTokens(filteredGrandOutput()) + " out" + (status === "partial" ? " (partial)" : "")
     }
 
     function tokenHistoryAvailable(provider) {
@@ -2238,13 +2345,45 @@ PluginComponent {
         return "Enable to seed a persistent total from retained local history."
     }
 
+    // One aligned row per column set: the combined total, then each shown provider.
+    function tokenTableRows() {
+        var list = visibleProviders()
+        if (list.length < 2) return []
+        var status = filteredGrandTokenStatus()
+        var rows = [tokenTableRow("Total", status, filteredGrandInput(), filteredGrandCached(), filteredGrandOutput(), true)]
+        for (var i = 0; i < list.length; i++) {
+            var totals = tokenHistoryTotals(list[i])
+            rows.push(tokenTableRow(list[i].name || historyProviderName(list[i].id), providerTokenStatus(list[i]),
+                    displayInput(totals), displayCached(totals), displayOutput(totals), false))
+        }
+        return rows
+    }
+
+    function tokenTableRow(name, status, input, cached, output, emphasis) {
+        var known = status !== "unavailable"
+        return {
+            name: name + (status === "partial" ? " (partial)" : ""),
+            input: known ? formatTokens(input) + " in" : "--",
+            cached: known ? formatTokens(cached) + " cached" : "--",
+            output: known ? formatTokens(output) + " out" : "--",
+            emphasis: emphasis
+        }
+    }
+
+    function providerTokenStatus(provider) {
+        if (!tokenHistoryAvailable(provider)) return "unavailable"
+        var partial = tokenHistoryRange === "tracked"
+                ? !!(trackingStatus.errors && trackingStatus.errors.length > 0)
+                : !!(provider.meta && provider.meta.tokenDataError)
+        return partial ? "partial" : "complete"
+    }
+
     function providerTokenBreakdown(provider) {
-        if (!tokenHistoryAvailable(provider)) return "Unavailable"
+        var status = providerTokenStatus(provider)
+        if (status === "unavailable") return "Unavailable"
         var totals = tokenHistoryTotals(provider)
         return inputTokenLabel(totals) + " / " + cachedTokenLabel(totals) + " / " + outputTokenLabel(totals)
-                + (tokenHistoryRange === "tracked"
-                    ? (trackingStatus.errors && trackingStatus.errors.length > 0 ? " (partial)" : "")
-                    : (provider.meta && provider.meta.tokenDataError ? " (partial)" : ""))
+                + (status === "partial" ? " (partial)" : "")
     }
 
 
@@ -2260,41 +2399,104 @@ PluginComponent {
         return Theme.isLightMode ? "#000000" : "#FFFFFF"
     }
 
-    // Opt-in exception to ADR-0018: fixed gradient over percent used for
-    // quota-bar fills. Stops: green, yellow at 50, orange at 75, dark red at 100.
-    readonly property var usageColorStops: [
-        [0, 0.26, 0.63, 0.28], [50, 0.99, 0.85, 0.21], [75, 0.98, 0.55, 0.0], [100, 0.55, 0.0, 0.0]
+    // Opt-in exception to ADR-0018 (ADR-0021, ADR-0026): heatmap colors for
+    // quota-bar fills in the top bar and dropdown. The fixed palette runs
+    // green, yellow at 50, orange at 75, red at 100; the theme palette runs
+    // primary, warning at 50, error at 100. Both blend in OKLab so mid-tones
+    // stay clean instead of turning brown.
+    readonly property var heatmapFixedStops: [
+        [0, 0.26, 0.63, 0.28], [50, 0.99, 0.85, 0.21], [75, 0.98, 0.55, 0.0], [100, 0.90, 0.22, 0.21]
     ]
+    // With the pace basis, the first tenth of a window counts as a tenth so a
+    // little early use does not read as a runaway rate.
+    readonly property real heatmapPaceFloor: 0.1
 
-    function usageGradientColor(allowance) {
-        if (!knownAllowance(allowance)) return Theme.surfaceVariantText
-        var p = Math.max(0, Math.min(100, allowance.percentUsed || 0))
-        var s = usageColorStops
-        for (var i = 1; i < s.length; i++) {
-            if (p > s[i][0]) continue
-            var t = (p - s[i - 1][0]) / (s[i][0] - s[i - 1][0])
-            return Qt.rgba(s[i - 1][1] + (s[i][1] - s[i - 1][1]) * t,
-                           s[i - 1][2] + (s[i][2] - s[i - 1][2]) * t,
-                           s[i - 1][3] + (s[i][3] - s[i - 1][3]) * t, 1)
+    function heatmapStops() {
+        if (heatmapPalette === "theme")
+            return [[0, Theme.primary], [50, Theme.warning], [100, Theme.error]]
+        var out = []
+        for (var i = 0; i < heatmapFixedStops.length; i++) {
+            var s = heatmapFixedStops[i]
+            out.push([s[0], {r: s[1], g: s[2], b: s[3]}])
         }
-        return Qt.rgba(s[s.length - 1][1], s[s.length - 1][2], s[s.length - 1][3], 1)
+        return out
     }
 
-    // Quota-bar mode (ADR-0021): fill uses the same severity colors as the
-    // text pill unless the usage gradient is enabled.
+    // Heat on 0-100. Usage: percent used. Pace: usage rate against window time
+    // elapsed, so even pace is 50 and twice even pace is 100. An exhausted
+    // quota is always 100; quotas without a window fall back to usage.
+    function heatmapHeat(allowance) {
+        var used = Math.max(0, Math.min(100, allowance.percentUsed || 0))
+        if (heatmapBasis !== "pace" || used >= 100) return used
+        // An overdue reset counts as a full window until the next poll.
+        var timing = resetTiming(allowance, resetClock)
+        if (!timing || !(timing.durationMs > 0) || timing.remainingMs > timing.durationMs) return used
+        var elapsed = 1 - Math.max(0, timing.remainingMs) / timing.durationMs
+        return Math.min(100, used / (2 * Math.max(elapsed, heatmapPaceFloor)))
+    }
+
+    function heatmapColor(allowance) {
+        if (!knownAllowance(allowance)) return Theme.surfaceVariantText
+        var stops = heatmapStops()
+        var p = heatmapHeat(allowance)
+        for (var i = 1; i < stops.length; i++) {
+            if (p > stops[i][0]) continue
+            return oklabMix(stops[i - 1][1], stops[i][1], (p - stops[i - 1][0]) / (stops[i][0] - stops[i - 1][0]))
+        }
+        return oklabMix(stops[stops.length - 1][1], stops[stops.length - 1][1], 0)
+    }
+
+    function srgbToLinear(c) {
+        return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+    }
+
+    function linearToSrgb(c) {
+        c = Math.max(0, Math.min(1, c))
+        return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055
+    }
+
+    function toOklab(c) {
+        var r = srgbToLinear(c.r), g = srgbToLinear(c.g), b = srgbToLinear(c.b)
+        var l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+        var m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+        var s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+        return [0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+                1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+                0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s]
+    }
+
+    function oklabMix(from, to, t) {
+        var a = toOklab(from), b = toOklab(to)
+        var L = a[0] + (b[0] - a[0]) * t, A = a[1] + (b[1] - a[1]) * t, B = a[2] + (b[2] - a[2]) * t
+        var l = Math.pow(L + 0.3963377774 * A + 0.2158037573 * B, 3)
+        var m = Math.pow(L - 0.1055613458 * A - 0.0638541728 * B, 3)
+        var s = Math.pow(L - 0.0894841775 * A - 1.2914855480 * B, 3)
+        return Qt.rgba(linearToSrgb(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+                       linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+                       linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s), 1)
+    }
+
+    // Quota-bar fill (ADR-0021): the same severity colors as the text pill
+    // unless the heatmap is on.
     function barFillColor(bucket) {
         if (hasError) return Theme.error
         var allowance = bucket ? bucket.allowance : null
-        return barUsageColors ? usageGradientColor(allowance) : allowanceColor(allowance)
+        return barUsageColors ? heatmapColor(allowance) : allowanceColor(allowance)
     }
 
-    // Non-credit quotas in helper order (5-hour, weekly, model-scoped). Claude
-    // still honours the per-quota top-bar choices.
+    // Quotas in helper order (5-hour, weekly, model-scoped). Claude still
+    // honours the per-quota top-bar choices. Credits join when their switch
+    // is on and they have a bar: a spend limit or a top-up ledger (ADR-0025).
     function providerBarBuckets(provider) {
         var out = []
-        var buckets = providerQuotaBuckets(provider)
+        var buckets = displayQuotaBuckets(provider)
         for (var i = 0; i < buckets.length; i++) {
-            if (buckets[i].kind === "credits") continue
+            if (buckets[i].kind === "credits") {
+                var shown = provider.id === "claude" ? barShowClaudeCredits
+                          : provider.id === "codex" ? barShowCodexCredits : false
+                if (shown && knownAllowance(buckets[i].allowance)) out.push(buckets[i])
+                continue
+            }
             if (provider.id === "claude" && !claudeBucketShownInBar(buckets[i])) continue
             out.push(buckets[i])
         }
@@ -2328,9 +2530,33 @@ PluginComponent {
     function barLabelText(kind, bucket, tag) {
         if (!bucket) return ""
         if (kind === "tag") return tag || ""
-        if (kind === "time") return barTimeLabel(bucket.allowance)
+        if (kind === "time") return bucket.kind === "credits" ? barCreditAmount(bucket) : barTimeLabel(bucket.allowance)
         if (kind === "percent") return allowanceLabel(bucket.allowance, false)
         return ""
+    }
+
+    // Credits have no reset, so the time slot shows the amount left (or used):
+    // 850, 4.5, 1.2k, 12k. A spend limit counts in minor units, which its
+    // label's decimals undo; a top-up ledger already counts major units.
+    function barCreditAmount(bucket) {
+        var allowance = bucket ? bucket.allowance : null
+        if (!knownAllowance(allowance)) return ""
+        var amount = Math.max(0, (showUsed ? allowance.used : allowance.remaining) || 0)
+        var fraction = bucket.creditLedger ? null : (bucket.valueLabel || "").match(/\.([0-9]+)/)
+        if (fraction) amount /= Math.pow(10, fraction[1].length)
+        return compactAmount(amount)
+    }
+
+    function compactAmount(value) {
+        function scaled(amount, suffix) {
+            var text = amount < 9.95 ? amount.toFixed(1) : "" + Math.round(amount)
+            return text.replace(/\.0$/, "") + suffix
+        }
+        if (value >= 999.5e9) return ">1T"
+        if (value >= 999.5e6) return scaled(value / 1e9, "B")
+        if (value >= 999500) return scaled(value / 1000000, "M")
+        if (value >= 999.5) return scaled(value / 1000, "k")
+        return scaled(value, "")
     }
 
     // Window tag from its length: 5h, 1d, w (six days or longer).
@@ -2354,6 +2580,7 @@ PluginComponent {
         for (var i = 0; i < buckets.length; i++) prefix.push(1)
         function tagAt(k) {
             var bucket = buckets[k]
+            if (bucket && bucket.kind === "credits") return "cr"
             var window = barWindowTag(bucket ? bucket.allowance : null)
             if (!bucket || bucket.kind !== "scoped") return window
             var name = (bucket.label || "").split("·")[0].replace(/\s+/g, "").toLowerCase() || "?"
@@ -2446,15 +2673,7 @@ PluginComponent {
             if (provider.meta.usageRefreshError) staleNote += ": " + provider.meta.usageRefreshError
             add(staleNote, "warning")
         }
-        if (advancedDropdown && provider.meta.usageCached === true) {
-            var cacheNote = "Cached usage"
-            var nextRefresh = formatShortDateTime(provider.meta.usageNextRefreshAt)
-            if (nextRefresh !== "") cacheNote += " · next refresh " + nextRefresh
-            add(cacheNote, "info")
-        }
         if (provider.id === "claude" && claudePrimeText !== "") add(claudePrimeText, "info")
-        if (advancedDropdown && provider.id === "claude" && provider.meta.tokenDataIncludesWeb === false)
-            add("Claude tokens are local Claude Code only, not web", "info")
         if (provider.id === "claude" && provider.meta.sessionFallbackSource)
             add("Session timer from Claude prime; account limits unavailable", "warning")
         // The limit-reset check is separate from the quota poll; its failure
@@ -2789,7 +3008,7 @@ PluginComponent {
                         }
                     }
 
-                    // View controls: detail level and allowance direction.
+                    // View controls: detail level, bar colors, and allowance direction.
                     Item {
                         width: parent.width
                         height: 30
@@ -2804,7 +3023,24 @@ PluginComponent {
                             onClicked: root.setDropdownMode(root.advancedDropdown ? "simple" : "advanced")
                         }
 
+                        DankActionButton {
+                            id: heatmapButton
+                            buttonSize: 30
+                            iconName: "local_fire_department"
+                            iconColor: root.barUsageColors ? Theme.primary : Theme.surfaceVariantText
+                            tooltipText: root.barUsageColors ? "Heatmap bar colors on; switch to status colors"
+                                                             : "Status bar colors; switch to heatmap"
+                            anchors.right: usedSwitch.left
+                            anchors.rightMargin: Theme.spacingS
+                            anchors.verticalCenter: parent.verticalCenter
+                            Accessible.role: Accessible.CheckBox
+                            Accessible.name: "Heatmap bar colors"
+                            Accessible.checked: root.barUsageColors
+                            onClicked: root.setQuickSetting("barUsageColors", !root.barUsageColors)
+                        }
+
                         SegmentSwitch {
+                            id: usedSwitch
                             anchors.right: parent.right
                             offLabel: "Left"
                             onLabel: "Used"
@@ -3037,6 +3273,7 @@ PluginComponent {
                         width: parent.width
                         visible: root.advancedDropdown
                         value: root.filteredGrandTokenBreakdown()
+                        tableRows: root.tokenTableRows()
                     }
 
                     TrackingPanel {
@@ -3126,16 +3363,20 @@ PluginComponent {
                                     }
 
                                     Column {
+                                        id: quotaColumn
+                                        readonly property var provider: modelData
                                         width: parent.width
                                         height: root.providerQuotaHeight(modelData)
                                         spacing: Theme.spacingS
 
+                                        // A count model keeps the bars (and their width animation)
+                                        // when only the bucket values change.
                                         Repeater {
-                                            model: root.providerQuotaBuckets(modelData)
+                                            model: root.displayQuotaBuckets(quotaColumn.provider).length
 
                                             QuotaBar {
                                                 width: parent.width
-                                                bucket: modelData
+                                                bucket: root.displayQuotaBuckets(quotaColumn.provider)[index] || null
                                             }
                                         }
 
@@ -3147,12 +3388,6 @@ PluginComponent {
                                                     : "Not signed in or CLI unavailable · sign in with the provider CLI, then Refresh"
                                             visible: root.providerQuotaBuckets(modelData).length === 0
                                         }
-                                    }
-
-                                    TokenHistoryResult {
-                                        width: parent.width
-                                        visible: root.advancedDropdown
-                                        value: root.providerTokenBreakdown(modelData)
                                     }
 
                                     Item {
@@ -3217,26 +3452,6 @@ PluginComponent {
                                                 color: Theme.surfaceVariantText
                                                 elide: Text.ElideRight
                                                 maximumLineCount: 1
-                                            }
-                                        }
-                                    }
-
-                                    Column {
-                                        id: resetDescriptionList
-                                        width: parent.width
-                                        visible: root.advancedDropdown && modelData.id === "claude"
-                                                && root.providerResetDescriptions(modelData).length > 0
-
-                                        Repeater {
-                                            model: root.advancedDropdown && modelData.id === "claude" ? root.providerResetDescriptions(modelData) : []
-
-                                            StyledText {
-                                                x: resetsIcon.width + Theme.spacingXS
-                                                width: parent.width - x
-                                                text: modelData
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                color: Theme.surfaceVariantText
-                                                wrapMode: Text.WordWrap
                                             }
                                         }
                                     }
@@ -3397,14 +3612,7 @@ PluginComponent {
                                     NoticeRow {
                                         width: parent.width
                                         level: "info"
-                                        text: "Claude limit reset available · use it in Advanced"
-                                        visible: !root.advancedDropdown && modelData.id === "claude" && root.hasSpendableClaudeReset(modelData)
-                                    }
-
-                                    NoticeRow {
-                                        width: parent.width
-                                        level: "info"
-                                        text: "Claude session scheduling is enabled · manage in Advanced or settings"
+                                        text: "Claude prime is on"
                                         visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime
                                     }
 
@@ -3978,50 +4186,22 @@ PluginComponent {
         }
     }
 
-    component TokenHistoryResult: Item {
-        id: tokenResult
-        property string value: ""
-        height: 48
-        Accessible.role: Accessible.StaticText
-        Accessible.name: root.tokenHistoryLabel() + ": " + value
-
-        StyledText {
-            text: root.tokenHistoryLabel()
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.topMargin: 4
-            font.pixelSize: Theme.fontSizeSmall
-            color: Theme.surfaceVariantText
-            elide: Text.ElideRight
-        }
-        StyledText {
-            id: resultValue
-            text: tokenResult.value
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: 4
-            font.pixelSize: Theme.fontSizeSmall
-            font.weight: Font.Medium
-            color: Theme.surfaceText
-            elide: Text.ElideRight
-            horizontalAlignment: Text.AlignLeft
-        }
-    }
-
     component TokenHistoryRow: StyledRect {
         id: tokenRow
         property string value: ""
+        property var tableRows: []
         property bool selectorOpen: false
-        height: selectorOpen ? 56 + tokenRangeFlow.implicitHeight + Theme.spacingXS : 52
+        readonly property real summaryHeight: tableRows.length > 0 ? 32 + tokenTable.implicitHeight : 52
+        height: selectorOpen ? summaryHeight + 4 + tokenRangeFlow.implicitHeight + Theme.spacingXS : summaryHeight
         radius: Theme.cornerRadius
         color: Theme.withAlpha(Theme.surfaceVariant, 0.35)
         border.width: activeFocus ? 2 : 1
         border.color: activeFocus ? Theme.primary : Theme.outlineVariant
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
-        Accessible.name: root.tokenHistoryLabel() + ": " + value
+        Accessible.name: root.tokenHistoryLabel() + ": " + (tableRows.length > 0
+                ? tableRows.map(function(row) { return row.name + ": " + [row.input, row.cached, row.output].join(" / ") }).join("; ")
+                : value)
         Accessible.description: "Open token history range selector"
         Accessible.onPressAction: tokenRow.selectorOpen = !tokenRow.selectorOpen
         Keys.onSpacePressed: tokenRow.selectorOpen = !tokenRow.selectorOpen
@@ -4062,6 +4242,7 @@ PluginComponent {
         StyledText {
             id: tokenValue
             text: tokenRow.value
+            visible: tokenRow.tableRows.length === 0
             anchors.left: parent.left
             anchors.leftMargin: Theme.spacingS
             anchors.right: parent.right
@@ -4073,11 +4254,71 @@ PluginComponent {
             elide: Text.ElideRight
             horizontalAlignment: Text.AlignLeft
         }
+        // Names on the left; In, Cached and Out each right-aligned in their own column.
+        Item {
+            id: tokenTable
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.spacingS
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.spacingS
+            anchors.top: tokenRowHeader.bottom
+            implicitHeight: tokenNameColumn.implicitHeight
+            visible: tokenRow.tableRows.length > 0
+
+            Column {
+                id: tokenNameColumn
+                anchors.left: parent.left
+                anchors.right: tokenNumberColumns.left
+                anchors.rightMargin: Theme.spacingM
+
+                Repeater {
+                    model: tokenRow.tableRows
+
+                    StyledText {
+                        width: parent.width
+                        text: modelData.name
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.weight: modelData.emphasis ? Font.Medium : Font.Normal
+                        color: modelData.emphasis ? Theme.surfaceText : Theme.surfaceVariantText
+                        wrapMode: Text.NoWrap
+                        elide: Text.ElideRight
+                    }
+                }
+            }
+
+            Row {
+                id: tokenNumberColumns
+                anchors.right: parent.right
+                spacing: Theme.spacingM
+
+                Repeater {
+                    model: ["input", "cached", "output"]
+
+                    Column {
+                        id: tokenNumberColumn
+                        property string field: modelData
+
+                        Repeater {
+                            model: tokenRow.tableRows
+
+                            StyledText {
+                                x: tokenNumberColumn.width - width
+                                text: modelData[tokenNumberColumn.field]
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.weight: modelData.emphasis ? Font.Medium : Font.Normal
+                                color: modelData.emphasis ? Theme.surfaceText : Theme.surfaceVariantText
+                                wrapMode: Text.NoWrap
+                            }
+                        }
+                    }
+                }
+            }
+        }
         MouseArea {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: 52
+            height: tokenRow.summaryHeight
             cursorShape: Qt.PointingHandCursor
             onClicked: tokenRow.selectorOpen = !tokenRow.selectorOpen
         }
@@ -4089,7 +4330,7 @@ PluginComponent {
             anchors.leftMargin: Theme.spacingXS
             anchors.rightMargin: Theme.spacingXS
             anchors.top: parent.top
-            anchors.topMargin: 56
+            anchors.topMargin: tokenRow.summaryHeight + 4
             spacing: Theme.spacingXS
             visible: tokenRow.selectorOpen
 
@@ -4525,6 +4766,8 @@ PluginComponent {
         readonly property bool showTime: root.advancedDropdown && timeProgress >= 0
         readonly property var timeScale: root.resetTimeScale(bucket ? bucket.allowance : null)
         readonly property color severityColor: root.allowanceColor(bucket ? bucket.allowance : null)
+        readonly property color fillColor: !root.barUsageColors ? severityColor
+                : (root.hasError ? Theme.error : root.heatmapColor(bucket ? bucket.allowance : null))
         height: root.quotaRowHeight(bucket)
 
         HoverHandler { id: resetHover }
@@ -4537,7 +4780,6 @@ PluginComponent {
                         + "\nReset: " + root.formatShortDateTime(bucket.allowance.resetAt)
                         + (quotaBar.showTime
                            ? "\nThin bar: window time " + (root.showUsed ? "elapsed" : "remaining")
-                             + " (not quota usage)"
                              + (quotaBar.timeScale.count > 0
                                 ? "\nTicks: every " + quotaBar.timeScale.label : "") : "") : ""
             contentItem: StyledText {
@@ -4609,7 +4851,7 @@ PluginComponent {
                 width: parent.width * root.quotaProgress(bucket) / 100
                 height: parent.height
                 radius: parent.radius
-                color: quotaBar.severityColor
+                color: quotaBar.fillColor
 
                 Behavior on width {
                     NumberAnimation { duration: Theme.mediumDuration; easing.type: Theme.standardEasing }

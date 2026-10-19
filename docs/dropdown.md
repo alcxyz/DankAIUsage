@@ -18,15 +18,19 @@ header; both labels are visible and the active one is highlighted.
 New installations start in Simple; existing installations with a cached usage
 summary retain Advanced on upgrade. Either choice leaves the top-bar layout,
 tracking, and automation settings unchanged. Armed Codex resets remain visible
-and cancellable in Simple, as do reset errors or unknown outcomes. Enabled
-Claude session scheduling is also indicated there.
+and cancellable in Simple, as do reset errors or unknown outcomes.
 
 The header line shows when usage was last updated, whether it is stale, and
-(in Advanced) the next scheduled refresh. Failures and prompts that need a
-decision appear above the provider cards. Routine information such as cached
-usage or local-history caveats uses neutral styling; sign-in or refresh
-failures use warning and error colors. The dropdown scrolls when it would
-otherwise exceed the screen.
+(in Advanced) the next scheduled refresh; it is the only place that time is
+shown. Notices under a provider card appear when something needs you, or
+reports what you just did: a refresh or sign-in failure, stale data, an
+unconfirmed reset attempt, a failed limit-reset check with no recent listing
+to fall back on, or the result of a
+Claude prime until the next refresh. Simple mode keeps a one-line "Claude
+prime is on" indication while that automation is enabled. Caveats that never
+change, such as Claude token totals covering local Claude Code history only,
+live in this guide instead.
+The dropdown scrolls when it would otherwise exceed the screen.
 
 ## Quota bars
 
@@ -39,7 +43,20 @@ are omitted instead of inferred from their position in an API response.
 Prepaid credits appear as a **Credits** bucket for either provider when the
 account reports a balance: Codex from its rate-limit snapshot, Claude from
 extra-usage spend. A balance without a monthly limit shows the amount instead
-of a percentage and has no progress bar, because there is no window to fill.
+of a percentage.
+
+### Credit bars
+
+A prepaid balance without a monthly limit gets a bar against what you topped
+up. The helper notes the balance each refresh; any increase counts as a
+top-up. The bar measures the balance against every top-up in the selected
+**Local tokens** range, and always at least the latest one, with any leftover
+from before it. For example, buy 1000, spend 500, then buy 500: with 30d both
+buys count and the bar shows 1000 left of 1500; with 5h only the latest buy
+counts and it shows 1000 left of 1000. Purchases before the helper first saw
+the balance are unknown, so the bar starts full. The detail line reads
+"… left of … since …", and the bar never counts as the most constrained quota.
+See [ADR-0025](adr/ADR-0025-credit-balance-bars-from-observed-top-ups.md).
 
 Bar and percentage colors follow remaining allowance: the theme's primary color
 while healthy, warning at or below 25% remaining, and error at or below 10% or
@@ -55,6 +72,14 @@ remaining balance or spending against the budget. Warning colors always reflect
 proximity to the limit, regardless of display mode. Both bar layouts show only
 the percentage, without repeating "left" or "used"; the dropdown retains those
 labels.
+
+### Heatmap
+
+The flame button beside **Left / Used** switches quota-bar fills between the
+theme's status colors and a cool-to-hot heatmap, in the dropdown and the top
+bar at once. It changes the same remembered **Heatmap bar colors** setting;
+its colors and whether heat follows usage or pace are chosen in
+[Settings](settings.md#display). Percentages keep the status colors.
 
 ### Reset countdowns
 
@@ -82,10 +107,11 @@ unreported expiries are labelled as such.
 ### Available Claude resets
 
 Claude limit resets granted to your plan appear under the Claude card the same
-way, with the title, expiry and countdown, plus what the reset clears and
-whether it needs a limit. Advanced adds a **Use reset now** action that asks
-for a second click before sending the request. See
-[Claude limit resets](claude-reset.md).
+way, as one line with the title, expiry and countdown. Advanced adds a
+**Use reset now** action that asks for a second click before sending the
+request; the confirmation names the limits the reset clears, adds a note when
+it only works at a limit, and the number of uses left when there is more than
+one. See [Claude limit resets](claude-reset.md).
 
 ### Why does Spark have two bars?
 
@@ -113,9 +139,11 @@ selection is remembered and does not make another provider request. The row
 supports keyboard activation and shows unavailable or partial collection
 explicitly.
 
-In Advanced mode, the token-history selector above the provider cards controls
-one shared range. The Codex and Claude rows show read-only results for that
-range, including its label; they do not have separate selectors.
+In Advanced mode, the token-history row above the provider cards is the only
+place token totals are shown; it holds the shared range selector, the
+combined Input / Cached / Output totals and, when both providers are shown,
+a small table: a **Total** line and one line per provider for the same range,
+with In, Cached and Out each in a right-aligned column.
 
 Claude token totals are local Claude Code history only; usage from claude.ai,
 mobile, or other online surfaces is not written to those transcripts.

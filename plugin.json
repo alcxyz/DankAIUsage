@@ -2,7 +2,7 @@
   "id": "dankAIUsage",
   "name": "AI Usage",
   "description": "Monitor Codex and Claude quotas, credits, and token history",
-    "version": "1.3.1",
+    "version": "1.4.0",
   "author": "alcxyz",
   "icon": "monitoring",
   "type": "widget",
@@ -32,12 +32,6 @@
       "type": "boolean",
       "default": false
     },
-    "periodDays": {
-      "type": "integer",
-      "default": 7,
-      "minimum": 1,
-      "maximum": 90
-    },
     "showCodex": {
       "type": "boolean",
       "default": true
@@ -45,6 +39,11 @@
     "showClaude": {
       "type": "boolean",
       "default": true
+    },
+    "providerOrder": {
+      "type": "string",
+      "enum": ["codex", "claude"],
+      "default": "codex"
     },
     "barShowPluginIcon": {
       "type": "boolean",
@@ -117,6 +116,16 @@
     "barUsageColors": {
       "type": "boolean",
       "default": false
+    },
+    "heatmapPalette": {
+      "type": "string",
+      "enum": ["fixed", "theme"],
+      "default": "fixed"
+    },
+    "heatmapBasis": {
+      "type": "string",
+      "enum": ["usage", "pace"],
+      "default": "usage"
     }
   },
   "permissions": ["settings_read", "settings_write", "process"],
