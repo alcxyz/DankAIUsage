@@ -6,6 +6,8 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-19
+
 - **Color bars by usage** is now **Heatmap bar colors** under Display. It also colors the dropdown's quota bars, toggles from a flame button in the dropdown, blends without muddy middle tones, and ends in a brighter red. New options use your theme's colors and follow pace (how fast you use a quota for the time passed in its window) instead of the amount used.
 - The Advanced **Local tokens** row shows each provider's Input / Cached / Output split again, in aligned columns under a **Total** line.
 - Added a **Provider order** setting to show Claude before Codex in the top bar and dropdown.
@@ -13,12 +15,11 @@ as its GitHub release notes.
 - Prepaid credit balances now get a bar measured against your top-ups within the selected Local tokens range, never fewer than the latest top-up. The credit switches add that bar in quota-bar mode, where they used to do nothing. The helper starts recording top-ups once you update, so the bar starts full.
 - With the **Reset time** bar label, credit bars show their amount left (or used), such as `1.2k`, since credits have no reset.
 - Codex credit balances show as a credit count instead of a dollar amount, since Codex reports credits, not money.
-
 - A Claude limit-reset check answered with a rate limit that asks for no wait is now retried at the quota interval for up to an hour before backing off, which usually brings the reset listing back within the hour instead of leaving it missing for most of a day when the check keeps losing to Claude Code's own requests.
-
 - The Advanced warning about a failed Claude limit-reset check now appears only when no listing from the last six hours is available; a rate-limited or unreachable check while a recent result is still shown stays quiet. A sign-in rejection by Claude is still shown beside the listing.
-
 - Trimmed the dropdown and settings page. The dropdown no longer repeats the refresh time per provider, shows token totals only in the overview row, and drops the static notes about local-only tokens and reset availability; notices appear for failures, unconfirmed attempts, sign-in problems, and the result of a prime you just ran, and Simple keeps a one-line "Claude prime is on" indication. Claude reset lines no longer carry description paragraphs; the confirmation is one sentence naming the limits the reset clears. Settings descriptions are one line each, the refresh interval says what it governs, Include cached tokens moved to Display, the legacy token history slider is gone (its saved value still applies), the Codex earned reset has its own group, and Automation and notifications starts collapsed.
+
+For Nix release packaging, use `github:alcxyz/DankAIUsage/v1.4.0#release`. Manual release packaging is available from a clean `v1.4.0` checkout with `python3 scripts/package.py --release --output dist/release`. Install the packaged plugin directory together with its helper.
 
 ## [1.3.1] - 2026-10-03
 
