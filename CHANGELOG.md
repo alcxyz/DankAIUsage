@@ -6,6 +6,8 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-22
+
 - The Advanced overview ring's arc now follows **Heatmap bar colors**, while its percentage keeps the severity color.
 
 ## [1.4.0] - 2026-10-19
