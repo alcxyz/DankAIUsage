@@ -79,7 +79,8 @@ The flame button beside **Left / Used** switches quota-bar fills between the
 theme's status colors and a cool-to-hot heatmap, in the dropdown and the top
 bar at once. It changes the same remembered **Heatmap bar colors** setting;
 its colors and whether heat follows usage or pace are chosen in
-[Settings](settings.md#display). Percentages keep the status colors.
+[Settings](settings.md#display). The Advanced overview ring's arc follows the
+heatmap too. Percentages keep the status colors.
 
 ### Reset countdowns
 

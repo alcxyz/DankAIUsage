@@ -6,6 +6,8 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+- The Advanced overview ring's arc now follows **Heatmap bar colors**, while its percentage keeps the severity color.
+
 ## [1.4.0] - 2026-10-19
 
 - **Color bars by usage** is now **Heatmap bar colors** under Display. It also colors the dropdown's quota bars, toggles from a flame button in the dropdown, blends without muddy middle tones, and ends in a brighter red. New options use your theme's colors and follow pace (how fast you use a quota for the time passed in its window) instead of the amount used.

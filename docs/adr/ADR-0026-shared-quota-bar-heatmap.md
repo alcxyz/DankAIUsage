@@ -1,6 +1,6 @@
 # ADR-0026: Shared quota-bar heatmap with theme and pace options
 
-**Status:** Accepted
+**Status:** Accepted, amended 2026-10-22 (overview ring arc follows the heatmap)
 **Date:** 2026-10-14
 **Applies to:** `DankAIUsageWidget.qml`, settings
 **Amends:** ADR-0021's usage-based quota-bar colors and its rule that the
@@ -30,9 +30,10 @@ user's theme, and the dropdown's allowance bars could not use it at all.
   scale and twice even pace or more is the hottest. Elapsed time is floored at a
   tenth of the window so early use does not swing to red. An exhausted quota is
   always the hottest, and quotas without a known window fall back to usage.
-- Only bar fills change. Percentages, provider summaries, Advanced rings, and
-  the vertical pill keep the ADR-0018 severity colors, and errors still use the
-  theme's error color.
+- Bar fills and the Advanced overview ring's arc follow the heatmap.
+  Percentages (including the ring's text), provider summaries, and the vertical
+  pill keep the [ADR-0018](ADR-0018-dropdown-hierarchy-and-semantic-colors.md)
+  severity colors, and errors still use the theme's error color.
 
 ## Alternatives
 

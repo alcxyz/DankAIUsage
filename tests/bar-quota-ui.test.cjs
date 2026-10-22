@@ -315,3 +315,15 @@ test("the dropdown heatmap switch is shared with the top bar", () => {
     assert.match(qml, /heatmapPalette = [^\n]*=== "theme" \? "theme" : "fixed"/);
     assert.match(qml, /heatmapBasis = [^\n]*=== "pace" \? "pace" : "usage"/);
 });
+
+test("the overview ring heatmap colors only the arc and keeps error precedence", () => {
+    const ring = qml.match(/component AllowanceRing: Item \{([\s\S]*?)\n    \}/);
+    assert.ok(ring, "overview allowance ring exists");
+    assert.match(ring[1], /readonly property color arcColor: !root\.barUsageColors \? root\.allowanceColor\(allowance\)\s*: \(root\.hasError \? Theme\.error : root\.heatmapColor\(allowance\)\)/,
+        "the arc shares the heatmap and error color, with severity colors when disabled");
+    assert.match(ring[1], /ShapePath\s*\{\s*strokeColor: allowanceRing\.arcColor/);
+    assert.match(ring[1], /StyledText\s*\{[^}]*color: root\.allowanceColor\(allowanceRing\.allowance\)/,
+        "the centered percentage keeps the severity color");
+    assert.match(ring[1], /strokeColor: Theme\.withAlpha\(Theme\.surfaceVariantText, 0\.18\)/,
+        "the full-circle track keeps its muted color");
+});

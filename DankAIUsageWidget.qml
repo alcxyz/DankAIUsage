@@ -4930,6 +4930,8 @@ PluginComponent {
         property var allowance: null
         property int size: 52
         readonly property real fraction: root.displayPercent(allowance) / 100
+        readonly property color arcColor: !root.barUsageColors ? root.allowanceColor(allowance)
+                : (root.hasError ? Theme.error : root.heatmapColor(allowance))
         width: size
         height: size
 
@@ -4954,7 +4956,7 @@ PluginComponent {
             }
 
             ShapePath {
-                strokeColor: root.allowanceColor(allowanceRing.allowance)
+                strokeColor: allowanceRing.arcColor
                 strokeWidth: 5
                 fillColor: "transparent"
                 capStyle: ShapePath.RoundCap

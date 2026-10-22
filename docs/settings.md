@@ -14,7 +14,8 @@ collapsing a group never changes a saved value.
   of what is left, in the bar and the dropdown. The dropdown's Left / Used
   switch changes the same setting.
 - **Heatmap bar colors** (off by default) shades quota-bar fills in the top bar
-  and the dropdown from cool to hot instead of the theme's severity colors.
+  and the dropdown, plus the Advanced overview ring's arc, from cool to hot
+  instead of the theme's severity colors.
   The dropdown's flame button changes the same setting. Percentages, provider
   summaries, and the vertical pill keep the severity colors, and errors still
   use the theme's error color. While it is on, **Heatmap options** offer:
