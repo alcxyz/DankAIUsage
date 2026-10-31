@@ -10,7 +10,7 @@ monitoring app.
 
 ![Simple dropdown focused on Codex and Claude quotas](docs/screenshot-simple.png)
 
-![AI Usage on the DankBar with provider logos and minimal quota percentages](docs/screenshot-bar.png)
+![AI Usage on the DankBar with provider logos and weekly quota bars with percentages and reset times](docs/screenshot-bar.png)
 
 ## What you get
 
