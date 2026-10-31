@@ -6,6 +6,8 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-31
+
 ### Removed
 
 - Five-hour usage windows are gone, because Anthropic and OpenAI no longer have them: Claude and Codex show only their weekly, model-scoped, and credit limits, the **Claude 5-hour session** top-bar switch and the **Scheduled 5-hour resets** history filter are removed, and quota tags read `w` or the model initial. Five-hour events recorded earlier stay hidden. Claude limit resets and Codex resets keep working and now clear the weekly window.
