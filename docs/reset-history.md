@@ -55,8 +55,9 @@ is known. If it recurs, review and share only the relevant sanitized details.
 ## Filters
 
 Reset history hides routine scheduled weekly events by default. Its separate
-**Scheduled weekly resets** checkbox remembers your choice. Five-hour events
-stored by earlier versions stay hidden. **Other reset events** is checked by
+**Scheduled weekly resets** checkbox remembers your choice. Scheduled
+five-hour resets stored by earlier versions stay hidden; their other events,
+such as unexpected refills, appear under **Other reset events**, which is checked by
 default and includes unexpected refills, redemptions, timing changes, and
 unclassified windows. Uncheck both filters to hide all events. Recording and
 retention are unchanged; the latest four matching events are shown first, so
