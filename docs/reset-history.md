@@ -54,14 +54,14 @@ is known. If it recurs, review and share only the relevant sanitized details.
 
 ## Filters
 
-Reset history hides routine scheduled five-hour and weekly events by default.
-Its separate **Scheduled 5-hour resets** and **Scheduled weekly resets**
-checkboxes remember your choices. **Other reset events** is checked by default
-and includes unexpected refills, redemptions, timing changes, and unclassified
-windows. Uncheck all three to hide all events. Recording and retention are
-unchanged; the latest four matching events are shown first, so routine events
-do not crowd out unexpected refills or reset redemptions. Unknown window types
-follow Other.
+Reset history hides routine scheduled weekly events by default. Its separate
+**Scheduled weekly resets** checkbox remembers your choice. Five-hour events
+stored by earlier versions stay hidden. **Other reset events** is checked by
+default and includes unexpected refills, redemptions, timing changes, and
+unclassified windows. Uncheck both filters to hide all events. Recording and
+retention are unchanged; the latest four matching events are shown first, so
+routine events do not crowd out unexpected refills or reset redemptions.
+Unknown window types follow Other.
 
 ## Explain an unexpected change
 

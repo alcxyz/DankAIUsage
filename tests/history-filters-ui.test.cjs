@@ -4,7 +4,7 @@ const test = require('node:test');
 const qml = fs.readFileSync(`${__dirname}/../DankAIUsageWidget.qml`, 'utf8');
 
 function scope() {
-    const s = { historyShowOther: true, historyShowScheduledShort: false, historyShowScheduledWeekly: false,
+    const s = { historyShowOther: true, historyShowScheduledWeekly: false,
         showCodex: true, showClaude: true, usageHistory: [], pluginId: 'test', saved: [],
         sectionPageSize: 4, historyVisibleLimit: 4, announcementsVisibleLimit: 4 };
     s.root = s;
@@ -24,15 +24,19 @@ test('independent checkboxes hide only known scheduled windows', () => {
     assert.equal(s.historyMatchesFilters(event('weekly_scoped-weekly')), false);
     assert.equal(s.historyMatchesFilters(event('new-monthly')), true);
     assert.equal(s.historyMatchesFilters(event('general-weekly', 'allowance_increased_unknown')), true);
-    assert.equal(s.historyMatchesFilters(event('general-5-hour', 'reset_redeemed_inferred')), true);
-    s.setHistoryFilter('historyShowScheduledShort', true);
-    assert.equal(s.historyMatchesFilters(event('general-5-hour')), true);
+    assert.equal(s.historyMatchesFilters(event('general-5-hour', 'reset_redeemed_inferred')), true,
+        'unexpected changes on a retired five-hour bucket stay under Other');
     assert.equal(s.historyMatchesFilters(event('general-weekly')), false);
     s.setHistoryFilter('historyShowScheduledWeekly', true);
-    s.setHistoryFilter('historyShowScheduledShort', false);
     assert.equal(s.historyMatchesFilters(event('general-weekly')), true);
-    assert.equal(s.historyMatchesFilters(event('general-5-hour')), false);
-    assert.deepEqual(s.saved[0], ['test', 'historyShowScheduledShort', true]);
+    assert.equal(s.historyMatchesFilters(event('general-5-hour')), false,
+        'stored scheduled five-hour resets stay hidden');
+    s.setHistoryFilter('historyShowOther', false);
+    assert.equal(s.historyMatchesFilters(event('general-5-hour', 'reset_redeemed_inferred')), false);
+    assert.deepEqual(s.saved[0], ['test', 'historyShowScheduledWeekly', true]);
+    s.setHistoryFilter('historyShowScheduledShort', true);
+    assert.equal(s.historyShowScheduledShort, undefined, 'the five-hour filter is retired');
+    assert.equal(qml.includes('Scheduled 5-hour resets'), false);
     s.setHistoryFilter('showClaude', false);
     assert.equal(s.showClaude, true);
 });
@@ -44,12 +48,18 @@ test('filtering precedes the paged display limit and never mutates retained hist
         observedAt: new Date(Date.UTC(2026, 8, 13, 12, 59-i)).toISOString()}));
     const before = JSON.stringify(s.usageHistory);
     assert.equal(s.visibleHistory().length, 3);
-    s.setHistoryFilter('historyShowScheduledShort', true);
+    s.setHistoryFilter('historyShowOther', false);
+    assert.equal(s.matchingHistory().length, 0);
+    s.usageHistory = s.usageHistory.map(event => ({...event, bucket: 'general-weekly'}));
+    s.setHistoryFilter('historyShowScheduledWeekly', true);
+    s.setHistoryFilter('historyShowOther', true);
     assert.equal(s.matchingHistory().length, 12);
     assert.equal(s.visibleHistory().length, 4);
+    const after = JSON.stringify(s.usageHistory);
     s.showClaude = false;
     assert.equal(s.visibleHistory().length, 0);
-    assert.equal(JSON.stringify(s.usageHistory), before);
+    assert.equal(JSON.stringify(s.usageHistory), after);
+    assert.notEqual(before, after);
 });
 
 test('show more reveals the next page in order and closing the dropdown returns to the first page', () => {
@@ -122,7 +132,7 @@ test('settings preserve individual weekly choices including temporarily absent l
     const s = { barClaudeWeeklyOverrides: {'absent-weekly': false},
         barShowClaudeWeeklyValue: true, saved: [],
         summary: {providers: [{id: 'claude', quotaBuckets: [all, fable, all,
-            {id: 'general-5-hour', allowance: {window: 'session'}}]}]} };
+            {id: 'claude-extra-usage', kind: 'credits', allowance: {window: 'monthly'}}]}]} };
     s.root = s;
     s.loadState = () => s.summary;
     s.saveValue = (...args) => s.saved.push(args);

@@ -198,7 +198,7 @@ test("quota bar options follow the bar mode toggle without touching values", () 
     assert.match(header, /visible: barQuotaBarsToggle\.value/);
     assert.match(header, /nested: true/);
     assert.doesNotMatch(header, /collapsible: true/);
-    for (const key of ["barShowClaudeCredits", "barShowCodexCredits", "barShowClaudeSession", "barShowClaudeWeekly"]) {
+    for (const key of ["barShowClaudeCredits", "barShowCodexCredits", "barShowClaudeWeekly"]) {
         const control = settingControls.find(c => c.key === key);
         assert.doesNotMatch(spanText(control.chain[0]), /visible:/, `${key} keeps its saved value visible in both bar modes`);
     }
@@ -239,7 +239,7 @@ test("armed Codex reset stays discoverable and only the automation group starts 
     assert.equal(collapsed.length, 1, "exactly one group starts collapsed");
     assert.match(qml.slice(collapsed[0].start, collapsed[0].end), /collapsible: true/);
     const collapsedKeys = settingControls.filter(c => c.chain.includes(collapsed[0])).map(c => c.key).sort();
-    assert.deepEqual(collapsedKeys, ["enableClaudePrime", "publicResetAnnouncements", "systemNotifications"]);
+    assert.deepEqual(collapsedKeys, ["publicResetAnnouncements", "systemNotifications"]);
 });
 
 test("test.sh's refresh migration extraction keeps finding the refresh-interval loadValue first", () => {

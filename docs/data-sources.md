@@ -22,8 +22,10 @@
   client identity, which the endpoint requires before it reports them and
   rate-limits at quota cadence ([ADR-0022](adr/ADR-0022-manual-claude-limit-reset.md),
   [ADR-0023](adr/ADR-0023-separate-claude-reset-availability-check.md)).
-  The statusline JSON cached by `dankaiusage claude-statusline` is the
-  fallback source (see below).
+  Claude limits come only from this endpoint: when the fetch fails, they are
+  unavailable and the error is shown. The `claude-statusline` fallback is
+  gone; if your Claude Code settings run `dankaiusage claude-statusline` as
+  `statusLine.command`, remove it; the command now prints nothing.
 - **Token history:** Codex session/archived-session JSONL and Claude project
   JSONL transcripts from their normal CLI config locations
   ([ADR-0003](adr/ADR-0003-token-history-from-local-cli-artifacts.md)).
@@ -37,7 +39,7 @@
 For Claude limits the helper reads the Claude Code OAuth token from
 `~/.claude/.credentials.json` itself, uses it only for the usage request, and
 never prints or logs it. Everything it emits is aggregate local usage and
-subscription-window percentages.
+subscription limit percentages.
 
 ## Refresh interval and cooldown
 
@@ -60,66 +62,3 @@ effort.
 
 The widget polls `dankaiusage summary` and caches the last successful summary
 in DMS plugin state so the bar can render immediately after a shell restart.
-
-## Claude statusline (fallback)
-
-Claude Code passes statusline commands a JSON snapshot on stdin. This is the
-fallback limit source for setups where the usage endpoint is unavailable (for
-example macOS installs keeping credentials in the Keychain). Configure it to
-let DankAIUsage cache the rate-limit data without making extra model calls:
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "dankaiusage claude-statusline",
-    "padding": 0
-  }
-}
-```
-
-The cache is written to `$XDG_STATE_HOME/dankaiusage/claude-statusline.json`,
-or `~/.local/state/dankaiusage/claude-statusline.json` when `XDG_STATE_HOME`
-is unset.
-
-The statusline payload is produced by Claude Code after an interactive API
-response. If the cache does not exist yet, open Claude Code in a trusted
-workspace and send one message so Claude Code can pass fresh account limit
-data to `dankaiusage claude-statusline`.
-
-## Claude prime
-
-Claude prime is off by default. It deliberately starts a Claude subscription
-window with one tiny request, which consumes a small amount of usage. It is
-not required to display quotas.
-
-Originally a statusline-era limit workaround
-([ADR-0006](adr/ADR-0006-opt-in-claude-prime.md)), it is now useful as a
-window scheduler: if you reliably use up every 5-hour window, auto-priming
-starts the next window's countdown as soon as the previous one closes instead
-of waiting for your next real request
-([ADR-0007](adr/ADR-0007-auto-prime-as-window-scheduler.md)).
-
-```sh
-dankaiusage claude-prime
-```
-
-The command refuses to run unless the statusline command is configured. It
-skips without spending anything when account usage data already shows an
-active session window, when a prime ran within the last 15 minutes, or, if
-account data is unavailable, while the local prime timer is active. Otherwise,
-it sends one small `claude -p` prompt with safe mode, no session persistence,
-tools disabled, a tiny replacement system prompt, `sonnet` as the default
-model, prompt suggestions disabled, and a low budget cap. It then obtains
-account usage subject to the shared cooldown, and records a local five-hour
-session timer as the fallback guard. New account percentages may need to wait
-for the next eligible refresh.
-
-When **Enable Claude prime** is on, the widget automatically runs the prime
-request whenever Claude is visible and no active session timer is known. Any
-current local Claude session with a future reset time prevents another
-automatic prime until that timer expires. After a successful prime, the cached
-five-hour session timer provides that reset time even when Claude statusline
-does not publish account limits. If an automatic prime fails without producing
-local usage, the widget does not keep retrying; use the Claude bolt in the
-Advanced dropdown or toggle the setting off and on to try again.

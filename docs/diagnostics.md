@@ -16,9 +16,10 @@ is on `PATH`, not that its account is signed in. Sign in with the provider
 CLI, then Refresh. `dankaiusage summary --pretty` reports provider diagnostics
 under `meta`.
 
-**Claude limits show `--`.** Check `meta.oauthUsageError` in the summary
-output first; the statusline cache is only the fallback source. See
-[Data sources](data-sources.md#claude-statusline-fallback).
+**Claude limits show `--`.** Check `meta.limitError` in the summary output.
+Claude limits come only from the usage request, so its error explains the
+missing values. See
+[Data sources](data-sources.md#where-the-numbers-come-from).
 
 ## Local diagnostics
 

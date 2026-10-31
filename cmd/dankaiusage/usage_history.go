@@ -850,8 +850,8 @@ func generalCodexHistoryBucket(limits codexRateLimitsResult, now time.Time) (Quo
 	if !ok {
 		return QuotaBucket{}, false
 	}
-	session, weekly := codexSnapshotWindowAllowances(snapshot, now)
-	buckets := makeQuotaBuckets(session, weekly, nil, nil)
+	weekly := codexSnapshotWeeklyAllowance(snapshot, now)
+	buckets := makeQuotaBuckets(weekly, nil, nil)
 	if len(buckets) == 0 {
 		return QuotaBucket{}, false
 	}
@@ -869,8 +869,8 @@ func matchingCodexHistoryBucket(limits codexRateLimitsResult, before QuotaBucket
 	if !ok {
 		return QuotaBucket{}, false
 	}
-	session, weekly := codexSnapshotWindowAllowances(snapshot, now)
-	for _, bucket := range makeQuotaBuckets(session, weekly, nil, nil) {
+	weekly := codexSnapshotWeeklyAllowance(snapshot, now)
+	for _, bucket := range makeQuotaBuckets(weekly, nil, nil) {
 		if before.ID == "" || bucket.ID == before.ID {
 			return bucket, true
 		}
@@ -883,8 +883,8 @@ func updateCodexObservationsFromLimits(state *usageHistoryState, limits codexRat
 	if !ok {
 		return
 	}
-	session, weekly := codexSnapshotWindowAllowances(snapshot, now)
-	for _, bucket := range makeQuotaBuckets(session, weekly, nil, nil) {
+	weekly := codexSnapshotWeeklyAllowance(snapshot, now)
+	for _, bucket := range makeQuotaBuckets(weekly, nil, nil) {
 		resetAt, err := time.Parse(time.RFC3339, bucket.Allowance.ResetAt)
 		if err != nil || !resetAt.After(now) {
 			continue

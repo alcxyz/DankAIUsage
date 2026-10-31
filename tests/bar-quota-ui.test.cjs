@@ -43,14 +43,14 @@ function makeScope(overrides = {}) {
         brandLogoColors: false, barUsageColors: false, heatmapFixedStops: heatmapStops, heatmapPaceFloor: 0.1,
         heatmapPalette: "fixed", heatmapBasis: "usage",
         Qt: {rgba: (r, g, b) => [r, g, b].map(v => Math.round(v * 100) / 100).join(",")},
-        hasError: false, barShowClaudeSession: true, barShowClaudeWeekly: true,
+        hasError: false, barShowClaudeWeekly: true,
         barShowClaudeCredits: false, barShowCodexCredits: false, barClaudeWeeklyOverrides: {}, providers: [],
         tokenHistoryRange: "7d", periodDays: 7, trackingStatus: {},
         formatShortDateTime: value => value}, overrides);
     scope.root = scope;
     for (const name of ["knownAllowance", "displayPercent", "allowanceLabel", "allowanceSeverity",
             "allowanceColor", "resetTiming", "barFillColor", "providerQuotaBuckets", "claudeBucketShownInBar",
-            "providerBarBuckets", "barProviderGroups", "barLabelKind", "barLabelText", "barWindowTag",
+            "providerBarBuckets", "barProviderGroups", "barLabelKind", "barLabelText",
             "barQuotaTags", "barLabelTemplate", "barTimeLabel", "barCreditAmount", "compactAmount", "heatmapStops", "heatmapHeat", "heatmapColor", "srgbToLinear", "linearToSrgb",
             "toOklab", "oklabMix", "resetTimeProgress", "providerLogoColor",
             "providerBrandColor", "displayQuotaBuckets", "creditDisplayBucket", "creditLedgerAllowance",
@@ -65,7 +65,6 @@ function bucket(kind, label, windowMinutes, window, percentRemaining = 90, extra
         percentRemaining, percentUsed: 100 - percentRemaining}}, extra);
 }
 
-const session = bucket("short", "5-hour", 300, "session");
 const weekly = bucket("weekly", "Weekly", 10080, "weekly");
 const fableWeekly = bucket("scoped", "Fable · weekly", 10080, "weekly");
 const credits = {id: "credits", kind: "credits", label: "Credits", allowance: {known: true, percentRemaining: 50}};
@@ -73,23 +72,22 @@ const credits = {id: "credits", kind: "credits", label: "Credits", allowance: {k
 test("quota bars add credits only when their switch is on and keep Claude's per-quota choices", () => {
     const scope = makeScope();
     const balanceOnly = {id: "balance", kind: "credits", label: "Credits", allowance: {known: false}, valueLabel: "$5.00"};
-    const claude = {id: "claude", quotaBuckets: [session, weekly, fableWeekly, credits]};
-    const codex = {id: "codex", quotaBuckets: [session, weekly, credits, balanceOnly]};
-    assert.deepEqual(scope.providerBarBuckets(codex), [session, weekly]);
-    assert.deepEqual(scope.providerBarBuckets(claude), [session, weekly, fableWeekly]);
+    const claude = {id: "claude", quotaBuckets: [weekly, fableWeekly, credits]};
+    const codex = {id: "codex", quotaBuckets: [weekly, credits, balanceOnly]};
+    assert.deepEqual(scope.providerBarBuckets(codex), [weekly]);
+    assert.deepEqual(scope.providerBarBuckets(claude), [weekly, fableWeekly]);
     scope.barShowClaudeCredits = true;
     scope.barShowCodexCredits = true;
-    assert.deepEqual(scope.providerBarBuckets(codex), [session, weekly, credits],
+    assert.deepEqual(scope.providerBarBuckets(codex), [weekly, credits],
         "a balance without a top-up ledger has no bar");
-    assert.deepEqual(scope.providerBarBuckets(claude), [session, weekly, fableWeekly, credits]);
-    scope.barShowClaudeSession = false;
+    assert.deepEqual(scope.providerBarBuckets(claude), [weekly, fableWeekly, credits]);
     scope.barClaudeWeeklyOverrides = {[weekly.id]: false};
     scope.barShowClaudeCredits = false;
     assert.deepEqual(scope.providerBarBuckets(claude), [fableWeekly]);
     scope.providers = [codex, {id: "claude", quotaBuckets: [credits]}];
     const groups = scope.barProviderGroups();
     assert.equal(groups.length, 1, "providers without bar quotas are omitted");
-    assert.deepEqual(groups[0].tags, ["5h", "w", "cr"]);
+    assert.deepEqual(groups[0].tags, ["w", "cr"]);
 });
 
 test("a prepaid balance is measured against the top-ups in the token range", () => {
@@ -106,7 +104,8 @@ test("a prepaid balance is measured against the top-ups in the token range", () 
     scope.tokenHistoryRange = "7d";
     allowance = scope.creditLedgerAllowance(prepaid, now);
     assert.deepEqual([allowance.limit, allowance.remaining], [1000, 1000], "leftover before the latest buy carries over");
-    scope.tokenHistoryRange = "5h";
+    scope.tokenHistoryRange = "period";
+    scope.periodDays = 1;
     assert.equal(scope.creditLedgerAllowance(prepaid, now).limit, 1000, "the latest buy is always included");
     scope.tokenHistoryRange = "tracked";
     assert.equal(scope.creditLedgerAllowance(prepaid, now).limit, 1500, "tracked without a start uses every top-up");
@@ -136,29 +135,20 @@ test("provider names identify quota-bar groups when logos are disabled", () => {
 
 test("bar fill uses the ADR-0018 severity colors", () => {
     const scope = makeScope();
-    assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 80)), "primary");
-    assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 25)), "warning");
-    assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 10)), "error");
+    assert.equal(scope.barFillColor(bucket("weekly", "Weekly", 10080, "weekly", 80)), "primary");
+    assert.equal(scope.barFillColor(bucket("weekly", "Weekly", 10080, "weekly", 25)), "warning");
+    assert.equal(scope.barFillColor(bucket("weekly", "Weekly", 10080, "weekly", 10)), "error");
     assert.equal(scope.barFillColor({allowance: {known: false}}), "muted");
     assert.equal(scope.barFillColor(null), "muted");
     scope.hasError = true;
-    assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 80)), "error");
+    assert.equal(scope.barFillColor(bucket("weekly", "Weekly", 10080, "weekly", 80)), "error");
 });
 
-test("tags come from the window length and scope, growing only on clashes", () => {
+test("tags name the weekly quota and the model scope, growing only on clashes", () => {
     const scope = makeScope();
-    assert.equal(scope.barWindowTag({windowMinutes: 300}), "5h");
-    assert.equal(scope.barWindowTag({windowMinutes: 60}), "1h");
-    assert.equal(scope.barWindowTag({windowMinutes: 1440}), "1d");
-    assert.equal(scope.barWindowTag({windowMinutes: 90}), "90m");
-    assert.equal(scope.barWindowTag({windowMinutes: 10080}), "w");
-    assert.equal(scope.barWindowTag({window: "weekly"}), "w");
-    assert.equal(scope.barWindowTag({window: "session"}), "s");
-    assert.equal(scope.barWindowTag(null), "?");
+    assert.equal(qml.includes("barWindowTag"), false, "no window-length tags such as 5h remain");
     const tags = buckets => scope.barQuotaTags(buckets);
-    assert.deepEqual(tags([session, weekly, fableWeekly]), ["5h", "w", "f"]);
-    assert.deepEqual(tags([session, weekly, bucket("scoped", "Fable · 5-hour", 300, "session"), fableWeekly]),
-        ["5h", "w", "f5h", "f"]);
+    assert.deepEqual(tags([weekly, fableWeekly, credits]), ["w", "f", "cr"]);
     assert.deepEqual(tags([weekly, fableWeekly, bucket("scoped", "Foo · weekly", 10080, "weekly")]), ["w", "fa", "fo"]);
     assert.deepEqual(tags([weekly, bucket("scoped", "Wizard · weekly", 10080, "weekly")]), ["w", "wi"]);
     assert.deepEqual(tags([bucket("scoped", "Fable · weekly", 10080, "weekly"), bucket("scoped", "Fable · weekly", 10080, "weekly")]),
@@ -213,16 +203,14 @@ test("labels and their column widths", () => {
     assert.equal(scope.barLabelKind("percent"), "percent");
     assert.equal(scope.barLabelKind("bogus"), "none");
     assert.equal(scope.barLabelKind(undefined), "none");
-    assert.equal(scope.barLabelText("tag", session, "5h"), "5h");
-    assert.equal(scope.barLabelText("percent", session, ""), "90%");
-    assert.equal(scope.barLabelText("none", session, "5h"), "");
+    assert.equal(scope.barLabelText("tag", weekly, "w"), "w");
+    assert.equal(scope.barLabelText("percent", weekly, ""), "90%");
+    assert.equal(scope.barLabelText("none", weekly, "w"), "");
     assert.equal(scope.barLabelText("percent", null, ""), "");
-    const timer = {kind: "short", allowance: {source: "claude-prime local usage"}};
-    assert.equal(scope.barLabelTemplate("percent", [session, timer], []), "Timer");
-    assert.equal(scope.barLabelTemplate("percent", [session], []), "100%");
-    assert.equal(scope.barLabelTemplate("time", [session], []), "00h00");
-    assert.equal(scope.barLabelTemplate("tag", [session, weekly], ["5h", "w"]), "5h");
-    assert.equal(scope.barLabelTemplate("tag", [session, fableWeekly], ["5h", "f5h"]), "f5h");
+    assert.equal(scope.barLabelTemplate("percent", [weekly], []), "100%");
+    assert.equal(scope.barLabelTemplate("time", [weekly], []), "00h00");
+    assert.equal(scope.barLabelTemplate("tag", [weekly, fableWeekly], ["w", "f"]), "cr");
+    assert.equal(scope.barLabelTemplate("tag", [weekly, fableWeekly], ["w", "fab"]), "fab");
 });
 
 test("bar mode is off by default and leaves the text pill unchanged", () => {
@@ -240,7 +228,7 @@ test("brand logo colors and the heatmap are off by default", () => {
     assert.match(qml, /property bool brandLogoColors: false/);
     assert.match(qml, /property bool barUsageColors: false/);
     assert.equal(scope.providerLogoColor({id: "claude", available: true}), "primary");
-    assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 80)), "primary");
+    assert.equal(scope.barFillColor(bucket("weekly", "Weekly", 10080, "weekly", 80)), "primary");
 });
 
 test("brand logo colors apply only to healthy providers", () => {
@@ -272,10 +260,10 @@ test("heatmap runs green, yellow, orange, red over percent used", () => {
     assert.equal(used(undefined), used(0));
     assert.equal(scope.heatmapColor({known: false}), "muted");
     assert.equal(scope.heatmapColor(null), "muted");
-    assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 25)), used(75),
+    assert.equal(scope.barFillColor(bucket("weekly", "Weekly", 10080, "weekly", 25)), used(75),
         "enabled heatmap replaces severity colors");
     scope.hasError = true;
-    assert.equal(scope.barFillColor(bucket("short", "5-hour", 300, "session", 80)), "error");
+    assert.equal(scope.barFillColor(bucket("weekly", "Weekly", 10080, "weekly", 80)), "error");
 });
 
 test("theme heatmap blends the theme's primary, warning, and error colors", () => {

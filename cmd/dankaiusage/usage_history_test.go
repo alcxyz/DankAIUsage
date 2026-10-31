@@ -75,11 +75,11 @@ func TestClaudeHistoryUnchangedUsageWithLaterResetIsNotRefill(t *testing.T) {
 	now := mustParseTime(t, "2026-09-01T12:00:00Z")
 	path := filepath.Join(t.TempDir(), "usage-history.json")
 	initialReset := now.Add(30 * time.Minute)
-	provider := historyProvider("claude", "general-5-hour", "5-hour", 9, initialReset)
+	provider := historyProvider("claude", "general-weekly", "Weekly", 9, initialReset)
 	if _, err := observeUsageHistory(path, now, []ProviderUsage{provider}); err != nil {
 		t.Fatal(err)
 	}
-	provider = historyProvider("claude", "general-5-hour", "5-hour", 9, initialReset.Add(4*time.Hour+20*time.Minute))
+	provider = historyProvider("claude", "general-weekly", "Weekly", 9, initialReset.Add(4*time.Hour+20*time.Minute))
 	events, err := observeUsageHistory(path, now.Add(5*time.Minute), []ProviderUsage{provider})
 	if err != nil || len(events) != 1 {
 		t.Fatalf("events=%+v error=%v", events, err)

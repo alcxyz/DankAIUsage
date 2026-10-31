@@ -291,7 +291,7 @@ func classifyDiagnosticError(provider string, err error) (string, int) {
 			return "rate_limited", 429
 		case strings.Contains(message, "unreachable"):
 			return "network", 0
-		case strings.Contains(message, "unsupported response"), strings.Contains(message, "returned no session"):
+		case strings.Contains(message, "unsupported response"), strings.Contains(message, "returned no weekly window"):
 			return "invalid_response", 0
 		case strings.HasPrefix(message, "Claude usage API returned HTTP "):
 			status := 0

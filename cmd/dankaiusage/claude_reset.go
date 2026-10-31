@@ -59,8 +59,10 @@ var (
 	claudeResetGrantIDPattern   = regexp.MustCompile(`^[a-z0-9_-]{1,40}$`)
 	claudeResetRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 	claudeOrganizationIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-	claudeResetLimitKinds       = []string{
-		"five_hour", "seven_day", "seven_day_overage_included", "seven_day_opus",
+	// Limit kinds a reset may name. Anything else, including the retired
+	// five_hour window, is dropped, so it never shows in a description.
+	claudeResetLimitKinds = []string{
+		"seven_day", "seven_day_overage_included", "seven_day_opus",
 		"seven_day_sonnet", "seven_day_cowork", "seven_day_omelette", "seven_day_oauth_apps",
 	}
 )
@@ -612,7 +614,7 @@ func claudeResetsForSummary(now time.Time, interval time.Duration) ([]UsageReset
 		checkError = ""
 	}
 	// Missing local credentials are not news: the quota poll reports them in
-	// its own way, and a statusline-only setup has no reset to check.
+	// its own way.
 	if cache.DiagnosticCategory == "authentication" && cache.DiagnosticHTTPStatus == 0 {
 		checkError = ""
 	}
@@ -890,13 +892,15 @@ func claudeResetClearedSuffix(cleared []string) string {
 	var names []string
 	for _, kind := range cleared {
 		switch kind {
-		case "five_hour":
-			names = append(names, "5-hour")
 		case "seven_day":
 			names = append(names, "weekly")
 		case "seven_day_overage_included":
 			continue
 		default:
+			// Only weekly kinds are named; a retired five_hour entry is skipped.
+			if !strings.HasPrefix(kind, "seven_day_") {
+				continue
+			}
 			names = append(names, humanizeScopedLimitLabel(strings.TrimPrefix(kind, "seven_day_")))
 		}
 	}

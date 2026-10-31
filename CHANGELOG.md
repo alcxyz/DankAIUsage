@@ -6,6 +6,13 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+### Removed
+
+- Five-hour usage windows are gone, because Anthropic and OpenAI no longer have them: Claude and Codex show only their weekly, model-scoped, and credit limits, the **Claude 5-hour session** top-bar switch and the **Scheduled 5-hour resets** history filter are removed, and quota tags read `w` or the model initial. Five-hour events recorded earlier stay hidden. Claude limit resets and Codex resets keep working and now clear the weekly window.
+- Removed Claude prime and its automatic mode: with no five-hour window left to start, it only spent usage.
+- Removed the Claude statusline fallback. Claude limits come only from the usage API, and its error is shown when that fails. If your Claude Code settings run `dankaiusage claude-statusline` as `statusLine.command`, remove it; until then the command prints nothing.
+- Removed the **5h** Local tokens range; a saved 5h choice falls back to 7d.
+
 ## [1.4.1] - 2026-10-22
 
 - The Advanced overview ring's arc now follows **Heatmap bar colors**, while its percentage keeps the severity color.

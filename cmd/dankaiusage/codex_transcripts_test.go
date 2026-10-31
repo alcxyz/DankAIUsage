@@ -26,12 +26,12 @@ func TestCodexTranscriptCumulativeSnapshotsAndWindows(t *testing.T) {
 		t.Fatalf("stats = %+v, events = %d", stats, len(events))
 	}
 	provider := ProviderUsage{ID: "codex"}
-	applyEvents(&provider, events, now, options{PeriodDays: 7, SessionHours: 5})
+	applyEvents(&provider, events, now, options{PeriodDays: 7})
 	if provider.Period.Input != 50 || provider.Period.Output != 20 || provider.Period.Cached != 20 || provider.Period.Reasoning != 3 || provider.Period.Requests != 1 {
 		t.Fatalf("period totals = %+v", provider.Period)
 	}
-	if provider.Session.Total != 70 || provider.Today.Total != 70 || provider.Period.Sessions != 1 {
-		t.Fatalf("window totals: session=%+v today=%+v period=%+v", provider.Session, provider.Today, provider.Period)
+	if provider.Today.Total != 70 || provider.Period.Sessions != 1 {
+		t.Fatalf("window totals: today=%+v period=%+v", provider.Today, provider.Period)
 	}
 	if len(provider.Models) != 1 || provider.Models[0].Model != "gpt-test" || provider.Models[0].Total != 70 {
 		t.Fatalf("models = %+v", provider.Models)
@@ -65,7 +65,7 @@ func TestCodexTranscriptForkResumeAndDuplicateFiles(t *testing.T) {
 		t.Fatalf("stats = %+v, events = %d", stats, len(events))
 	}
 	provider := ProviderUsage{ID: "codex"}
-	applyEvents(&provider, events, now, options{PeriodDays: 7, SessionHours: 5})
+	applyEvents(&provider, events, now, options{PeriodDays: 7})
 	if provider.Period.Input != 260 || provider.Period.Output != 65 || provider.Period.Requests != 4 || provider.Period.Sessions != 2 {
 		t.Fatalf("deduplicated totals = %+v", provider.Period)
 	}
@@ -86,7 +86,7 @@ func TestCodexTranscriptCounterResetUsesLastUsage(t *testing.T) {
 		t.Fatalf("stats = %+v, events = %d", stats, len(events))
 	}
 	provider := ProviderUsage{ID: "codex"}
-	applyEvents(&provider, events, now, options{PeriodDays: 7, SessionHours: 5})
+	applyEvents(&provider, events, now, options{PeriodDays: 7})
 	if provider.Period.Input != 170 || provider.Period.Output != 34 || provider.Period.Cached != 68 || provider.Period.Reasoning != 6 {
 		t.Fatalf("reset totals = %+v", provider.Period)
 	}

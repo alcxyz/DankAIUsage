@@ -99,6 +99,7 @@ func TestShouldConsumeCodexResetPolicy(t *testing.T) {
 	resetSoon := now.Add(5 * time.Minute).Unix()
 	resetPast := now.Add(-time.Minute).Unix()
 	weekly := int64(10080)
+	short := int64(300)
 
 	tests := []struct {
 		name   string
@@ -149,6 +150,31 @@ func TestShouldConsumeCodexResetPolicy(t *testing.T) {
 				UsedPercent: 50, WindowDurationMins: &weekly, ResetsAt: &resetPast,
 			}),
 			credit: codexRateLimitResetCredit{ExpiresAt: now.Add(5 * time.Minute).Unix()},
+		},
+		{
+			name: "short window at threshold is ignored",
+			limits: codexRateLimitsResult{RateLimits: codexRateLimitSnapshot{
+				LimitID:   "codex",
+				Primary:   &codexRateLimitWindow{UsedPercent: 99, WindowDurationMins: &short, ResetsAt: &resetFar},
+				Secondary: &codexRateLimitWindow{UsedPercent: 10, WindowDurationMins: &weekly, ResetsAt: &resetFar},
+			}},
+			credit: credit,
+		},
+		{
+			name: "short window usage does not spend a near-expiry credit",
+			limits: codexRateLimitsResult{RateLimits: codexRateLimitSnapshot{
+				LimitID:   "codex",
+				Primary:   &codexRateLimitWindow{UsedPercent: 40, WindowDurationMins: &short, ResetsAt: &resetSoon},
+				Secondary: &codexRateLimitWindow{UsedPercent: 0, WindowDurationMins: &weekly, ResetsAt: &resetFar},
+			}},
+			credit: codexRateLimitResetCredit{ExpiresAt: now.Add(5 * time.Minute).Unix()},
+		},
+		{
+			name: "only a short window",
+			limits: generalLimits(codexRateLimitWindow{
+				UsedPercent: 100, WindowDurationMins: &short, ResetsAt: &resetFar,
+			}),
+			credit: credit,
 		},
 		{
 			name: "spark never triggers",

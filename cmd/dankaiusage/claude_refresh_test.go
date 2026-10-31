@@ -30,7 +30,7 @@ func (transport *claudeRefreshTransport) RoundTrip(request *http.Request) (*http
 	return &http.Response{
 		StatusCode: transport.status,
 		Header:     http.Header{"Retry-After": []string{transport.retryAfter}},
-		Body:       io.NopCloser(strings.NewReader(`{"five_hour":{"utilization":10,"resets_at":"2026-09-09T18:00:00Z"},"seven_day":{"utilization":20,"resets_at":"2026-09-15T00:00:00Z"}}`)),
+		Body:       io.NopCloser(strings.NewReader(`{"five_hour":null,"seven_day":{"utilization":20,"resets_at":"2026-09-15T00:00:00Z"}}`)),
 		Request:    request,
 	}, nil
 }
@@ -57,9 +57,9 @@ func TestClaudeRefreshMinimumAndLongInterval(t *testing.T) {
 	for _, interval := range []time.Duration{time.Second, time.Hour} {
 		t.Run(interval.String(), func(t *testing.T) {
 			transport, now := setupClaudeRefreshTest(t)
-			session, _, _, _, _, first, err := collectClaudeOAuthLimitsWithPolicy(now, interval, false)
-			if err != nil || !session.Known || first.Cached {
-				t.Fatalf("initial fetch: known=%v info=%+v error=%v", session.Known, first, err)
+			weekly, _, _, _, first, err := collectClaudeOAuthLimitsWithPolicy(now, interval, false)
+			if err != nil || !weekly.Known || first.Cached {
+				t.Fatalf("initial fetch: known=%v info=%+v error=%v", weekly.Known, first, err)
 			}
 			elapsed := 2 * time.Minute
 			callerInterval := time.Second
@@ -67,11 +67,11 @@ func TestClaudeRefreshMinimumAndLongInterval(t *testing.T) {
 				elapsed = 40 * time.Minute
 				callerInterval = usageRefreshDefaultInterval
 			}
-			session, _, _, _, _, cached, err := collectClaudeOAuthLimitsWithPolicy(now.Add(elapsed), callerInterval, false)
-			if err != nil || !session.Known || !cached.Cached || !cached.FetchedAt.Equal(now) || transport.calls.Load() != 1 {
-				t.Fatalf("cache read: known=%v info=%+v error=%v calls=%d", session.Known, cached, err, transport.calls.Load())
+			weekly, _, _, _, cached, err := collectClaudeOAuthLimitsWithPolicy(now.Add(elapsed), callerInterval, false)
+			if err != nil || !weekly.Known || !cached.Cached || !cached.FetchedAt.Equal(now) || transport.calls.Load() != 1 {
+				t.Fatalf("cache read: known=%v info=%+v error=%v calls=%d", weekly.Known, cached, err, transport.calls.Load())
 			}
-			if _, _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now.Add(elapsed), callerInterval, true); !errors.Is(err, errUsageRefreshCoolingDown) {
+			if _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now.Add(elapsed), callerInterval, true); !errors.Is(err, errUsageRefreshCoolingDown) {
 				t.Fatalf("fresh-only read bypassed cooldown: %v", err)
 			}
 			if transport.calls.Load() != 1 {
@@ -106,16 +106,16 @@ func TestClaudeRefreshRetryAfterSurvivesOtherCallers(t *testing.T) {
 	transport, now := setupClaudeRefreshTest(t)
 	transport.status = http.StatusTooManyRequests
 	transport.retryAfter = "1200"
-	if _, _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now, 3*time.Minute, false); err == nil {
+	if _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now, 3*time.Minute, false); err == nil {
 		t.Fatal("expected rate-limit failure")
 	}
-	if _, _, _, _, _, info, err := collectClaudeOAuthLimitsWithPolicy(now.Add(19*time.Minute), time.Second, false); !errors.Is(err, errUsageRefreshCoolingDown) || !info.NextAttemptAt.Equal(now.Add(20*time.Minute)) {
+	if _, _, _, _, info, err := collectClaudeOAuthLimitsWithPolicy(now.Add(19*time.Minute), time.Second, false); !errors.Is(err, errUsageRefreshCoolingDown) || !info.NextAttemptAt.Equal(now.Add(20*time.Minute)) {
 		t.Fatalf("backoff not retained: info=%+v error=%v", info, err)
 	}
 	if transport.calls.Load() != 1 {
 		t.Fatal("another caller bypassed Retry-After")
 	}
-	if _, _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now.Add(20*time.Minute), 3*time.Minute, false); err == nil {
+	if _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now.Add(20*time.Minute), 3*time.Minute, false); err == nil {
 		t.Fatal("fake server should still report rate limiting")
 	}
 	if transport.calls.Load() != 2 {
@@ -130,9 +130,9 @@ func TestClaudeRefreshConcurrentCallersShareRequest(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			session, _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now, 5*time.Minute, false)
-			if err != nil || !session.Known {
-				t.Errorf("concurrent cache read failed: known=%v error=%v", session.Known, err)
+			weekly, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now, 5*time.Minute, false)
+			if err != nil || !weekly.Known {
+				t.Errorf("concurrent cache read failed: known=%v error=%v", weekly.Known, err)
 			}
 		}()
 	}
@@ -148,35 +148,19 @@ func TestClaudeRefreshUsesTimeSampledAfterLock(t *testing.T) {
 	path := claudeOAuthUsageCachePath()
 	if err := saveClaudeOAuthUsageCache(path, claudeOAuthUsageCache{
 		FetchedAt: lockedAt.UTC().Format(time.RFC3339Nano),
-		Body:      json.RawMessage(`{"five_hour":{"utilization":10,"resets_at":"2026-09-09T18:00:00Z"},"seven_day":{"utilization":20,"resets_at":"2026-09-15T00:00:00Z"}}`),
+		Body:      json.RawMessage(`{"five_hour":null,"seven_day":{"utilization":20,"resets_at":"2026-09-15T00:00:00Z"}}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	session, _, _, _, _, info, err := collectClaudeOAuthLimitsWithClock(clockAssertedUnderUsageRefreshLock(t, path, lockedAt), 5*time.Minute, false)
-	if err != nil || !session.Known || !info.Cached || transport.calls.Load() != 0 {
-		t.Fatalf("collect: known=%v info=%+v error=%v calls=%d", session.Known, info, err, transport.calls.Load())
+	weekly, _, _, _, info, err := collectClaudeOAuthLimitsWithClock(clockAssertedUnderUsageRefreshLock(t, path, lockedAt), 5*time.Minute, false)
+	if err != nil || !weekly.Known || !info.Cached || transport.calls.Load() != 0 {
+		t.Fatalf("collect: known=%v info=%+v error=%v calls=%d", weekly.Known, info, err, transport.calls.Load())
 	}
 
-	_, _, _, _, _, _, err = collectClaudeOAuthLimitsWithClock(fixedUsageRefreshClock(startedAt), 5*time.Minute, false)
+	_, _, _, _, _, err = collectClaudeOAuthLimitsWithClock(fixedUsageRefreshClock(startedAt), 5*time.Minute, false)
 	if !errors.Is(err, errUsageRefreshTimestamp) || !errors.Is(err, errUsageRefreshState) {
 		t.Fatalf("genuinely future cache error = %v, want timestamp and state sentinels", err)
-	}
-}
-
-func TestClaudeRefreshInvalidationPreservesLongCooldown(t *testing.T) {
-	transport, now := setupClaudeRefreshTest(t)
-	if _, _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now, time.Hour, false); err != nil {
-		t.Fatal(err)
-	}
-	if err := invalidateClaudeUsageCache(claudeOAuthUsageCachePath(), now.Add(time.Minute), 3*time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, _, _, info, err := collectClaudeOAuthLimitsWithPolicy(now.Add(40*time.Minute), 3*time.Minute, false); !errors.Is(err, errUsageRefreshCoolingDown) || !info.Pending {
-		t.Fatalf("invalidation shortened cooldown: info=%+v error=%v", info, err)
-	}
-	if transport.calls.Load() != 1 {
-		t.Fatal("invalidation allowed an early fetch")
 	}
 }
 
@@ -195,7 +179,7 @@ func TestClaudeRefreshCorruptCacheFailsClosed(t *testing.T) {
 			if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now, 5*time.Minute, false); err == nil {
+			if _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now, 5*time.Minute, false); err == nil {
 				t.Fatal("invalid cache was accepted")
 			}
 			if transport.calls.Load() != 0 {

@@ -30,7 +30,6 @@ PluginComponent {
     property string providerOrder: "codex"
     property bool barShowPluginIcon: false
     property bool barShowProviderLogos: true
-    property bool barShowClaudeSession: true
     property bool barShowClaudeWeekly: true
     property var barClaudeWeeklyOverrides: ({})
     property bool barShowClaudeCredits: false
@@ -47,7 +46,6 @@ PluginComponent {
     property bool barUsageColors: false
     property string heatmapPalette: "fixed"
     property string heatmapBasis: "usage"
-    property bool historyShowScheduledShort: false
     property bool historyShowOther: true
     property bool historyShowScheduledWeekly: false
     property bool historyOpen: false
@@ -77,11 +75,10 @@ PluginComponent {
     property bool _diagnosticTimedOut: false
     property string dropdownMode: "simple"
     readonly property bool advancedDropdown: dropdownMode === "advanced"
-    // tokenHistorySession is read once in loadCache() to migrate the former
-    // two-state selector. New versions persist an explicit range key.
+    // loadCache() moves a retired range (the former 5h choice or the older
+    // tokenHistorySession switch) to 7d. New versions persist an explicit key.
     property string tokenHistoryRange: "7d"
     readonly property var tokenHistoryRanges: [
-        { key: "5h", label: "5h" },
         { key: "7d", label: "7d" },
         { key: "30d", label: "30d" },
         { key: "90d", label: "90d" },
@@ -91,7 +88,6 @@ PluginComponent {
     property string _trackingOutput: ""
     property string trackingCommandError: ""
     property bool clearTrackingConfirm: false
-    property bool enableClaudePrime: false
 
     property bool isLoading: true
     property bool hasError: false
@@ -114,13 +110,6 @@ PluginComponent {
     property var capabilities: ({})
     property string _pendingOutput: ""
     property bool _usageRefreshPending: false
-    property string _claudePrimeOutput: ""
-    property string _claudePrimeError: ""
-    property bool isPrimingClaude: false
-    property string claudePrimeText: ""
-    property bool claudePrimeAutomatic: false
-    property bool lastClaudeAutoPrimeFailed: false
-    property double lastClaudeAutoPrimeAt: 0
     property var codexResetStatus: ({ armed: false, stateKnown: false, message: "Checking reset control..." })
     property bool codexResetReady: false
     property string _codexResetOutput: ""
@@ -164,10 +153,8 @@ PluginComponent {
         if (!pluginService || !pluginService.loadPluginData) return
         if (pluginService.loadPluginState) {
             historyShowOther = pluginService.loadPluginState(pluginId, "historyShowOther", true) !== false
-            historyShowScheduledShort = pluginService.loadPluginState(pluginId, "historyShowScheduledShort", false) === true
             historyShowScheduledWeekly = pluginService.loadPluginState(pluginId, "historyShowScheduledWeekly", false) === true
         }
-        var wasEnabled = enableClaudePrime
         var announcementsWereEnabled = publicResetAnnouncements
         publicResetAnnouncements = pluginService.loadPluginData(pluginId, "publicResetAnnouncements", false) === true
         systemNotifications = pluginService.loadPluginData(pluginId, "systemNotifications", true) !== false
@@ -191,7 +178,6 @@ PluginComponent {
         providerOrder = pluginService.loadPluginData(pluginId, "providerOrder", "codex") === "claude" ? "claude" : "codex"
         barShowPluginIcon = pluginService.loadPluginData(pluginId, "barShowPluginIcon", false) === true
         barShowProviderLogos = pluginService.loadPluginData(pluginId, "barShowProviderLogos", true) !== false
-        barShowClaudeSession = pluginService.loadPluginData(pluginId, "barShowClaudeSession", true) !== false
         barShowClaudeWeekly = pluginService.loadPluginData(pluginId, "barShowClaudeWeekly", true) !== false
         var weeklyOverrides = pluginService.loadPluginData(pluginId, "barClaudeWeeklyOverrides", {})
         barClaudeWeeklyOverrides = weeklyOverrides && typeof weeklyOverrides === "object" && !Array.isArray(weeklyOverrides) ? weeklyOverrides : {}
@@ -209,16 +195,6 @@ PluginComponent {
         barUsageColors = pluginService.loadPluginData(pluginId, "barUsageColors", false) === true
         heatmapPalette = pluginService.loadPluginData(pluginId, "heatmapPalette", "fixed") === "theme" ? "theme" : "fixed"
         heatmapBasis = pluginService.loadPluginData(pluginId, "heatmapBasis", "usage") === "pace" ? "pace" : "usage"
-        enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
-        if (!wasEnabled && enableClaudePrime) {
-            lastClaudeAutoPrimeFailed = false
-            if (pluginService && pluginService.savePluginState)
-                pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeFailed", false)
-            maybeAutoPrimeClaude()
-        } else if (wasEnabled && !enableClaudePrime) {
-            // Turning prime off settles its last result; nothing is scheduled.
-            claudePrimeText = ""
-        }
     }
 
     function loadCache() {
@@ -233,17 +209,13 @@ PluginComponent {
         var savedRange = pluginService.loadPluginState(pluginId, "tokenHistoryRange", "") || ""
         if (isTokenHistoryRange(savedRange)) {
             tokenHistoryRange = savedRange
-        } else if (pluginService.loadPluginState(pluginId, "tokenHistorySession", false) === true) {
-            tokenHistoryRange = "5h"
+        } else if (savedRange === "5h" || pluginService.loadPluginState(pluginId, "tokenHistorySession", false) === true) {
+            // Providers dropped their five-hour windows, and the range with them.
+            tokenHistoryRange = "7d"
         } else {
             tokenHistoryRange = migratedPeriodRange(periodDays)
         }
-        lastClaudeAutoPrimeAt = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeAt", 0) || 0
-        // loadSettings() already ran: when prime is enabled it has cleared this
-        // flag, so a restart re-enables automatic priming and no paused-state
-        // explanation is needed here.
-        lastClaudeAutoPrimeFailed = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeFailed", false) === true
-        if (cached && cached.providers) applySummary(cached, false)
+        if (cached && cached.providers) applySummary(cached)
     }
 
     function resolveDropdownMode(savedMode, cachedSummary) {
@@ -546,9 +518,6 @@ PluginComponent {
     // cache. Otherwise every reset check could arrive inside the cooldown and
     // never receive the fresh data required to authorize consumption.
     function refreshCycle() {
-        // A finished prime's result is this cycle's news only, except a failed
-        // automatic prime: its message explains why scheduling has stopped.
-        if (!isPrimingClaude && !claudePrimeProcess.running && !lastClaudeAutoPrimeFailed) claudePrimeText = ""
         // The saved Claude reset record (an unconfirmed attempt after a crash
         // or timeout) is local state; reading it never contacts a server.
         if (showClaude && !claudeResetProcess.running) runClaudeReset("status")
@@ -730,7 +699,7 @@ PluginComponent {
         return null
     }
 
-    // "5-hour and weekly" taken from the helper's reset description, so the
+    // "weekly and Opus" taken from the helper's reset description, so the
     // names match the rest of the UI; "" when the helper reported none.
     function claudeResetClearsText(provider, grantId) {
         var resets = providerResets(provider)
@@ -753,26 +722,6 @@ PluginComponent {
         return "Refills your " + (clears !== "" ? clears + " limits" : "Claude limits") + " now; this cannot be undone."
                 + (claudeResetRequiresLimitNow(provider, grantId) ? "\nOnly works while you are at a limit; Claude keeps it otherwise." : "")
                 + (grant && grant.resetsLeft > 1 ? "\n" + grant.resetsLeft + " uses of this reset left." : "")
-    }
-
-    function primeClaude(automatic) {
-        automatic = automatic === true
-        if (!enableClaudePrime) {
-            if (!automatic) claudePrimeText = "Enable Claude prime in settings first"
-            return
-        }
-        if (claudePrimeProcess.running) return
-        _claudePrimeOutput = ""
-        _claudePrimeError = ""
-        claudePrimeText = automatic ? "Starting Claude session timer..." : "Refreshing Claude account limits..."
-        isPrimingClaude = true
-        claudePrimeAutomatic = automatic
-        if (!automatic) lastClaudeAutoPrimeFailed = false
-        claudePrimeProcess.command = [
-            "dankaiusage", "claude-prime",
-            "--refresh-interval", "" + root.refreshInterval
-        ]
-        claudePrimeProcess.running = true
     }
 
     Process {
@@ -798,7 +747,7 @@ PluginComponent {
             }
             try {
                 var summary = JSON.parse(root._pendingOutput.trim())
-                root.applySummary(summary, true)
+                root.applySummary(summary)
                 root.notifyHistoryUpdates()
                 if (root.pluginService && root.pluginService.savePluginState) {
                     // Keep the bounded helper history in one store, not in the DMS cache too.
@@ -1492,45 +1441,7 @@ PluginComponent {
         }
     }
 
-    Process {
-        id: claudePrimeProcess
-        running: false
-        stdout: SplitParser {
-            onRead: data => { root._claudePrimeOutput += data + "\n" }
-        }
-        stderr: SplitParser {
-            onRead: data => { root._claudePrimeError += data + "\n" }
-        }
-        onExited: (exitCode, exitStatus) => {
-            var message = ""
-            try {
-                var result = JSON.parse(root._claudePrimeOutput.trim())
-                message = result.message || ""
-            } catch (e) {
-                message = root._claudePrimeError.trim()
-            }
-            if (message === "") message = exitCode === 0 ? "Claude account limits refreshed" : "Claude account refresh failed"
-            // A prime that finishes after the user turned prime off has no
-            // notice to leave behind.
-            root.claudePrimeText = root.enableClaudePrime ? message : ""
-            root.isPrimingClaude = false
-            root.lastClaudeAutoPrimeAt = Date.now()
-            root.lastClaudeAutoPrimeFailed = exitCode !== 0 && root.claudePrimeAutomatic
-            if (root.pluginService && root.pluginService.savePluginState) {
-                root.pluginService.savePluginState(root.pluginId, "lastClaudeAutoPrimeAt", root.lastClaudeAutoPrimeAt)
-                root.pluginService.savePluginState(root.pluginId, "lastClaudeAutoPrimeFailed", root.lastClaudeAutoPrimeFailed)
-            }
-            root.claudePrimeAutomatic = false
-            if (exitCode !== 0) {
-                root.hasError = true
-                root.errorText = message
-                return
-            }
-            root.refreshUsage()
-        }
-    }
-
-    function applySummary(summary, allowAutoPrime) {
+    function applySummary(summary) {
         resetClock = Date.now()
         capabilities = summary.capabilities || {}
         providers = summary.providers || []
@@ -1543,13 +1454,6 @@ PluginComponent {
 
         var d = new Date(summary.generatedAt || Date.now())
         lastUpdated = d.toLocaleTimeString(Qt.locale(), Locale.ShortFormat)
-        var claude = claudeProvider()
-        if (claudeSessionIsActive(claude) && lastClaudeAutoPrimeFailed) {
-            lastClaudeAutoPrimeFailed = false
-            if (pluginService && pluginService.savePluginState)
-                pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeFailed", false)
-        }
-        if (allowAutoPrime !== false) maybeAutoPrimeClaude()
     }
 
     function visibleProviders() {
@@ -1568,14 +1472,16 @@ PluginComponent {
         if (!event) return false
         if (event.kind !== "scheduled_window") return historyShowOther
         var bucket = typeof event.bucket === "string" ? event.bucket : ""
-        if (bucket.endsWith("-5-hour")) return historyShowScheduledShort
         if (bucket.endsWith("-weekly")) return historyShowScheduledWeekly
+        // Stored routine resets of the retired five-hour window stay hidden,
+        // as they were by default.
+        if (bucket.endsWith("-5-hour")) return false
         // Unknown windows belong to Other; never guess from dates or labels.
         return historyShowOther
     }
 
     function setHistoryFilter(key, checked) {
-        if (key !== "historyShowOther" && key !== "historyShowScheduledShort" && key !== "historyShowScheduledWeekly") return
+        if (key !== "historyShowOther" && key !== "historyShowScheduledWeekly") return
         root[key] = checked === true
         if (pluginService && pluginService.savePluginState)
             pluginService.savePluginState(pluginId, key, root[key])
@@ -1750,13 +1656,11 @@ PluginComponent {
     }
 
     function allowanceLabel(allowance, includeMode) {
-        if (allowance && allowance.source === "claude-prime local usage") return "Timer"
         if (!knownAllowance(allowance)) return "--"
         return Math.round(displayPercent(allowance)) + (includeMode === false ? "%" : (showUsed ? "% used" : "% left"))
     }
 
     function allowanceDetail(allowance) {
-        if (allowance && allowance.source === "claude-prime local usage") return "Started by Claude prime"
         if (!knownAllowance(allowance)) return "Limit unavailable"
         if (allowance.unit === "percent") return allowanceLabel(allowance) + " of subscription window"
         return formatTokens((showUsed ? allowance.used : allowance.remaining) || 0) + (showUsed ? " used of " : " left of ") + formatTokens(allowance.limit || 0)
@@ -1796,7 +1700,6 @@ PluginComponent {
     // Start of the selected token range; Tracked starts when tracking began.
     function tokenRangeStartMs(now) {
         var day = 86400000
-        if (tokenHistoryRange === "5h") return now - 5 * 3600000
         if (tokenHistoryRange === "7d") return now - 7 * day
         if (tokenHistoryRange === "30d") return now - 30 * day
         if (tokenHistoryRange === "90d") return now - 90 * day
@@ -2083,7 +1986,6 @@ PluginComponent {
     function claudeBucketShownInBar(bucket) {
         if (!bucket) return false
         if (bucket.kind === "credits") return barShowClaudeCredits
-        if (bucket.allowance && bucket.allowance.window === "session") return barShowClaudeSession
         if (bucket.allowance && bucket.allowance.window === "weekly") {
             var selected = barClaudeWeeklyOverrides[bucket.id]
             return typeof selected === "boolean" ? selected : barShowClaudeWeekly
@@ -2167,43 +2069,6 @@ PluginComponent {
         return segments
     }
 
-    function claudeProvider() {
-        if (!showClaude) return null
-        for (var i = 0; i < providers.length; i++) {
-            if (providers[i].id === "claude") return providers[i]
-        }
-        return null
-    }
-
-    function resetIsFuture(allowance) {
-        if (!allowance || !allowance.resetAt) return false
-        var d = new Date(allowance.resetAt)
-        return !isNaN(d.getTime()) && d.getTime() > Date.now() + 60000
-    }
-
-    function claudeSessionIsActive(provider) {
-        if (!provider) return false
-        var allowance = provider.sessionLeft
-        if (!allowance) return false
-        if (allowance.known) return resetIsFuture(allowance)
-        if (provider.session && (provider.session.requests || 0) > 0) return resetIsFuture(allowance)
-        return allowance.source === "claude-prime local usage" && resetIsFuture(allowance)
-    }
-
-    function maybeAutoPrimeClaude() {
-        if (!enableClaudePrime || !showClaude || isPrimingClaude || claudePrimeProcess.running) return
-        var provider = claudeProvider()
-        if (!provider || !provider.available || claudeSessionIsActive(provider) || lastClaudeAutoPrimeFailed) return
-        if (provider.meta && provider.meta.usageRefreshPending === true) return
-        // A cooldown-only helper result must not create a prime -> summary ->
-        // prime loop. Manual priming remains an explicit separate action.
-        if (lastClaudeAutoPrimeAt > 0 && Date.now() < lastClaudeAutoPrimeAt + refreshInterval * 1000) return
-        lastClaudeAutoPrimeAt = Date.now()
-        if (pluginService && pluginService.savePluginState)
-            pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeAt", lastClaudeAutoPrimeAt)
-        primeClaude(true)
-    }
-
     function formatReset(allowance) {
         if (!allowance || !allowance.resetAt) return "--"
         var d = new Date(allowance.resetAt)
@@ -2273,7 +2138,6 @@ PluginComponent {
         if (meta.tokenDataAvailable === false) return false
         if (meta.tokenDataAvailable === true) return true
         return !meta.tokenDataError || (provider.period && provider.period.requests > 0)
-                || (provider.session && provider.session.requests > 0)
     }
 
     function isTokenHistoryRange(value) {
@@ -2303,12 +2167,9 @@ PluginComponent {
             return trackedProviders[provider.id] || null
         }
         var rolling = provider.rolling || {}
-        if (tokenHistoryRange === "5h" && rolling.fiveHours) return rolling.fiveHours
         if (tokenHistoryRange === "7d" && rolling.sevenDays) return rolling.sevenDays
         if (tokenHistoryRange === "30d" && rolling.thirtyDays) return rolling.thirtyDays
         if (tokenHistoryRange === "90d" && rolling.ninetyDays) return rolling.ninetyDays
-        // Compatibility while cached summaries migrate to rolling totals.
-        if (tokenHistoryRange === "5h") return provider.session
         if (tokenHistoryRange === "period") return provider.period
         return null
     }
@@ -2484,7 +2345,7 @@ PluginComponent {
         return barUsageColors ? heatmapColor(allowance) : allowanceColor(allowance)
     }
 
-    // Quotas in helper order (5-hour, weekly, model-scoped). Claude still
+    // Quotas in helper order (weekly, model-scoped). Claude still
     // honours the per-quota top-bar choices. Credits join when their switch
     // is on and they have a bar: a spend limit or a top-up ledger (ADR-0025).
     function providerBarBuckets(provider) {
@@ -2559,32 +2420,18 @@ PluginComponent {
         return scaled(value, "")
     }
 
-    // Window tag from its length: 5h, 1d, w (six days or longer).
-    function barWindowTag(allowance) {
-        var minutes = allowance ? allowance.windowMinutes : 0
-        if (typeof minutes === "number" && isFinite(minutes) && minutes > 0) {
-            if (minutes >= 6 * 1440) return "w"
-            if (minutes % 1440 === 0) return (minutes / 1440) + "d"
-            if (minutes % 60 === 0) return (minutes / 60) + "h"
-            return Math.round(minutes) + "m"
-        }
-        if (allowance && allowance.window === "weekly") return "w"
-        return allowance && allowance.window === "session" ? "s" : "?"
-    }
-
-    // One tag per bucket: general quotas by window (5h, w), model-scoped
-    // quotas by the model initial, plus the window unless weekly (f, f5h).
-    // Clashing scoped tags use more of the model name (fa, fo).
+    // One tag per bucket: the general weekly quota is w, credits cr, and
+    // model-scoped weekly quotas the model initial (f). Clashing scoped tags
+    // use more of the model name (fa, fo).
     function barQuotaTags(buckets) {
         var prefix = []
         for (var i = 0; i < buckets.length; i++) prefix.push(1)
         function tagAt(k) {
             var bucket = buckets[k]
             if (bucket && bucket.kind === "credits") return "cr"
-            var window = barWindowTag(bucket ? bucket.allowance : null)
-            if (!bucket || bucket.kind !== "scoped") return window
+            if (!bucket || bucket.kind !== "scoped") return "w"
             var name = (bucket.label || "").split("·")[0].replace(/\s+/g, "").toLowerCase() || "?"
-            return name.slice(0, prefix[k]) + (window === "w" ? "" : window)
+            return name.slice(0, prefix[k])
         }
         while (true) {
             var tags = []
@@ -2604,7 +2451,7 @@ PluginComponent {
 
     // Widest expected text per label kind, so a group's column keeps one width.
     function barLabelTemplate(kind, buckets, tags) {
-        var template = kind === "time" ? "00h00" : (kind === "percent" ? "100%" : "5h")
+        var template = kind === "time" ? "00h00" : (kind === "percent" ? "100%" : "cr")
         var candidates = []
         for (var i = 0; i < buckets.length; i++)
             candidates.push(kind === "tag" ? (tags[i] || "") : (kind === "percent" ? barLabelText(kind, buckets[i], "") : ""))
@@ -2673,9 +2520,6 @@ PluginComponent {
             if (provider.meta.usageRefreshError) staleNote += ": " + provider.meta.usageRefreshError
             add(staleNote, "warning")
         }
-        if (provider.id === "claude" && claudePrimeText !== "") add(claudePrimeText, "info")
-        if (provider.id === "claude" && provider.meta.sessionFallbackSource)
-            add("Session timer from Claude prime; account limits unavailable", "warning")
         // The limit-reset check is separate from the quota poll; its failure
         // only hides the reset line, so say why in Advanced.
         if (advancedDropdown && provider.id === "claude" && provider.meta.claudeResetCheckError)
@@ -2686,11 +2530,7 @@ PluginComponent {
             if (lastUsage !== "") note += " (last " + lastUsage + ")"
             add(note, "info")
         }
-        if (provider.meta.limitError) {
-            if (provider.id === "claude" && provider.meta.oauthUsageError) add(provider.meta.oauthUsageError, "error")
-            else if (provider.id === "claude" && provider.meta.statuslineNextStep) add(provider.meta.statuslineNextStep, "error")
-            else add(provider.meta.limitError, "error")
-        }
+        if (provider.meta.limitError) add(provider.meta.limitError, "error")
         else if (provider.meta.tokenDataError) add(provider.meta.tokenDataError, "warning")
         return notices
     }
@@ -3348,17 +3188,6 @@ PluginComponent {
                                                 elide: Text.ElideRight
                                                 maximumLineCount: 1
                                             }
-
-                                            DankActionButton {
-                                                buttonSize: 24
-                                                iconName: root.isPrimingClaude ? "hourglass_top" : "bolt"
-                                                iconColor: root.isPrimingClaude ? Theme.surfaceVariantText : Theme.primary
-                                                tooltipText: root.isPrimingClaude ? "Starting a Claude session window..." : "Start a Claude session window now"
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                visible: root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime
-                                                enabled: !root.isPrimingClaude
-                                                onClicked: root.primeClaude()
-                                            }
                                         }
                                     }
 
@@ -3609,13 +3438,6 @@ PluginComponent {
                                         }
                                     }
 
-                                    NoticeRow {
-                                        width: parent.width
-                                        level: "info"
-                                        text: "Claude prime is on"
-                                        visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime
-                                    }
-
                                     Repeater {
                                         model: root.providerNotices(modelData)
 
@@ -3691,11 +3513,6 @@ PluginComponent {
                                     text: "Other reset events"
                                     checked: root.historyShowOther
                                     onClicked: root.setHistoryFilter("historyShowOther", checked)
-                                }
-                                HistoryCheckbox {
-                                    text: "Scheduled 5-hour resets"
-                                    checked: root.historyShowScheduledShort
-                                    onClicked: root.setHistoryFilter("historyShowScheduledShort", checked)
                                 }
                                 HistoryCheckbox {
                                     text: "Scheduled weekly resets"

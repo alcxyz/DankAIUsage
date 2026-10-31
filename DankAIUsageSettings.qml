@@ -11,7 +11,7 @@ PluginSettings {
 
     readonly property var barLabelOptions: [
         { label: "None", value: "none" },
-        { label: "Quota (5h / w / model initial)", value: "tag" },
+        { label: "Quota (w / model initial)", value: "tag" },
         { label: "Reset time (amount for credits)", value: "time" },
         { label: "Percent", value: "percent" }
     ]
@@ -436,13 +436,6 @@ PluginSettings {
         summary: "Which limits each provider contributes to the pill. The dropdown always lists every quota."
 
         ToggleSetting {
-            settingKey: "barShowClaudeSession"
-            label: "Claude 5-hour session"
-            description: "Claude's current five-hour window"
-            defaultValue: true
-        }
-
-        ToggleSetting {
             settingKey: "barShowClaudeWeekly"
             label: "New Claude weekly limits by default"
             description: "Default for weekly limits without a choice below"
@@ -751,13 +744,6 @@ PluginSettings {
         title: "Automation and notifications"
         collapsible: true
         expanded: false
-
-        ToggleSetting {
-            settingKey: "enableClaudePrime"
-            label: "Enable Claude prime"
-            description: "Start a new session window with a tiny request; consumes usage"
-            defaultValue: false
-        }
 
         ToggleSetting {
             settingKey: "publicResetAnnouncements"

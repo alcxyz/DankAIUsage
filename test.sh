@@ -77,7 +77,7 @@ for screenshot in ("docs/screenshot.png", "docs/screenshot-simple.png", "docs/sc
 # or an implicit side effect of collecting usage.
 assert 'armed: false' in component_text
 assert '"dankaiusage", "codex-reset", action,' in component_text
-assert component_text.count('"--refresh-interval", "" + root.refreshInterval') == 4
+assert component_text.count('"--refresh-interval", "" + root.refreshInterval') == 3
 # Claude limit resets are used only through an explicit, confirmed action
 # (ADR-0022); the widget never redeems one on its own.
 assert 'var command = ["dankaiusage", "claude-reset", action, "--refresh-interval", "" + root.refreshInterval]' in component_text
@@ -150,9 +150,10 @@ assert 'component TokenHistoryRow: StyledRect' in component_text
 assert component_text.count('TokenHistoryRow {') == 1, 'only the overview owns a range selector'
 assert 'TokenHistoryResult' not in component_text, 'token totals are shown once, in the overview row'
 assert 'property string tokenHistoryRange: "7d"' in component_text
-for token_range in ('5h', '7d', '30d', '90d', 'tracked'):
+for token_range in ('7d', '30d', '90d', 'tracked'):
     assert f'{{ key: "{token_range}"' in component_text
-assert 'loadPluginState(pluginId, "tokenHistorySession", false)' in component_text
+assert '{ key: "5h"' not in component_text, 'the five-hour token range is retired'
+assert 'savedRange === "5h" || pluginService.loadPluginState(pluginId, "tokenHistorySession", false) === true' in component_text
 assert 'loadPluginState(pluginId, "tokenHistoryRange", "")' in component_text
 assert 'savePluginState(pluginId, "tokenHistoryRange", tokenHistoryRange)' in component_text
 assert 'Keys.onSpacePressed: tokenRow.selectorOpen = !tokenRow.selectorOpen' in component_text
@@ -163,8 +164,9 @@ assert 'tableRows: root.tokenTableRows()' in component_text, 'the overview row l
 assert 'anchors.verticalCenter: tokenRowHeader.verticalCenter' in component_text
 assert 'if (days === 7 || days === 30 || days === 90) return days + "d"' in component_text
 assert 'if (tokenHistoryRange === "period") return provider.period' in component_text
-for field in ('fiveHours', 'sevenDays', 'thirtyDays', 'ninetyDays'):
+for field in ('sevenDays', 'thirtyDays', 'ninetyDays'):
     assert f'rolling.{field}' in component_text
+assert 'fiveHours' not in component_text and 'provider.session' not in component_text
 assert 'var trackedProviders = trackingStatus.providers || {}' in component_text
 assert 'if (!tokenHistoryTotals(provider)) return false' in component_text
 assert 'trackingStatus.known !== true || !trackingStatus.startedAt' in component_text
@@ -276,7 +278,7 @@ assert 'readonly property bool advancedDropdown: dropdownMode === "advanced"' in
 load_cache = function_body("loadCache")
 resolve_at = load_cache.index("resolveDropdownMode(")
 persist_at = load_cache.index('savePluginState(pluginId, "dropdownMode", dropdownMode)')
-summary_at = load_cache.index("applySummary(cached, false)")
+summary_at = load_cache.index("applySummary(cached)")
 assert resolve_at < persist_at < summary_at, "dropdown migration must persist before cached summary refresh"
 
 completed = re.search(r"Component\.onCompleted\s*:\s*\{([^}]*)\}", component, re.S)
@@ -287,7 +289,7 @@ setter = function_body("setDropdownMode")
 assert 'mode !== "simple" && mode !== "advanced"' in setter
 assert 'savePluginState(pluginId, "dropdownMode", mode)' in setter
 assert "clearTrackingConfirm = false" in setter
-for forbidden in ("setQuickSetting", "runTracking", "runCodexReset", "primeClaude", ".running", "barShow", "enableClaudePrime"):
+for forbidden in ("setQuickSetting", "runTracking", "runCodexReset", ".running", "barShow"):
     assert forbidden not in setter, f"mode setter must not perform backend/setting action: {forbidden}"
 
 # Advanced-only detail is explicitly gated, while quota and warning rows remain
@@ -303,7 +305,6 @@ for expected in (
     'visible: modelData.id === "claude" && root.claudeResetControlsVisible(modelData)',
     'visible: root.advancedDropdown && root.hasSpendableClaudeReset(modelData)',
     'visible: (root.advancedDropdown && (root.showCodex || root.showClaude))',
-    'visible: !root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime',
 ):
     assert expected in component, f"missing dropdown visibility contract: {expected}"
 assert component.count("visible: root.advancedDropdown\n") >= 3
@@ -362,7 +363,7 @@ function equal(actual, expected, description) {
 
 const resolve = bindQmlFunction("resolveDropdownMode", {});
 const weeklyScope = {
-    barShowClaudeSession: true, barShowClaudeWeekly: true,
+    barShowClaudeWeekly: true,
     barShowClaudeCredits: false, barClaudeWeeklyOverrides: {},
 };
 const weeklyAll = {id: "general-weekly", allowance: {window: "weekly"}};
@@ -461,27 +462,12 @@ equal(sectionResets, 1, "closing still resets history and announcement paginatio
 if (!/function refreshOnPopoutOpen\(\) \{[^}]*refreshCycle\(\)/.test(qml))
     throw new Error("open refresh must use refreshCycle so armed reset checks keep their order");
 
-const primeProvider = { available: true, meta: {} };
-let primeCalls = 0;
-const primeScope = {
-    enableClaudePrime: true, showClaude: true, isPrimingClaude: false,
-    claudePrimeProcess: { running: false }, claudeProvider() { return primeProvider; },
-    claudeSessionIsActive() { return false; }, lastClaudeAutoPrimeFailed: false,
-    lastClaudeAutoPrimeAt: Date.now(), refreshInterval: 300, pluginService: null,
-    primeClaude() { primeCalls++; }
-};
-const autoPrime = bindQmlFunction("maybeAutoPrimeClaude", primeScope);
-autoPrime();
-equal(primeCalls, 0, "cooldown-only prime result cannot cause immediate retry");
-primeScope.lastClaudeAutoPrimeAt = Date.now() - 301000;
-autoPrime();
-equal(primeCalls, 1, "auto-prime may check again after selected interval");
-autoPrime();
-equal(primeCalls, 1, "summary after prime cannot loop immediately");
-primeScope.lastClaudeAutoPrimeAt = 0;
-primeProvider.meta.usageRefreshPending = true;
-autoPrime();
-equal(primeCalls, 1, "pending post-action quotas do not trigger prime");
+// Claude prime and the statusline fallback are gone from the widget and settings.
+for (const retired of ["claude-prime", "primeClaude", "enableClaudePrime", "claudePrimeProcess",
+    "lastClaudeAutoPrime", "statusline", "barShowClaudeSession", "historyShowScheduledShort", "claudeSessionIsActive"]) {
+    if (qml.includes(retired)) throw new Error(`widget still references ${retired}`);
+    if (settingsQml.includes(retired)) throw new Error(`settings still reference ${retired}`);
+}
 
 const normalizeSetting = bindQmlFunction("normalizedSeconds", {}, settingsQml);
 const settingSaves = [];
@@ -638,13 +624,13 @@ confirmScope.claudeResetRequiresLimitNow = bindQmlFunction("claudeResetRequiresL
 const confirmText = bindQmlFunction("claudeResetConfirmText", confirmScope);
 // The cleared limits come from the helper's own description text.
 const grantProvider = (grant, description) => ({id: "claude", meta: {claudeReset: {eligible: true, nextGrantId: "grant-1", grants: [grant]}}, resets: [{...claudeReset, description}]});
-const bothText = confirmText(grantProvider({id: "grant-1", resetsLeft: 1}, "1 left · clears 5-hour and weekly · usable any time"));
-equal(bothText.startsWith("Refills your 5-hour and weekly limits now"), true, "confirmation names the cleared limits: " + bothText);
+const bothText = confirmText(grantProvider({id: "grant-1", resetsLeft: 1}, "1 left · clears weekly · usable any time"));
+equal(bothText.startsWith("Refills your weekly limits now"), true, "confirmation names the cleared limits: " + bothText);
 equal(bothText.includes("uses of this reset left"), false, "a single use adds no count");
-const fiveText = confirmText(grantProvider({id: "grant-1", resetsLeft: 3, useRequiresLimit: true}, "3 left · clears 5-hour and Opus · use at a limit"));
-equal(fiveText.startsWith("Refills your 5-hour and Opus limits now"), true, "scoped names keep the helper's wording: " + fiveText);
-equal(fiveText.includes("Only works while you are at a limit"), true, "the at-limit condition is stated");
-equal(fiveText.includes("3 uses of this reset left"), true, "several uses are counted");
+const scopedText = confirmText(grantProvider({id: "grant-1", resetsLeft: 3, useRequiresLimit: true}, "3 left · clears weekly and Opus · use at a limit"));
+equal(scopedText.startsWith("Refills your weekly and Opus limits now"), true, "scoped names keep the helper's wording: " + scopedText);
+equal(scopedText.includes("Only works while you are at a limit"), true, "the at-limit condition is stated");
+equal(scopedText.includes("3 uses of this reset left"), true, "several uses are counted");
 equal(confirmText(claudeProvider).startsWith("Refills your Claude limits now"), true, "unknown scope falls back to a generic sentence");
 equal(grantId(claudeProvider), "grant-1", "grant id prefers the offered grant");
 equal(grantId({id: "claude", meta: {claudeReset: {}}, resets: [claudeReset]}), "grant-1", "grant id falls back to the listed reset");
@@ -985,6 +971,17 @@ assert "DankAIUsage diagnostics" in report["report"]
         pass "local-only diagnostic CLI report"
     else
         fail "diagnostic CLI report" "safe report unavailable"
+    fi
+    if ! "$BINARY" claude-prime </dev/null >/dev/null 2>&1; then
+        pass "removed claude-prime command is rejected"
+    else
+        fail "removed claude-prime" "command still runs"
+    fi
+    statusline_out="$(printf '{"rate_limits":{}}' | "$BINARY" claude-statusline 2>&1)" && statusline_rc=0 || statusline_rc=$?
+    if [ "$statusline_rc" = 0 ] && [ -z "$statusline_out" ]; then
+        pass "removed claude-statusline is a silent no-op"
+    else
+        fail "removed claude-statusline" "exit $statusline_rc, output '$statusline_out'"
     fi
 fi
 

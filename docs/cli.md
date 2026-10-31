@@ -76,14 +76,3 @@ dankaiusage diagnostics
 `diagnostics` prints the same local-only report as the dropdown. See
 [Reset history](reset-history.md) and
 [Troubleshooting and diagnostics](diagnostics.md).
-
-## Claude
-
-```sh
-dankaiusage claude-statusline
-dankaiusage claude-prime
-```
-
-`claude-statusline` is configured as a Claude Code statusline command and
-caches the fallback limit source. `claude-prime` starts a Claude session
-window with one tiny request. See [Data sources](data-sources.md).

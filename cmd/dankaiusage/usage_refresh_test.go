@@ -463,19 +463,19 @@ func collectCachedCodexRateLimits(path string, now time.Time, interval time.Dura
 	return collectCachedCodexRateLimitsWithClock(path, interval, requireFresh, fetch, fixedUsageRefreshClock(now))
 }
 
-func collectClaudeOAuthLimits(now time.Time, intervals ...time.Duration) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, error) {
+func collectClaudeOAuthLimits(now time.Time, intervals ...time.Duration) (Allowance, []ExtraLimit, []QuotaBucket, map[string]any, error) {
 	interval := usageRefreshDefaultInterval
 	if len(intervals) > 0 {
 		interval = intervals[0]
 	}
-	session, weekly, extras, additional, meta, _, err := collectClaudeOAuthLimitsWithPolicy(now, interval, false)
-	return session, weekly, extras, additional, meta, err
+	weekly, extras, additional, meta, _, err := collectClaudeOAuthLimitsWithPolicy(now, interval, false)
+	return weekly, extras, additional, meta, err
 }
 
-func collectClaudeOAuthLimitsWithPolicy(now time.Time, interval time.Duration, requireFresh bool) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, usageRefreshInfo, error) {
+func collectClaudeOAuthLimitsWithPolicy(now time.Time, interval time.Duration, requireFresh bool) (Allowance, []ExtraLimit, []QuotaBucket, map[string]any, usageRefreshInfo, error) {
 	return collectClaudeOAuthLimitsWithClock(fixedUsageRefreshClock(now), interval, requireFresh)
 }
 
-func collectClaudeSubscriptionLimits(now time.Time, refreshInterval time.Duration) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, time.Time, error) {
+func collectClaudeSubscriptionLimits(now time.Time, refreshInterval time.Duration) (Allowance, []ExtraLimit, []QuotaBucket, map[string]any, time.Time, error) {
 	return collectClaudeSubscriptionLimitsWithClock(now, refreshInterval, fixedUsageRefreshClock(now))
 }

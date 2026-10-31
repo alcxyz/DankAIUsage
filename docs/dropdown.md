@@ -24,21 +24,20 @@ The header line shows when usage was last updated, whether it is stale, and
 (in Advanced) the next scheduled refresh; it is the only place that time is
 shown. Notices under a provider card appear when something needs you, or
 reports what you just did: a refresh or sign-in failure, stale data, an
-unconfirmed reset attempt, a failed limit-reset check with no recent listing
-to fall back on, or the result of a
-Claude prime until the next refresh. Simple mode keeps a one-line "Claude
-prime is on" indication while that automation is enabled. Caveats that never
-change, such as Claude token totals covering local Claude Code history only,
-live in this guide instead.
+unconfirmed reset attempt, or a failed limit-reset check with no recent
+listing to fall back on. Caveats that never change, such as Claude token
+totals covering local Claude Code history only, live in this guide instead.
 The dropdown scrolls when it would otherwise exceed the screen.
 
 ## Quota bars
 
 The main display is a provider-defined list of quota bars rather than a fixed
-session/weekly grid. Codex may expose its general subscription allowance as a
+grid. Codex may expose its general subscription allowance as a
 weekly-only window alongside separate model-scoped limits. Claude exposes
-five-hour, weekly, model-scoped, and extra-usage credit limits. Missing buckets
-are omitted instead of inferred from their position in an API response.
+weekly, model-scoped, and extra-usage credit limits. Neither provider has
+five-hour windows any more, so only week-length windows appear. Missing
+buckets are omitted instead of inferred from their position in an API
+response.
 
 Prepaid credits appear as a **Credits** bucket for either provider when the
 account reports a balance: Codex from its rate-limit snapshot, Claude from
@@ -52,9 +51,10 @@ up. The helper notes the balance each refresh; any increase counts as a
 top-up. The bar measures the balance against every top-up in the selected
 **Local tokens** range, and always at least the latest one, with any leftover
 from before it. For example, buy 1000, spend 500, then buy 500: with 30d both
-buys count and the bar shows 1000 left of 1500; with 5h only the latest buy
-counts and it shows 1000 left of 1000. Purchases before the helper first saw
-the balance are unknown, so the bar starts full. The detail line reads
+buys count and the bar shows 1000 left of 1500; with 7d, if the first buy is
+older than a week, only the latest buy counts and it shows 1000 left of 1000.
+Purchases before the helper first saw the balance are unknown, so the bar
+starts full. The detail line reads
 "… left of … since …", and the bar never counts as the most constrained quota.
 See [ADR-0025](adr/ADR-0025-credit-balance-bars-from-observed-top-ups.md).
 
@@ -114,11 +114,11 @@ request; the confirmation names the limits the reset clears, adds a note when
 it only works at a limit, and the number of uses left when there is more than
 one. See [Claude limit resets](claude-reset.md).
 
-### Why does Spark have two bars?
+### Why does Spark have its own bar?
 
 Spark has [separate usage limits](https://learn.chatgpt.com/docs/agent-configuration/speed#codex-spark).
-When Codex reports both five-hour and weekly Spark windows, the plugin shows
-both, independently of the general Codex allowance. These are live provider
+When Codex reports a weekly Spark window, the plugin shows it as its own bar,
+independently of the general Codex allowance. These are live provider
 buckets, not hardcoded legacy quotas. A window disappears when the provider
 stops reporting it; identical percentages alone do not make two windows
 duplicates.
@@ -132,11 +132,12 @@ additive cache accounting. **Include cached tokens** controls combined totals,
 not this split. Large cached counts describe repeatedly processed context, not
 new text output.
 
-Click the **Local tokens** row to choose **5h**, **7d**, **30d**, or **90d**
+Click the **Local tokens** row to choose **7d**, **30d**, or **90d**
 directly. These are rolling ranges across local conversations, not
-active-conversation totals or subscription reset windows. The configured
-history range remains available when it differs from the presets. The
-selection is remembered and does not make another provider request. The row
+active-conversation totals or subscription reset windows. A **5h** choice
+saved by an earlier version opens as **7d**. The configured history range
+remains available when it differs from the presets. The selection is
+remembered and does not make another provider request. The row
 supports keyboard activation and shows unavailable or partial collection
 explicitly.
 
@@ -186,13 +187,13 @@ scope and checkpoint policy.
 
 ## Top bar
 
-The top bar uses provider logos. Claude's five-hour, weekly, and extra-usage
-credit values can each be enabled independently in plugin settings, and the
-Codex prepaid credit balance has its own switch; these
-choices do not remove any quota bars from the dropdown. Compact mode retains
-one selected quota for each enabled provider rather than hiding a provider.
-The generic plugin icon and provider logos are independently configurable, so
-the bar can show either icon style, both styles, or text only. Each provider's
+The top bar uses provider logos. Claude's weekly and extra-usage credit values
+can each be enabled independently in plugin settings, and the Codex prepaid
+credit balance has its own switch; these choices do not remove any quota bars
+from the dropdown. Compact mode retains one selected quota for each enabled
+provider rather than hiding a provider. The generic plugin icon and provider
+logos are independently configurable, so the bar can show either icon style,
+both styles, or text only. Each provider's
 percentage takes the warning or error color when its most constrained shown
 quota runs low.
 

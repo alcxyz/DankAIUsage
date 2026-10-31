@@ -47,13 +47,13 @@ constrained quota.
   color.
 - **Plugin icon:** the generic monitoring icon at the start of the pill.
 - **Quota bars instead of text** (off by default) replaces the percentages in
-  the horizontal bar with small stacked bars per provider: five-hour on top,
-  then weekly and model-scoped limits. Bars follow Left / Used and turn
-  warning or error colored when a quota runs low, like the text, unless
-  **Heatmap bar colors** is on. Claude
-  follows the quota choices in the next group; Codex shows all its non-credit
-  quotas. The Codex and Claude credit switches add a `cr` credit bar; see
-  [Credit bars](dropdown.md#credit-bars). The vertical bar is unchanged.
+  the horizontal bar with small stacked bars per provider: weekly on top, then
+  model-scoped limits. Bars follow Left / Used and turn warning or error
+  colored when a quota runs low, like the text, unless **Heatmap bar colors**
+  is on. Claude follows the quota choices in the next group; Codex shows all
+  its non-credit quotas. The Codex and Claude credit switches add a `cr`
+  credit bar; see [Credit bars](dropdown.md#credit-bars). The vertical bar is
+  unchanged.
 - **Compact pill** (text mode only, so it is shown while quota bars are off)
   keeps one selected quota per enabled provider rather than hiding a provider.
   Its saved value is kept while quota bars are on.
@@ -61,9 +61,9 @@ constrained quota.
 **Quota bar options** appear while quota bars are on. Their saved values are
 kept while bars are off.
 
-- **Bar width:** 16–120 px, default 40.
-- **Left label / Right label:** none, a quota tag (`5h`, `w`, or the model
-  initial such as `f` for Fable weekly; longer only when two would clash), the
+- **Bar width:** 16 to 120 px, default 40.
+- **Left label / Right label:** none, a quota tag (`w`, or the model initial
+  such as `f` for Fable weekly; longer only when two would clash), the
   reset countdown (`2h05`, `4d23h`; elapsed window time with Used), or the
   percentage. Credit bars have no reset, so the countdown slot shows their
   amount left instead (`850`, `1.2k`; the amount used with Used).
@@ -78,13 +78,12 @@ See [ADR-0021](adr/ADR-0021-top-bar-quota-bars.md).
 Which limits each provider contributes to the pill. All available quotas
 remain visible in the dropdown.
 
-- **Claude 5-hour session**, **New Claude weekly limits by default**, and one
-  switch per **reported Claude weekly limit**: **Weekly (all models)** and
-  model-specific limits such as Fable. Show either, both, or neither. Choices
-  are remembered by quota ID, including when a limit temporarily disappears.
-  Compact mode selects only among enabled quotas. The weekly default applies
-  to limits without an individual choice and preserves existing preferences
-  on upgrade.
+- **New Claude weekly limits by default**, and one switch per **reported
+  Claude weekly limit**: **Weekly (all models)** and model-specific limits
+  such as Fable. Show any combination, or none. Choices are remembered by
+  quota ID, including when a limit temporarily disappears. Compact mode
+  selects only among enabled quotas. The weekly default applies to limits
+  without an individual choice and preserves existing preferences on upgrade.
 - **Claude extra-use credits** and **Codex credits** add the credit balance
   next to the provider's quotas in text mode, or a credit bar in quota-bar
   mode, when the account reports one. Both are off by default.
@@ -117,8 +116,6 @@ remain visible in the dropdown.
 
 Collapsed by default; expand the heading to show it.
 
-- **Enable Claude prime:** off by default; starts session windows with a tiny
-  request that consumes usage. See [Claude prime](data-sources.md#claude-prime).
 - **Public reset announcements (Alpha):** off by default; reads a third-party
   public feed. See
   [Public reset announcements](reset-history.md#public-reset-announcements-alpha-optional).
@@ -132,6 +129,5 @@ differs from the presets.
 
 ## Reset history filters
 
-**Scheduled 5-hour resets**, **Scheduled weekly resets**, and **Other reset
-events** control which categories the Advanced history list shows. See
-[Filters](reset-history.md#filters).
+**Scheduled weekly resets** and **Other reset events** control which categories
+the Advanced history list shows. See [Filters](reset-history.md#filters).

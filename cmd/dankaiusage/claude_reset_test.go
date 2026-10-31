@@ -16,7 +16,7 @@ import (
 // Synthetic usage body in the shape of the OAuth usage endpoint with
 // cedar_ember=1. Never derived from a live account.
 const claudeResetUsageFixture = `{
-  "five_hour": {"utilization": 25, "resets_at": "2026-10-03T06:00:00Z"},
+  "five_hour": null,
   "seven_day": {"utilization": 16, "resets_at": "2026-10-09T11:00:00Z"},
   "cedar_ember": {
     "eligible": true,
@@ -34,7 +34,7 @@ const claudeResetUsageFixture = `{
       "paused": false,
       "usable_now": true,
       "use_requires_limit": false,
-      "percent_used": {"five_hour": 25}
+      "percent_used": {"seven_day": 16}
     }, {
       "id": "Bad Id!",
       "resets_left": 1
@@ -104,8 +104,8 @@ func TestParseClaudeResetAvailability(t *testing.T) {
 	if grant.ID != "launch-grant-1" || grant.ResetsLeft != 1 || grant.UseRequiresLimit || !grant.UsableNow {
 		t.Fatalf("unexpected grant: %+v", grant)
 	}
-	if strings.Join(grant.Clears, ",") != "five_hour,seven_day,seven_day_overage_included" {
-		t.Fatalf("unknown limit kinds must be filtered: %v", grant.Clears)
+	if strings.Join(grant.Clears, ",") != "seven_day,seven_day_overage_included" {
+		t.Fatalf("retired five_hour and unknown limit kinds must be filtered: %v", grant.Clears)
 	}
 	if grant.EndsAt != "2026-10-22T16:00:00Z" {
 		t.Fatalf("ends_at should normalise to RFC3339 UTC: %q", grant.EndsAt)
@@ -119,7 +119,7 @@ func TestParseClaudeResetAvailability(t *testing.T) {
 	if len(resets) != 1 || resets[0].ResetType != claudeResetType || resets[0].ID != "launch-grant-1" || resets[0].ExpiresAt != "2026-10-22T16:00:00Z" {
 		t.Fatalf("unexpected resets: %+v", resets)
 	}
-	if !strings.Contains(resets[0].Description, "clears 5-hour and weekly") || !strings.Contains(resets[0].Description, "usable any time") {
+	if !strings.Contains(resets[0].Description, "clears weekly ·") || !strings.Contains(resets[0].Description, "usable any time") {
 		t.Fatalf("description: %q", resets[0].Description)
 	}
 	meta := claudeResetMeta(availability, now)
@@ -162,7 +162,7 @@ func TestParseClaudeResetAvailabilityIneligible(t *testing.T) {
 	if meta["claudeReset"].(map[string]any)["ineligibleReason"] != "surface" {
 		t.Fatalf("meta: %+v", meta)
 	}
-	if plain := parseClaudeResetAvailability(map[string]any{"five_hour": map[string]any{}}); plain.Reported {
+	if plain := parseClaudeResetAvailability(map[string]any{"seven_day": map[string]any{}}); plain.Reported {
 		t.Fatal("missing block must not be reported")
 	}
 }
@@ -198,7 +198,8 @@ func TestRunClaudeResetActionUseSuccess(t *testing.T) {
 	if status.State != "used" || status.Outcome != "reset" || !status.UsageRefreshed || status.ResetsLeft == nil || *status.ResetsLeft != 0 {
 		t.Fatalf("unexpected status: %+v", status)
 	}
-	if !strings.Contains(status.Message, "Limits reset") || !strings.Contains(status.Message, "5-hour and weekly") {
+	// A five_hour entry still in the provider's answer is not named.
+	if !strings.Contains(status.Message, "Limits reset · clears weekly ·") || strings.Contains(strings.ToLower(status.Message), "five") {
 		t.Fatalf("message: %q", status.Message)
 	}
 	if len(*expired) != 2 || (*expired)[0] != deps.AvailabilityCachePath || (*expired)[1] != deps.UsageCachePath {
@@ -391,7 +392,7 @@ func TestClaimClaudeResetRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Result != "reset" || result.ResetsLeft == nil || *result.ResetsLeft != 0 || strings.Join(result.Cleared, ",") != "five_hour,seven_day" {
+	if result.Result != "reset" || result.ResetsLeft == nil || *result.ResetsLeft != 0 || strings.Join(result.Cleared, ",") != "seven_day" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 	if len(transport.requests) != 1 {
@@ -445,7 +446,7 @@ func TestClaudeQuotaFetchKeepsClaudeCodeUserAgent(t *testing.T) {
 	// The claude-cli identity is rate limited at quota cadence (ADR-0023); the
 	// quota poll must never carry it or ask for resets.
 	transport, now := setupClaudeRefreshTest(t)
-	if _, _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now, time.Minute, false); err != nil {
+	if _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now, time.Minute, false); err != nil {
 		t.Fatal(err)
 	}
 	if transport.calls.Load() != 1 {
@@ -552,7 +553,7 @@ func TestClaudeResetAvailabilityCheckIdentityAndCadence(t *testing.T) {
 		t.Fatalf("next check text: %q", text)
 	}
 	// Missing credentials are not reported as a failed check: the quota side
-	// owns that message and a statusline-only setup has nothing to check.
+	// owns that message.
 	if err := os.Remove(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), ".credentials.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -639,7 +640,7 @@ func TestClaudeResetCheckRateLimitRetryWindow(t *testing.T) {
 func TestExpireClaudeUsageCacheAllowsImmediateRefresh(t *testing.T) {
 	transport, now := setupClaudeRefreshTest(t)
 	interval := 5 * time.Minute
-	if _, _, _, _, _, info, err := collectClaudeOAuthLimitsWithPolicy(now, interval, false); err != nil || info.Cached {
+	if _, _, _, _, info, err := collectClaudeOAuthLimitsWithPolicy(now, interval, false); err != nil || info.Cached {
 		t.Fatalf("initial fetch: %+v %v", info, err)
 	}
 	path := claudeOAuthUsageCachePath()
@@ -659,9 +660,9 @@ func TestExpireClaudeUsageCacheAllowsImmediateRefresh(t *testing.T) {
 	}
 	// One minute into a five-minute interval the collector must fetch again
 	// instead of honouring the old cooldown with nothing to serve.
-	session, _, _, _, _, info, err := collectClaudeOAuthLimitsWithPolicy(later, interval, false)
-	if err != nil || !session.Known || info.Cached || transport.calls.Load() != 2 {
-		t.Fatalf("post-reset refresh: known=%v info=%+v error=%v calls=%d", session.Known, info, err, transport.calls.Load())
+	weekly, _, _, _, info, err := collectClaudeOAuthLimitsWithPolicy(later, interval, false)
+	if err != nil || !weekly.Known || info.Cached || transport.calls.Load() != 2 {
+		t.Fatalf("post-reset refresh: known=%v info=%+v error=%v calls=%d", weekly.Known, info, err, transport.calls.Load())
 	}
 }
 
@@ -844,7 +845,7 @@ func TestClaudeUsageFetchRecordsOrganization(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), ".claude.json"), []byte(`{"oauthAccount":{"organizationUuid":"org-synthetic-2"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now, time.Minute, false); err != nil || transport.calls.Load() != 1 {
+	if _, _, _, _, _, err := collectClaudeOAuthLimitsWithPolicy(now, time.Minute, false); err != nil || transport.calls.Load() != 1 {
 		t.Fatal(err)
 	}
 	cache, err := loadClaudeOAuthUsageCacheStrict(claudeOAuthUsageCachePath())
