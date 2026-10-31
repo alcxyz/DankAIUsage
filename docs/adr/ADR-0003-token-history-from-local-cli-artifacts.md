@@ -1,8 +1,9 @@
 # ADR-0003: Token history from local CLI artifacts only
 
-**Status:** Accepted, amended 2026-09-08
+**Status:** Accepted, amended 2026-10-31 by [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (five-hour range removed)
 **Date:** 2026-05-28
 **Applies to:** `cmd/dankaiusage/main.go` (collectCodex, collectClaude token scans)
+**History:** [archive/ADR-0003-token-history-from-local-cli-artifacts-history.md](archive/ADR-0003-token-history-from-local-cli-artifacts-history.md)
 
 ## Context
 
@@ -31,7 +32,8 @@ The summary states this explicitly via `meta.tokenDataScope` and
 (account-wide) and tokens (local-only) intentionally have different scopes.
 
 The dropdown token rows select explicitly labeled rolling ranges together:
-five hours, seven days, thirty days, and ninety days. The configured history
+seven days, thirty days, and ninety days. A saved five-hour choice falls back
+to seven days. The configured history
 period remains available for compatibility. None means the active conversation,
 all-time history, or an account quota window. Remember this presentation choice
 locally; switching views does not trigger provider calls or alter the collected

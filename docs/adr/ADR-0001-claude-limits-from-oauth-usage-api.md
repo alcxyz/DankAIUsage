@@ -1,8 +1,9 @@
 # ADR-0001: Read Claude subscription limits from the OAuth usage endpoint
 
-**Status:** Accepted
+**Status:** Accepted, amended 2026-10-31 by [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (statusline fallback removed)
 **Date:** 2026-07-02
 **Applies to:** `cmd/dankaiusage/main.go` (Claude limit collection)
+**History:** [archive/ADR-0001-claude-limits-from-oauth-usage-api-history.md](archive/ADR-0001-claude-limits-from-oauth-usage-api-history.md)
 
 Refresh timing and cache coordination are amended by
 [ADR-0015](ADR-0015-shared-usage-refresh-cooldown.md).
@@ -22,14 +23,15 @@ usage. The `claude-prime` workaround (spawning a tiny print-mode request) also
 cannot recover real percentages, because print mode does not drive the
 statusline; it degrades to a local session timer.
 
-This supersedes
-[ADR-0005](ADR-0005-claude-limits-via-statusline-capture.md) (statusline
+This superseded
+[ADR-0005](archive/ADR-0005-claude-limits-via-statusline-capture.md) (statusline
 capture as the primary source) and
-[ADR-0006](ADR-0006-opt-in-claude-prime.md) (claude-prime).
+[ADR-0006](archive/ADR-0006-opt-in-claude-prime.md) (claude-prime).
 
 ## Decision
 
-Query Anthropic's OAuth usage endpoint directly as the primary limit source:
+Query Anthropic's OAuth usage endpoint directly as the only Claude limit
+source:
 
 - `GET https://api.anthropic.com/api/oauth/usage` with the Claude Code OAuth
   access token from `~/.claude/.credentials.json` (read by the binary itself;
@@ -41,14 +43,18 @@ Query Anthropic's OAuth usage endpoint directly as the primary limit source:
   with a 2-minute fresh TTL, a 30-minute stale-serve window on failures, and
   error backoff (15 minutes minimum on 429).
 
-The statusline cache remains as a fallback source so TUI-only setups keep
-working, and macOS installs (credentials in Keychain, no credentials file)
-degrade gracefully to it.
+There is no fallback source. When the usage fetch fails and no cached
+response is within the stale-serve window, Claude limits are unavailable and
+the error is shown; this includes macOS installs that keep
+credentials in the Keychain rather than the credentials file.
 
 ## Alternatives Considered
 
 - **Statusline capture only (status quo):** never fires outside the TUI; the
   exact failure this ADR fixes.
+- **Statusline capture as a fallback:** kept at first for TUI-only and macOS
+  Keychain setups, then removed by ADR-0027 as TUI-only and no longer worth
+  its surface.
 - **`claude-prime` print-mode priming:** cannot obtain percentages, only a
   local 5-hour timer; adds cost and latency per prime.
 - **Official Rate Limits API (`/v1/organizations/rate_limits`):** requires an
@@ -63,8 +69,8 @@ degrade gracefully to it.
   independent of how Claude Code is run, and reflect account-wide usage
   (including web) rather than local-only signals.
 - We depend on an undocumented endpoint that Anthropic may change or restrict;
-  the widget degrades to `--` plus a diagnostic (`meta.oauthUsageError`) if it
-  breaks, and the statusline fallback still functions.
+  the widget degrades to `--` plus a diagnostic (`meta.limitError`) if it
+  breaks.
 - The binary reads the OAuth credentials file directly. It must never print
   the token; error messages are kept generic by design.
 - If the access token is expired and no Claude Code session refreshes it, the

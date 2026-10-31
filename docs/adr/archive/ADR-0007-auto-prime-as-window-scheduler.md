@@ -1,15 +1,15 @@
 # ADR-0007: Auto-prime as session-window scheduler
 
-**Status:** Accepted
+**Status:** Retired by [ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md) on 2026-10-31: Anthropic and OpenAI removed the five-hour windows this scheduled, prime kept spending usage with no window to start, and `claude-prime` was removed
 **Date:** 2026-07-03
 **Applies to:** `cmd/dankaiusage/main.go` (claude-prime guards), `DankAIUsageWidget.qml` (auto-prime)
 
 Usage fetch timing, including the post-prime refresh, is amended by
-[ADR-0015](ADR-0015-shared-usage-refresh-cooldown.md).
+[ADR-0015](../ADR-0015-shared-usage-refresh-cooldown.md).
 
 ## Context
 
-[ADR-0001](ADR-0001-claude-limits-from-oauth-usage-api.md) removed prime's
+[ADR-0001](../ADR-0001-claude-limits-from-oauth-usage-api.md) removed prime's
 original purpose (recovering limit visibility), and
 [ADR-0006](ADR-0006-opt-in-claude-prime.md) concluded there was no reason to
 enable it anymore. That conclusion assumed prime existed only to *observe*

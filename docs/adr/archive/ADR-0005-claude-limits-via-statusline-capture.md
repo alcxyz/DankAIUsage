@@ -1,6 +1,6 @@
 # ADR-0005: Claude limits via statusline capture
 
-**Status:** Superseded by [ADR-0001](ADR-0001-claude-limits-from-oauth-usage-api.md)
+**Status:** Superseded by [ADR-0001](../ADR-0001-claude-limits-from-oauth-usage-api.md) as the primary source; retired by [ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md) on 2026-10-31, which removed the remaining statusline fallback
 **Date:** 2026-05-28
 **Applies to:** `cmd/dankaiusage/main.go` (captureClaudeStatusline, statusline cache)
 

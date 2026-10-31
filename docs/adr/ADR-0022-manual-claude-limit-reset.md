@@ -1,18 +1,21 @@
 # ADR-0022: Explicit, confirmed use of Claude limit resets
 
-**Status:** Accepted, amended by ADR-0023 (the request identity and the single usage request)
+**Status:** Accepted, amended by ADR-0023 (the request identity and the single usage request) and on 2026-10-31 by [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (grants clear the weekly window)
 **Date:** 2026-10-03
 **Applies to:** `cmd/dankaiusage` (`claude-reset`, Claude usage headers), `DankAIUsageWidget.qml`
+**History:** [archive/ADR-0022-manual-claude-limit-reset-history.md](archive/ADR-0022-manual-claude-limit-reset-history.md)
 **Builds on:** ADR-0001, ADR-0008, ADR-0010
 **Amends:** ADR-0001's request identity; ADR-0008's "keep reset consumption outside the plugin" for Claude.
 
 ## Context
 
 Since late September 2026 Anthropic grants Pro, Max and Team subscribers
-occasional **limit resets**: a saved reset that refills the five-hour window
-(and, for the launch grant, the weekly window) when the user chooses, until it
-expires. claude.ai exposes it under Settings → Usage, and Claude Code ships a
-`/limit-reset` command. A user who already watches both windows in the widget
+occasional **limit resets**: a saved reset that refills a usage window when
+the user chooses, until it expires. When this was decided a grant refilled the
+five-hour window (and, for the launch grant, the weekly window); since
+Anthropic removed the five-hour window (ADR-0027), grants clear the weekly
+window. claude.ai exposes it under Settings → Usage, and Claude Code ships a
+`/limit-reset` command. A user who already watches the windows in the widget
 could see the grant was there but had to open another client to spend it.
 
 Both clients use the OAuth usage endpoint. With the `cedar_ember=1` query the
@@ -84,7 +87,7 @@ this endpoint (ADR-0001); this is the same identity, stated precisely.
   widget is to act on the windows it already shows; a visible, expiring grant
   with no way to use it is the gap this fixes.
 - **Auto-use at the limit, like the one-shot Codex reset (ADR-0010).** The
-  launch grant is usable any time, clears both windows and is a one-off; when
+  launch grant was usable any time, cleared both windows and was a one-off; when
   to spend it is a judgement call about the weekly budget. Manual first; an
   armed variant can follow if grants recur.
 - **A separate status request.** Would double the usage API traffic for a

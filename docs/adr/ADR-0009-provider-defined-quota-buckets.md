@@ -1,15 +1,17 @@
 # ADR-0009: Render provider-defined quota buckets
 
-**Status:** Accepted
+**Status:** Accepted, amended 2026-10-31 by [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (no session window)
 **Date:** 2026-08-30
 **Applies to:** `cmd/dankaiusage/main.go`, `DankAIUsageWidget.qml`
+**History:** [archive/ADR-0009-provider-defined-quota-buckets-history.md](archive/ADR-0009-provider-defined-quota-buckets-history.md)
 
 ## Context
 
 A fixed session/weekly UI no longer represents either provider completely.
 Codex may return only a general weekly limit plus separate model-scoped
-windows. Claude can return five-hour, weekly, model-scoped, and monetary
-extra-usage limits. Its usage response currently exposes the monetary cap in
+windows. Claude can return weekly, model-scoped, and monetary extra-usage
+limits; it also returned a five-hour window until Anthropic removed it
+(ADR-0027). Its usage response currently exposes the monetary cap in
 both `spend` and `extra_usage` forms.
 
 ## Decision
@@ -17,9 +19,9 @@ both `spend` and `extra_usage` forms.
 - Emit an ordered `quotaBuckets` list for every provider. Each bucket carries
   an identifier, label, kind, allowance percentages, and optional formatted
   value/detail labels.
-- Retain `sessionLeft`, `weeklyLeft`, and `extraLimits` in the helper output for
-  compatibility and Claude prime scheduling, but do not use them to construct
-  the widget layout.
+- Retain `weeklyLeft` and `extraLimits` in the helper output for
+  compatibility, but do not use them to construct the widget layout. The
+  helper emits no `sessionLeft` and no session buckets.
 - Flatten scoped windows into independent quota buckets.
 - Parse Claude's `spend` object as the authoritative extra-usage representation
   and fall back to `extra_usage`. Monetary amounts remain integer minor units;

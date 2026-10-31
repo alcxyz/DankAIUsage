@@ -1,8 +1,9 @@
 # ADR-0012: Optional persistent local token totals
 
-**Status:** Accepted
+**Status:** Accepted, amended 2026-10-31 by [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (five-hour range removed)
 **Date:** 2026-09-08
 **Applies to:** token collection, local state, dropdown range controls
+**History:** [archive/ADR-0012-optional-persistent-token-totals-history.md](archive/ADR-0012-optional-persistent-token-totals-history.md)
 
 ## Context
 
@@ -14,8 +15,9 @@ all-time usage.
 
 ## Decision
 
-- Offer explicit rolling ranges: five hours, seven days, thirty days, and
-  ninety days. These are not quota windows or active-conversation totals.
+- Offer explicit rolling ranges: seven days, thirty days, and ninety days.
+  A saved five-hour choice falls back to seven days. These are not quota
+  windows or active-conversation totals.
   Retain the configured history period for compatibility.
 - Add a separate **Tracked total** view. Tracking is off by default and is
   controlled by the helper, not by independent widget-local counters.

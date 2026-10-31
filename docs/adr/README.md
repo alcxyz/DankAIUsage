@@ -6,9 +6,6 @@
 | [ADR-0002](ADR-0002-authoritative-window-percentages.md) | Display authoritative subscription-window percentages, not token-derived estimates | widget + cmd/dankaiusage |
 | [ADR-0003](ADR-0003-token-history-from-local-cli-artifacts.md) | Token history from local CLI artifacts only | cmd/dankaiusage |
 | [ADR-0004](ADR-0004-cached-token-display-policy.md) | Cached-token display policy and per-provider total semantics | widget + cmd/dankaiusage |
-| [ADR-0005](ADR-0005-claude-limits-via-statusline-capture.md) | Claude limits via statusline capture (superseded) | cmd/dankaiusage |
-| [ADR-0006](ADR-0006-opt-in-claude-prime.md) | Opt-in Claude prime with local timer fallback (superseded) | cmd/dankaiusage |
-| [ADR-0007](ADR-0007-auto-prime-as-window-scheduler.md) | Auto-prime as session-window scheduler | widget + cmd/dankaiusage |
 | [ADR-0008](ADR-0008-codex-duration-based-windows-and-banked-resets.md) | Classify Codex windows by duration and expose banked resets | widget + cmd/dankaiusage |
 | [ADR-0009](ADR-0009-provider-defined-quota-buckets.md) | Render provider-defined quota buckets, including Claude credits | widget + cmd/dankaiusage |
 | [ADR-0010](ADR-0010-one-shot-codex-reset.md) | Opt-in, one-shot Codex reset scheduling | widget + cmd/dankaiusage |
@@ -28,3 +25,7 @@
 | [ADR-0024](ADR-0024-retry-rate-limited-reset-check.md) | Retry a rate-limited Claude reset check at quota cadence | cmd/dankaiusage |
 | [ADR-0025](ADR-0025-credit-balance-bars-from-observed-top-ups.md) | Credit balance bars from observed top-ups | cmd/dankaiusage + widget + settings |
 | [ADR-0026](ADR-0026-shared-quota-bar-heatmap.md) | Shared quota-bar heatmap with theme and pace options | widget + settings |
+| [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) | Remove five-hour windows, Claude prime and the statusline fallback | widget + cmd/dankaiusage + settings |
+
+Superseded and retired ADRs, and the history of rewritten ones, are in the
+[archive](archive/README.md).

@@ -1,9 +1,10 @@
 # ADR-0015: Shared usage refresh cooldown
 
-**Status:** Accepted
+**Status:** Accepted, amended 2026-10-31 by [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (Claude prime removed)
 **Date:** 2026-09-09
 **Applies to:** `cmd/dankaiusage`, widget and settings
-**Amends:** ADR-0001, ADR-0007 and ADR-0010 refresh timing
+**History:** [archive/ADR-0015-shared-usage-refresh-cooldown-history.md](archive/ADR-0015-shared-usage-refresh-cooldown-history.md)
+**Amends:** ADR-0001 and ADR-0010 refresh timing (and that of ADR-0007, since retired)
 
 ## Context
 
@@ -33,9 +34,6 @@ background work to reduce power use.
 - Never redeem a reset based on a stale cached usage observation. Respect the
   network cooldown when obtaining post-action quotas; a confirmed reset outcome
   does not itself establish new percentages.
-- Do not change Claude prime's model, budget, opt-in requirement or failure
-  reporting as part of this change. Its usage reads share the cooldown, while
-  its deliberate model request remains a separate opt-in action.
 
 Three minutes is a conservative product choice, **not** a provider-published
 guarantee against bans or a determination that an authentication method is

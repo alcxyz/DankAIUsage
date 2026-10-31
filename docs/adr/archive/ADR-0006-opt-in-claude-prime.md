@@ -1,6 +1,6 @@
 # ADR-0006: Opt-in Claude prime with local timer fallback
 
-**Status:** Superseded by [ADR-0001](ADR-0001-claude-limits-from-oauth-usage-api.md) (limit recovery) and [ADR-0007](ADR-0007-auto-prime-as-window-scheduler.md) (current role)
+**Status:** Superseded by [ADR-0001](../ADR-0001-claude-limits-from-oauth-usage-api.md) (limit recovery) and [ADR-0007](ADR-0007-auto-prime-as-window-scheduler.md) (prime's later role); retired by [ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md) on 2026-10-31, which removed `claude-prime`
 **Date:** 2026-06-22
 **Applies to:** `cmd/dankaiusage/main.go` (claude-prime), `DankAIUsageWidget.qml` (auto-prime)
 
