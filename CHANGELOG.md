@@ -6,6 +6,8 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-01
+
 ### Changed
 
 - The Claude card in Advanced now shows the last known limit-reset status, such as "No limit reset available · checked 31.10.2026 21:40", even when newer checks have failed; **Use reset now** is offered only while that answer is recent.
