@@ -1,6 +1,6 @@
 # ADR-0012: Optional persistent local token totals
 
-**Status:** Accepted, amended 2026-10-31 by [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (five-hour range removed)
+**Status:** Accepted, amended 2026-10-31 by [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (five-hour range removed); 2026-11-01 (retained-transcript scan uses the transcript parse cache)
 **Date:** 2026-09-08
 **Applies to:** token collection, local state, dropdown range controls
 **History:** [archive/ADR-0012-optional-persistent-token-totals-history.md](archive/ADR-0012-optional-persistent-token-totals-history.md)
@@ -43,8 +43,11 @@ all-time usage.
   account identifiers, or credentials in tracking state. Do not duplicate
   tracked state in the DMS summary cache.
 - No new database or service. Enabled tracking may scan more retained files
-  than the rolling views. Totals are updated incrementally after deduplication;
-  this first implementation favors correctness over a file-offset cache.
+  than the rolling views. Totals are updated incrementally after deduplication.
+  The scan shares the transcript parse cache of
+  [ADR-0003](ADR-0003-token-history-from-local-cli-artifacts.md), so it reads
+  only new transcript bytes, while deduplication still runs over every parsed
+  event.
 - Codex can emit distinct snapshots at the same timestamp without event IDs.
   Identify these by their hashed source snapshot, not their derived delta or
   position in a file. After seeding, unfamiliar snapshots at or before a

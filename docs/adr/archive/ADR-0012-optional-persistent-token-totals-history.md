@@ -1,4 +1,4 @@
-**History of** [ADR-0012](../ADR-0012-optional-persistent-token-totals.md): text replaced on 2026-10-31.
+**History of** [ADR-0012](../ADR-0012-optional-persistent-token-totals.md): text replaced on 2026-10-31 and 2026-11-01.
 
 # ADR-0012: Optional persistent local token totals
 
@@ -69,3 +69,13 @@ that would allow old events to be counted again. Clearing tracking removes this
 state. If transcripts disappear before the helper observes their usage, that
 usage is lost. Provider-reported quotas, rolling local history, and tracked
 totals remain deliberately separate views with different scopes.
+
+## Text replaced on 2026-11-01
+
+The transcript parse cache
+([ADR-0003](../ADR-0003-token-history-from-local-cli-artifacts.md)) replaced
+this Decision bullet:
+
+- No new database or service. Enabled tracking may scan more retained files
+  than the rolling views. Totals are updated incrementally after deduplication;
+  this first implementation favors correctness over a file-offset cache.

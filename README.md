@@ -135,10 +135,13 @@ if needed; the widget recovers on its next refresh.
 ## Privacy in one paragraph
 
 The helper reads provider sign-ins locally and never prints credentials.
-Everything the widget stores is local and bounded: quota snapshots, reset
+Everything the widget stores is local: bounded quota snapshots, reset
 observations, observed credit top-ups, optional explanations, hashed token
-checkpoints, and a
-diagnostics log with no raw errors or identifiers. The only optional network
+checkpoints, and a diagnostics log with no raw errors or identifiers. A
+rebuildable transcript parse cache keeps what was parsed from each local
+transcript (its path, session and record IDs, token counts, timestamps and
+models, never message text); it grows with your retained transcripts and is
+safe to delete. The only optional network
 call beyond the two providers is the public reset feed, which is off by
 default.
 

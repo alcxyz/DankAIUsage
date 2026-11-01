@@ -32,6 +32,12 @@
   `sqlite3` is not required. Claude token totals are local Claude Code history
   only; usage from claude.ai, mobile, or other online surfaces is not written
   to those transcripts and is not exposed through a Claude CLI usage command.
+  The helper keeps what it parsed from each transcript (its absolute path,
+  session and record IDs, token counts, timestamps, models and any parse
+  error; no message text) in
+  `$XDG_STATE_HOME/dankaiusage/transcript-parse-cache.gob`, falling back to
+  `~/.local/state/dankaiusage/`, so a refresh reads only new transcript lines.
+  Deleting the file is safe; the next refresh rebuilds it with a full scan.
 - **CLI availability:** whether `codex` and `claude` are on `PATH`. A provider
   being available means its CLI is present, not necessarily that its account is
   signed in.
