@@ -22,8 +22,11 @@ is left out. The **Use reset now** action appears only while that answer is
 current; once it is older than six hours and newer checks have failed, the
 line still counts the resets but you use them on claude.ai or after the next
 successful check. `Limit reset status unknown` means the helper has no
-usable answer for this sign-in: no check has succeeded yet, the saved answer
-cannot be read, or Claude's answer carried no reset information.
+usable answer for this sign-in: no check has succeeded yet (or since a
+reset was used, or since you switched accounts), the saved answer cannot be
+read, or Claude's answer carried no reset information. After an account
+switch the new sign-in is checked straight away instead of inheriting the
+other account's wait.
 
 The outcome appears under the card. `Limits reset` means Claude confirmed it
 and the quotas refresh right away. Answers such as `not available`, a

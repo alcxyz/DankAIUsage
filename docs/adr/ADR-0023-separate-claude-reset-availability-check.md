@@ -58,7 +58,9 @@ had no grant.
   as one answer. A successful check, or any failure other than a 429, ends
   the streak. Other failures back off for at least an hour, honouring the
   fetch's own backoff. The streak is a property of the availability cache;
-  the quota cache never sets it.
+  the quota cache never sets it. The wait and the streak belong to the
+  sign-in that earned them: when the signed-in organization differs from the
+  cache's, the next summary drops that cache and checks at once.
 - A failed check keeps the last body. Its grants are listed, and `use` may
   redeem one, only within the six-hour stale window (or two check cadences if
   longer) after the fetch; a body whose last check succeeded is current.
@@ -68,8 +70,11 @@ had no grant.
   still fresh. It is never reported under a different organization than the
   one that fetched it. The Advanced Claude card shows it as a muted line
   ("No limit reset available · checked ..." or "1 limit reset available ·
-  checked ..."), or "Limit reset status unknown" when there is no usable successful answer. The line is
-  left out while current grants are listed with their use action.
+  checked ..."), or "Limit reset status unknown" when there is no usable
+  successful answer, including right after a used reset, which drops the
+  body. The line is left out while current grants are listed with their use
+  action. The last success time (`lastSuccessAt`) survives that drop, so the
+  Diagnostics line still names it.
   The **Use reset now** action appears only while the answer is fresh.
 - Only a sign-in rejection by the server (HTTP 401/403) is a warning: it is
   reported as `claudeResetCheckError` and shown as an Advanced notice under

@@ -639,10 +639,15 @@ func claudeResetsForSummary(now time.Time, interval time.Duration) ([]UsageReset
 	if cache.DiagnosticHTTPStatus != 0 {
 		failure["httpStatus"] = cache.DiagnosticHTTPStatus
 	}
-	// Like the last check, a success under another sign-in is not named.
+	// Like the last check, a success under another sign-in is not named. The
+	// body and FetchedAt are dropped after a used reset; LastSuccessAt stays.
 	sameSignIn := cache.OrganizationID == "" || organization == "" || cache.OrganizationID == organization
-	if cache.FetchedAt != "" && sameSignIn {
-		failure["lastSuccessAt"] = cache.FetchedAt
+	lastSuccess := cache.LastSuccessAt
+	if lastSuccess == "" {
+		lastSuccess = cache.FetchedAt
+	}
+	if lastSuccess != "" && sameSignIn {
+		failure["lastSuccessAt"] = lastSuccess
 	}
 	if next, err := parseOptionalRefreshTime(cache.NextAttemptAt); err == nil && !next.IsZero() {
 		failure["nextAttemptAt"] = next.UTC().Format(time.RFC3339)
@@ -738,6 +743,13 @@ func refreshClaudeResetAvailability(path string, now time.Time, interval time.Du
 		if err != nil {
 			return err
 		}
+		// A check, its backoff and its rate-limit streak belong to one
+		// sign-in: after a switch, start afresh instead of inheriting another
+		// account's wait. That account's answer was hidden from this one anyway.
+		if organization, _ := claudeOrganizationID(); organization != "" && cache.OrganizationID != "" && cache.OrganizationID != organization {
+			cache = claudeOAuthUsageCache{ClaudeVersion: cache.ClaudeVersion, OrganizationID: organization}
+			fetchedAt, nextAttemptAt = time.Time{}, time.Time{}
+		}
 		if !fetchedAt.IsZero() && fetchedAt.Add(cadence).After(nextAttemptAt) {
 			nextAttemptAt = fetchedAt.Add(cadence)
 		}
@@ -788,6 +800,7 @@ func refreshClaudeResetAvailability(path string, now time.Time, interval time.Du
 		cache.Body = body
 		cache.OrganizationID = organization
 		cache.FetchedAt = now.UTC().Format(time.RFC3339Nano)
+		cache.LastSuccessAt = cache.FetchedAt
 		cache.NextAttemptAt = now.Add(cadence).UTC().Format(time.RFC3339Nano)
 		cache.LastError = ""
 		cache.DiagnosticCategory = ""

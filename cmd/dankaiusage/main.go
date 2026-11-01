@@ -1116,6 +1116,9 @@ type claudeOAuthUsageCache struct {
 	// cache leaves both empty (ADR-0023).
 	RateLimitedSince string `json:"rateLimitedSince,omitempty"`
 	RateLimitStreak  int    `json:"rateLimitStreak,omitempty"`
+	// LastSuccessAt is the reset check's last successful fetch. Unlike
+	// FetchedAt it survives the expiry after a used reset (ADR-0023).
+	LastSuccessAt string `json:"lastSuccessAt,omitempty"`
 }
 
 func claudeOAuthUsageCachePath() string {

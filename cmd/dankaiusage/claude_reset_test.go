@@ -997,7 +997,9 @@ func TestFailedResetCheckStaysQuietWhileListingIsFresh(t *testing.T) {
 	if resets != nil || meta["claudeResetLastCheck"] != nil || meta["claudeReset"] != nil {
 		t.Fatalf("another organization must not see the last status: resets=%v meta=%v", resets, meta)
 	}
-	if failure, _ := meta["claudeResetCheckFailure"].(map[string]any); failure == nil || failure["lastSuccessAt"] != nil {
+	// The switch starts this sign-in's checks afresh, so whatever the new
+	// check reports, it never names the other account's last success.
+	if failure, _ := meta["claudeResetCheckFailure"].(map[string]any); failure != nil && failure["lastSuccessAt"] != nil {
 		t.Fatalf("another organization must not see the last success: %v", meta)
 	}
 }
@@ -1062,5 +1064,68 @@ func TestSafeClaudeResetErrorDropsRequestURL(t *testing.T) {
 	long := errors.New(strings.Repeat("x", 400))
 	if got := safeClaudeResetError(long); len(got) != 160 {
 		t.Fatalf("long message not bounded: %d", len(got))
+	}
+}
+
+func TestClaudeResetCheckKeepsLastSuccessAndScopesBackoffToSignIn(t *testing.T) {
+	transport, now := setupClaudeRefreshTest(t)
+	signIn := func(organization string) {
+		t.Helper()
+		body := `{"oauthAccount":{"organizationUuid":"` + organization + `"}}`
+		if err := os.WriteFile(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), ".claude.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	load := func() claudeOAuthUsageCache {
+		t.Helper()
+		cache, err := loadClaudeOAuthUsageCacheStrict(claudeResetAvailabilityCachePath())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cache
+	}
+	signIn("org-a")
+	path := claudeResetAvailabilityCachePath()
+	if err := refreshClaudeResetAvailability(path, now, 5*time.Minute); err != nil || transport.calls.Load() != 1 {
+		t.Fatalf("initial check: calls=%d %v", transport.calls.Load(), err)
+	}
+	// A used reset drops the body, but a rate-limited recheck still names
+	// the success before it instead of "no successful check yet".
+	if err := expireClaudeUsageCache(path, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	transport.status = http.StatusTooManyRequests
+	at := now.Add(2 * time.Minute)
+	_, meta := claudeResetsForSummary(at, 5*time.Minute)
+	failure, _ := meta["claudeResetCheckFailure"].(map[string]any)
+	if transport.calls.Load() != 2 || failure == nil || failure["lastSuccessAt"] != now.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("the last success must survive a used reset: calls=%d meta=%v", transport.calls.Load(), meta)
+	}
+	// Two more rate limits put this sign-in on a four-hour wait.
+	for range 2 {
+		next, err := parseOptionalRefreshTime(load().NextAttemptAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		at = next
+		if err := refreshClaudeResetAvailability(path, at, 5*time.Minute); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if cache := load(); cache.RateLimitStreak != 3 || transport.calls.Load() != 4 {
+		t.Fatalf("streak: %d calls=%d", cache.RateLimitStreak, transport.calls.Load())
+	}
+	// Another sign-in neither inherits that wait nor the streak, nor sees
+	// the other account's last success.
+	signIn("org-b")
+	if err := refreshClaudeResetAvailability(path, at.Add(time.Minute), 5*time.Minute); err != nil || transport.calls.Load() != 5 {
+		t.Fatalf("a new sign-in must check now: calls=%d %v", transport.calls.Load(), err)
+	}
+	if cache := load(); cache.OrganizationID != "org-b" || cache.RateLimitStreak != 1 || cache.LastSuccessAt != "" || len(cache.Body) != 0 {
+		t.Fatalf("a new sign-in starts afresh: %+v", cache)
+	}
+	// Its own backoff then holds.
+	if err := refreshClaudeResetAvailability(path, at.Add(2*time.Minute), 5*time.Minute); err != nil || transport.calls.Load() != 5 {
+		t.Fatalf("the new sign-in's backoff must hold: calls=%d %v", transport.calls.Load(), err)
 	}
 }
