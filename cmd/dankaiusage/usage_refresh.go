@@ -328,6 +328,12 @@ func withUsageRefreshLock(path string, fn func() error) error {
 }
 
 func atomicWriteUsageRefreshFile(path string, data []byte) error {
+	return atomicWriteStateFile(path, ".usage-refresh-*.tmp", data)
+}
+
+// atomicWriteStateFile replaces an owner-only state file through a synced
+// temporary file named by pattern in the same private directory.
+func atomicWriteStateFile(path, pattern string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -335,7 +341,7 @@ func atomicWriteUsageRefreshFile(path string, data []byte) error {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".usage-refresh-*.tmp")
+	tmp, err := os.CreateTemp(dir, pattern)
 	if err != nil {
 		return err
 	}
@@ -365,7 +371,7 @@ func atomicWriteUsageRefreshFile(path string, data []byte) error {
 	}
 	defer directory.Close()
 	if err := directory.Sync(); err != nil {
-		return fmt.Errorf("sync usage refresh state directory: %w", err)
+		return fmt.Errorf("sync state directory: %w", err)
 	}
 	return nil
 }

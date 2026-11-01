@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -140,7 +139,7 @@ type codexSessionMeta struct {
 	StartedAt time.Time
 }
 
-func collectCodexTranscriptEvents(root string, cutoff time.Time) ([]tokenEvent, codexTranscriptStats) {
+func collectCodexTranscriptEvents(root string, cutoff time.Time, cache *transcriptParseCache) ([]tokenEvent, codexTranscriptStats) {
 	stats := codexTranscriptStats{}
 	var files []string
 	for _, source := range []string{filepath.Join(root, "sessions"), filepath.Join(root, "archived_sessions")} {
@@ -186,7 +185,7 @@ func collectCodexTranscriptEvents(root string, cutoff time.Time) ([]tokenEvent, 
 	trackableSessions := make(map[string]bool)
 	var events []tokenEvent
 	for _, path := range files {
-		snapshots, session, fileStats := readCodexTranscript(path)
+		snapshots, session, fileStats := readCodexTranscript(path, cache)
 		stats.FilesScanned++
 		stats.UsageRecords += fileStats.UsageRecords
 		stats.Malformed += fileStats.Malformed
@@ -220,78 +219,166 @@ func collectCodexTranscriptEvents(root string, cutoff time.Time) ([]tokenEvent, 
 	return events, stats
 }
 
-func readCodexTranscript(path string) ([]codexUsageSnapshot, codexSessionMeta, codexTranscriptStats) {
-	stats := codexTranscriptStats{}
-	file, err := os.Open(path)
+// codexTranscriptParser holds the state of one file's line-by-line parse.
+// Full and incremental reads use the same parser; an incremental read resumes
+// from the state saved after the last complete line.
+type codexTranscriptParser struct {
+	snapshots      []codexUsageSnapshot
+	session        codexSessionMeta
+	hasSessionMeta bool
+	model          string
+	usageRecords   int
+	malformed      int
+}
+
+func (parser *codexTranscriptParser) parseLine(line []byte) {
+	if !bytes.Contains(line, codexTokenRecordMarker) &&
+		!bytes.Contains(line, codexSessionMetaMarker) &&
+		!bytes.Contains(line, codexTurnContextMarker) {
+		return
+	}
+	var row codexTranscriptRow
+	if json.Unmarshal(line, &row) != nil {
+		parser.malformed++
+		return
+	}
+	if row.Type == "session_meta" {
+		// Fork rollouts begin with their own metadata, followed by copied
+		// parent metadata and history. Only the first header owns this file.
+		if parser.hasSessionMeta {
+			return
+		}
+		parser.hasSessionMeta = true
+		parser.session = codexSessionMeta{ID: row.Payload.ID}
+		if timestamp, ok := parseTime(firstNonEmpty(row.Payload.Timestamp, row.Timestamp)); ok {
+			parser.session.StartedAt = timestamp
+		} else {
+			parser.malformed++
+		}
+		parser.model = ""
+		return
+	}
+	if row.Type == "turn_context" {
+		parser.model = row.Payload.Model
+		return
+	}
+	if row.Type != "event_msg" || row.Payload.Type != "token_count" || row.Payload.Info == nil {
+		return
+	}
+	timestamp, ok := parseTime(row.Timestamp)
+	if !ok {
+		parser.malformed++
+		return
+	}
+	total, ok := row.Payload.Info.Total.value()
+	if !ok {
+		if row.Payload.Info.Total != nil {
+			parser.malformed++
+		}
+		return
+	}
+	last, hasLast := row.Payload.Info.Last.value()
+	if row.Payload.Info.Last != nil && !hasLast {
+		parser.malformed++
+	}
+	parser.usageRecords++
+	parser.snapshots = append(parser.snapshots, codexUsageSnapshot{
+		Timestamp: timestamp, Total: total, Last: last, HasLast: hasLast, Model: parser.model, SourceID: row.Payload.ID,
+	})
+}
+
+func (parser codexTranscriptParser) result(readFailures int) ([]codexUsageSnapshot, codexSessionMeta, codexTranscriptStats) {
+	stats := codexTranscriptStats{
+		UsageRecords: parser.usageRecords,
+		Malformed:    parser.malformed,
+		ReadFailures: readFailures,
+	}
+	return parser.snapshots, parser.session, stats
+}
+
+// readCodexTranscript parses one transcript, reusing and extending its cache
+// entry when cache is not nil. A final line without a newline is parsed but
+// not cached, so it is parsed again once complete.
+func readCodexTranscript(path string, cache *transcriptParseCache) ([]codexUsageSnapshot, codexSessionMeta, codexTranscriptStats) {
+	var cached codexTranscriptCacheEntry
+	hasCached := false
+	size, modTime, regular := int64(0), int64(0), false
+	if cache != nil {
+		size, modTime, regular = statTranscript(path)
+		if regular {
+			cached, hasCached = cache.codexEntry(path)
+			if hasCached && cached.File.Size == size && cached.File.ModTime == modTime && cached.File.Offset == size {
+				return cached.parser().result(0)
+			}
+		} else {
+			cache.forgetCodex(path)
+		}
+	}
+	file, err := openTranscript(path)
 	if err != nil {
-		stats.ReadFailures++
-		return nil, codexSessionMeta{}, stats
+		if cache != nil {
+			cache.forgetCodex(path)
+		}
+		return nil, codexSessionMeta{}, codexTranscriptStats{ReadFailures: 1}
 	}
 	defer file.Close()
 
-	var snapshots []codexUsageSnapshot
-	var session codexSessionMeta
-	var hasSessionMeta bool
-	var model string
-	err = readBoundedLines(file, codexTranscriptMaxLine, func(line []byte) {
-		if !bytes.Contains(line, codexTokenRecordMarker) &&
-			!bytes.Contains(line, codexSessionMetaMarker) &&
-			!bytes.Contains(line, codexTurnContextMarker) {
-			return
+	parser := codexTranscriptParser{}
+	start := int64(0)
+	if hasCached && transcriptPrefixUnchanged(file, cached.File, size, modTime) {
+		parser = cached.parser()
+		start = cached.File.Offset
+	}
+	var reader io.Reader = file
+	if regular {
+		reader = io.NewSectionReader(file, start, size-start)
+	}
+	// The final line without a newline is parsed by a copy of the parser, so
+	// the cached state stays at the last complete line.
+	var final codexTranscriptParser
+	hasFinal := false
+	consumed, err := readTranscriptLines(reader, codexTranscriptMaxLine, func(line []byte, complete bool) bool {
+		if complete {
+			parser.parseLine(line)
+			return true
 		}
-		var row codexTranscriptRow
-		if json.Unmarshal(line, &row) != nil {
-			stats.Malformed++
-			return
-		}
-		if row.Type == "session_meta" {
-			// Fork rollouts begin with their own metadata, followed by copied
-			// parent metadata and history. Only the first header owns this file.
-			if hasSessionMeta {
-				return
-			}
-			hasSessionMeta = true
-			session = codexSessionMeta{ID: row.Payload.ID}
-			if timestamp, ok := parseTime(firstNonEmpty(row.Payload.Timestamp, row.Timestamp)); ok {
-				session.StartedAt = timestamp
-			} else {
-				stats.Malformed++
-			}
-			model = ""
-			return
-		}
-		if row.Type == "turn_context" {
-			model = row.Payload.Model
-			return
-		}
-		if row.Type != "event_msg" || row.Payload.Type != "token_count" || row.Payload.Info == nil {
-			return
-		}
-		timestamp, ok := parseTime(row.Timestamp)
-		if !ok {
-			stats.Malformed++
-			return
-		}
-		total, ok := row.Payload.Info.Total.value()
-		if !ok {
-			if row.Payload.Info.Total != nil {
-				stats.Malformed++
-			}
-			return
-		}
-		last, hasLast := row.Payload.Info.Last.value()
-		if row.Payload.Info.Last != nil && !hasLast {
-			stats.Malformed++
-		}
-		stats.UsageRecords++
-		snapshots = append(snapshots, codexUsageSnapshot{
-			Timestamp: timestamp, Total: total, Last: last, HasLast: hasLast, Model: model, SourceID: row.Payload.ID,
-		})
+		final = parser
+		final.snapshots = parser.snapshots[:len(parser.snapshots):len(parser.snapshots)]
+		final.parseLine(line)
+		hasFinal = true
+		return false
 	})
 	if err != nil {
-		stats.ReadFailures++
+		if cache != nil {
+			cache.forgetCodex(path)
+		}
+		return parser.result(1)
 	}
-	return snapshots, session, stats
+	if cache != nil && regular {
+		storeCodexCacheEntry(cache, path, file, parser, size, modTime, start+consumed)
+	}
+	if hasFinal {
+		return final.result(0)
+	}
+	return parser.result(0)
+}
+
+func storeCodexCacheEntry(cache *transcriptParseCache, path string, file io.ReaderAt, parser codexTranscriptParser, size, modTime, offset int64) {
+	state := transcriptFileState{Size: size, ModTime: modTime, Offset: offset}
+	if offset > 0 {
+		head, tail, err := transcriptFingerprint(file, offset)
+		if err != nil {
+			cache.forgetCodex(path)
+			return
+		}
+		state.Head, state.Tail = head, tail
+	}
+	entry, ok := newCodexCacheEntry(parser, state)
+	if !ok {
+		cache.forgetCodex(path)
+		return
+	}
+	cache.storeCodex(path, entry)
 }
 
 func codexEventsFromSnapshots(session string, snapshots []codexUsageSnapshot, trackable bool) ([]tokenEvent, int) {
@@ -362,38 +449,4 @@ func codexEventsFromSnapshots(session string, snapshots []codexUsageSnapshot, tr
 		}
 	}
 	return events, incomplete
-}
-
-// readBoundedLines keeps memory bounded even when transcript prompt records are
-// very large. Oversized records are drained and ignored; token records are small.
-func readBoundedLines(reader io.Reader, maxLine int, visit func([]byte)) error {
-	buffered := bufio.NewReaderSize(reader, 64*1024)
-	line := make([]byte, 0, 64*1024)
-	overflow := false
-	for {
-		fragment, err := buffered.ReadSlice('\n')
-		if !overflow {
-			if len(line)+len(fragment) <= maxLine {
-				line = append(line, fragment...)
-			} else {
-				overflow = true
-				line = line[:0]
-			}
-		}
-		if err == nil || errors.Is(err, io.EOF) {
-			if !overflow && len(line) > 0 {
-				visit(bytes.TrimSuffix(line, []byte{'\n'}))
-			}
-			line = line[:0]
-			overflow = false
-		}
-		switch {
-		case err == nil, errors.Is(err, bufio.ErrBufferFull):
-			continue
-		case errors.Is(err, io.EOF):
-			return nil
-		default:
-			return err
-		}
-	}
 }

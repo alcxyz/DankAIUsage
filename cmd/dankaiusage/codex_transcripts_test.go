@@ -21,7 +21,7 @@ func TestCodexTranscriptCumulativeSnapshotsAndWindows(t *testing.T) {
 		codexTokenLine("2026-09-08T10:01:00Z", testCodexUsage(150, 30, 60, 5), testCodexUsage(50, 20, 20, 3)),
 	)
 
-	events, stats := collectCodexTranscriptEvents(root, now.AddDate(0, 0, -32))
+	events, stats := collectCodexTranscriptEvents(root, now.AddDate(0, 0, -32), nil)
 	if stats.UsageRecords != 3 || stats.partial() || len(events) != 2 {
 		t.Fatalf("stats = %+v, events = %d", stats, len(events))
 	}
@@ -60,7 +60,7 @@ func TestCodexTranscriptForkResumeAndDuplicateFiles(t *testing.T) {
 		codexTokenLine("2026-09-08T10:01:00Z", testCodexUsage(210, 50, 80, 8), testCodexUsage(60, 20, 20, 3)),
 	)
 
-	events, stats := collectCodexTranscriptEvents(root, now.Add(-24*time.Hour))
+	events, stats := collectCodexTranscriptEvents(root, now.Add(-24*time.Hour), nil)
 	if stats.partial() || len(events) != 4 {
 		t.Fatalf("stats = %+v, events = %d", stats, len(events))
 	}
@@ -81,7 +81,7 @@ func TestCodexTranscriptCounterResetUsesLastUsage(t *testing.T) {
 		codexTokenLine("2026-09-08T10:03:00Z", testCodexUsage(30, 5, 10, 1), testCodexUsage(20, 4, 8, 1)),
 	)
 
-	events, stats := collectCodexTranscriptEvents(root, now.Add(-24*time.Hour))
+	events, stats := collectCodexTranscriptEvents(root, now.Add(-24*time.Hour), nil)
 	if stats.partial() || len(events) != 3 {
 		t.Fatalf("stats = %+v, events = %d", stats, len(events))
 	}
@@ -105,7 +105,7 @@ func TestCodexTranscriptMalformedTruncatedLargeAndSpacedLines(t *testing.T) {
 		codexTokenLine("2026-09-08T10:03:00Z", testCodexUsage(20, 5, 8, 2), testCodexUsage(10, 3, 4, 1)),
 	)
 
-	events, stats := collectCodexTranscriptEvents(root, now.Add(-24*time.Hour))
+	events, stats := collectCodexTranscriptEvents(root, now.Add(-24*time.Hour), nil)
 	if len(events) != 2 || stats.Malformed != 1 || stats.ReadFailures != 0 || !stats.partial() {
 		t.Fatalf("stats = %+v, events = %d", stats, len(events))
 	}
@@ -120,7 +120,7 @@ func TestCodexTranscriptUnsafeFirstTotalIsBaselineOnly(t *testing.T) {
 		codexTokenLine("2026-09-08T10:02:00Z", testCodexUsage(1050, 120, 820, 23), nil),
 	)
 
-	events, stats := collectCodexTranscriptEvents(root, now.Add(-24*time.Hour))
+	events, stats := collectCodexTranscriptEvents(root, now.Add(-24*time.Hour), nil)
 	if len(events) != 1 || stats.Incomplete != 1 || events[0].Input != 50 || events[0].Output != 20 {
 		t.Fatalf("stats = %+v, events = %+v", stats, events)
 	}
@@ -137,7 +137,7 @@ func TestCodexTranscriptZeroBaselineAndMissingSessionMetadata(t *testing.T) {
 		codexTokenLine("2026-09-08T10:02:00Z", testCodexUsage(10, 2, 0, 0), testCodexUsage(10, 2, 0, 0)),
 	)
 
-	events, stats := collectCodexTranscriptEvents(root, now.Add(-24*time.Hour))
+	events, stats := collectCodexTranscriptEvents(root, now.Add(-24*time.Hour), nil)
 	if len(events) != 1 || stats.UsableRecords != 2 || stats.Incomplete != 1 || stats.Malformed != 0 {
 		t.Fatalf("stats = %+v, events = %d", stats, len(events))
 	}
@@ -153,12 +153,12 @@ func TestCodexTranscriptInvalidUsageAndMissingSources(t *testing.T) {
 		codexTokenLine("2026-09-08T10:01:00Z", badTotal, nil),
 		codexTokenLine("2026-09-08T10:02:00Z", testCodexUsage(10, 2, 0, 0), badLast),
 	)
-	events, stats := collectCodexTranscriptEvents(root, now.Add(-24*time.Hour))
+	events, stats := collectCodexTranscriptEvents(root, now.Add(-24*time.Hour), nil)
 	if len(events) != 0 || stats.Malformed != 2 || stats.Incomplete != 1 || stats.UsageRecords != 1 {
 		t.Fatalf("invalid stats = %+v, events = %d", stats, len(events))
 	}
 
-	missingEvents, missingStats := collectCodexTranscriptEvents(filepath.Join(root, "missing"), now.Add(-24*time.Hour))
+	missingEvents, missingStats := collectCodexTranscriptEvents(filepath.Join(root, "missing"), now.Add(-24*time.Hour), nil)
 	if len(missingEvents) != 0 || missingStats.SourcesFound != 0 || missingStats.partial() {
 		t.Fatalf("missing stats = %+v, events = %d", missingStats, len(missingEvents))
 	}

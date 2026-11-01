@@ -275,10 +275,13 @@ func collect(opts options) Summary {
 		},
 	}
 
-	codex := collectCodex(now, opts)
-	claude := collectClaude(now, opts)
+	// One parse cache serves the rolling scans and the tracking scan.
+	cache := loadTranscriptParseCache(transcriptParseCachePath())
+	codex := collectCodex(now, opts, cache)
+	claude := collectClaude(now, opts, cache)
 	out.Providers = []ProviderUsage{codex, claude}
-	out.Tracking = refreshTokenTracking(tokenTrackingPath(), now)
+	out.Tracking = refreshTokenTracking(tokenTrackingPath(), now, cache)
+	_ = cache.save()
 
 	for _, provider := range out.Providers {
 		addTotals(&out.GrandTotal, provider.Period)
@@ -295,7 +298,7 @@ func collect(opts options) Summary {
 	return out
 }
 
-func collectCodex(now time.Time, opts options) ProviderUsage {
+func collectCodex(now time.Time, opts options, cache *transcriptParseCache) ProviderUsage {
 	provider := ProviderUsage{
 		ID:        "codex",
 		Name:      "Codex",
@@ -321,7 +324,7 @@ func collectCodex(now time.Time, opts options) ProviderUsage {
 	setProviderMeta(&provider, "tokenDataIncludesWeb", false)
 
 	cutoff := now.AddDate(0, 0, -maxInt(opts.PeriodDays, 90)-1)
-	events, stats := collectCodexTranscriptEvents(root, cutoff)
+	events, stats := collectCodexTranscriptEvents(root, cutoff, cache)
 	applyEvents(&provider, events, now, opts)
 	available := stats.UsableRecords > 0
 	setProviderMeta(&provider, "tokenDataAvailable", available)
@@ -341,7 +344,7 @@ func collectCodex(now time.Time, opts options) ProviderUsage {
 	return provider
 }
 
-func collectClaude(now time.Time, opts options) ProviderUsage {
+func collectClaude(now time.Time, opts options, cache *transcriptParseCache) ProviderUsage {
 	provider := ProviderUsage{
 		ID:        "claude",
 		Name:      "Claude",
@@ -391,7 +394,7 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 		if info, statErr := d.Info(); statErr == nil && info.ModTime().Before(cutoff) {
 			return nil
 		}
-		fileEvents, parseErr := readClaudeJSONL(path)
+		fileEvents, parseErr := readClaudeTranscript(path, cache)
 		if parseErr != nil && provider.Error == "" {
 			setProviderMeta(&provider, "tokenDataError", parseErr.Error())
 		}
@@ -425,71 +428,175 @@ func collectClaude(now time.Time, opts options) ProviderUsage {
 	return provider
 }
 
-func readClaudeJSONL(path string) ([]tokenEvent, error) {
-	f, err := os.Open(path)
+// readClaudeTranscript parses one transcript, reusing and extending its cache
+// entry when cache is not nil. Each line is decoded as a JSON stream, so a
+// line holding several values yields them all, as the whole-file stream
+// decoder did; parsing stops at the first decode error. A final line without
+// a newline is parsed but not cached, so it is parsed again once complete.
+func readClaudeTranscript(path string, cache *transcriptParseCache) ([]tokenEvent, error) {
+	project := filepath.Base(filepath.Dir(path))
+	var cached claudeTranscriptCacheEntry
+	hasCached := false
+	size, modTime, regular := int64(0), int64(0), false
+	if cache != nil {
+		size, modTime, regular = statTranscript(path)
+		if regular {
+			cached, hasCached = cache.claudeEntry(path)
+			if hasCached && cached.File.Size == size && cached.File.ModTime == modTime &&
+				(cached.Err != "" || cached.File.Offset == size) {
+				return cached.tokenEvents(project), cached.err(path)
+			}
+		} else {
+			cache.forgetClaude(path)
+		}
+	}
+	file, err := openTranscript(path)
 	if err != nil {
+		if cache != nil {
+			cache.forgetClaude(path)
+		}
 		return nil, err
 	}
-	defer f.Close()
+	defer file.Close()
 
-	project := filepath.Base(filepath.Dir(path))
-	decoder := json.NewDecoder(f)
 	var events []tokenEvent
+	start := int64(0)
+	if hasCached && transcriptPrefixUnchanged(file, cached.File, size, modTime) {
+		events = cached.tokenEvents(project)
+		if cached.Err != "" {
+			// Parsing stopped at a malformed complete line; later lines are
+			// never parsed, so the grown file has the same result.
+			cached.File.Size, cached.File.ModTime = size, modTime
+			cache.storeClaude(path, cached)
+			return events, cached.err(path)
+		}
+		start = cached.File.Offset
+	}
+	var reader io.Reader = file
+	if regular {
+		reader = io.NewSectionReader(file, start, size-start)
+	}
+	var lineErr error
+	var finalEvents []tokenEvent
+	var finalErr error
+	consumed, readErr := readTranscriptLines(reader, 0, func(line []byte, complete bool) bool {
+		if !complete {
+			finalEvents, finalErr = parseClaudeTranscriptLine(line, project, nil)
+			return false
+		}
+		events, lineErr = parseClaudeTranscriptLine(line, project, events)
+		return lineErr == nil
+	})
+	if readErr != nil {
+		if cache != nil {
+			cache.forgetClaude(path)
+		}
+		return events, fmt.Errorf("%s: %w", path, readErr)
+	}
+	if cache != nil && regular {
+		storeClaudeCacheEntry(cache, path, file, events, lineErr, size, modTime, start+consumed)
+	}
+	if lineErr != nil {
+		return events, fmt.Errorf("%s: %w", path, lineErr)
+	}
+	events = append(events, finalEvents...)
+	if finalErr != nil {
+		return events, fmt.Errorf("%s: %w", path, finalErr)
+	}
+	return events, nil
+}
+
+func storeClaudeCacheEntry(cache *transcriptParseCache, path string, file io.ReaderAt, events []tokenEvent, lineErr error, size, modTime, offset int64) {
+	entry := claudeTranscriptCacheEntry{File: transcriptFileState{Size: size, ModTime: modTime, Offset: offset}}
+	if lineErr != nil {
+		entry.Err = lineErr.Error()
+	}
+	if offset > 0 {
+		head, tail, err := transcriptFingerprint(file, offset)
+		if err != nil {
+			cache.forgetClaude(path)
+			return
+		}
+		entry.File.Head, entry.File.Tail = head, tail
+	}
+	cachedEvents, ok := newClaudeCachedEvents(events)
+	if !ok {
+		cache.forgetClaude(path)
+		return
+	}
+	entry.Events = cachedEvents
+	cache.storeClaude(path, entry)
+}
+
+func (entry claudeTranscriptCacheEntry) err(path string) error {
+	if entry.Err == "" {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", path, errors.New(entry.Err))
+}
+
+func parseClaudeTranscriptLine(line []byte, project string, events []tokenEvent) ([]tokenEvent, error) {
+	decoder := json.NewDecoder(bytes.NewReader(line))
 	for {
 		var row map[string]any
 		if err := decoder.Decode(&row); err != nil {
 			if errors.Is(err, io.EOF) {
-				break
+				return events, nil
 			}
-			return events, fmt.Errorf("%s: %w", path, err)
+			return events, err
 		}
-		if row["type"] != "assistant" {
-			continue
+		if event, ok := claudeTokenEventFromRow(row, project); ok {
+			events = append(events, event)
 		}
-		msg, _ := row["message"].(map[string]any)
-		usage, _ := msg["usage"].(map[string]any)
-		if len(usage) == 0 {
-			continue
-		}
-		ts, ok := parseTime(row["timestamp"])
-		if !ok {
-			continue
-		}
-		session := firstNonEmpty(stringValue(row["sessionId"]), stringValue(row["session_id"]))
-		model, _ := msg["model"].(string)
-		stableID := firstNonEmpty(
-			stringValue(msg["id"]),
-			stringValue(msg["requestId"]),
-			stringValue(msg["request_id"]),
-			stringValue(row["requestId"]),
-			stringValue(row["request_id"]),
-			stringValue(row["messageId"]),
-			stringValue(row["uuid"]),
-		)
-		input := jsonInt(usage["input_tokens"])
-		output := jsonInt(usage["output_tokens"])
-		cached := jsonInt(usage["cache_creation_input_tokens"]) + jsonInt(usage["cache_read_input_tokens"])
-		trackKey := ""
-		trackFingerprint := ""
-		if stableID != "" {
-			trackKey = tokenIdentityHash("claude-event", stableID)
-			trackFingerprint = tokenIdentityHash("claude-usage", stableID,
-				strconv.FormatInt(input, 10), strconv.FormatInt(output, 10), strconv.FormatInt(cached, 10))
-		}
-		events = append(events, tokenEvent{
-			Provider:         "claude",
-			Timestamp:        ts,
-			Session:          session,
-			Project:          project,
-			Model:            model,
-			Input:            input,
-			Output:           output,
-			Cached:           cached,
-			TrackKey:         trackKey,
-			TrackFingerprint: trackFingerprint,
-		})
 	}
-	return events, nil
+}
+
+func claudeTokenEventFromRow(row map[string]any, project string) (tokenEvent, bool) {
+	if row["type"] != "assistant" {
+		return tokenEvent{}, false
+	}
+	msg, _ := row["message"].(map[string]any)
+	usage, _ := msg["usage"].(map[string]any)
+	if len(usage) == 0 {
+		return tokenEvent{}, false
+	}
+	ts, ok := parseTime(row["timestamp"])
+	if !ok {
+		return tokenEvent{}, false
+	}
+	session := firstNonEmpty(stringValue(row["sessionId"]), stringValue(row["session_id"]))
+	model, _ := msg["model"].(string)
+	stableID := firstNonEmpty(
+		stringValue(msg["id"]),
+		stringValue(msg["requestId"]),
+		stringValue(msg["request_id"]),
+		stringValue(row["requestId"]),
+		stringValue(row["request_id"]),
+		stringValue(row["messageId"]),
+		stringValue(row["uuid"]),
+	)
+	input := jsonInt(usage["input_tokens"])
+	output := jsonInt(usage["output_tokens"])
+	cached := jsonInt(usage["cache_creation_input_tokens"]) + jsonInt(usage["cache_read_input_tokens"])
+	trackKey := ""
+	trackFingerprint := ""
+	if stableID != "" {
+		trackKey = tokenIdentityHash("claude-event", stableID)
+		trackFingerprint = tokenIdentityHash("claude-usage", stableID,
+			strconv.FormatInt(input, 10), strconv.FormatInt(output, 10), strconv.FormatInt(cached, 10))
+	}
+	return tokenEvent{
+		Provider:         "claude",
+		Timestamp:        ts,
+		Session:          session,
+		Project:          project,
+		Model:            model,
+		Input:            input,
+		Output:           output,
+		Cached:           cached,
+		TrackKey:         trackKey,
+		TrackFingerprint: trackFingerprint,
+	}, true
 }
 
 // Claude transcripts can repeat progressively updated usage for one assistant

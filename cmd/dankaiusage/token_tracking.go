@@ -215,7 +215,8 @@ func enableTokenTracking(path string, now time.Time) TrackingSummary {
 		return readTokenTrackingSummary(path)
 	}
 
-	scan := scanAllTokenEvents(boundary)
+	// A one-off seed scan; the next summary fills the transcript parse cache.
+	scan := scanAllTokenEvents(boundary, nil)
 	return commitInitialTokenTrackingSeed(path, seedEpoch, scan, boundary)
 }
 
@@ -302,7 +303,7 @@ func clearTokenTracking(path string, now time.Time) TrackingSummary {
 	return result
 }
 
-func refreshTokenTracking(path string, now time.Time) TrackingSummary {
+func refreshTokenTracking(path string, now time.Time, cache *transcriptParseCache) TrackingSummary {
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return tokenTrackingSummary(defaultTokenTrackingState())
 	}
@@ -323,7 +324,7 @@ func refreshTokenTracking(path string, now time.Time) TrackingSummary {
 	}
 
 	boundary := now.UTC()
-	scan := scanAllTokenEvents(boundary)
+	scan := scanAllTokenEvents(boundary, cache)
 	return commitTokenTrackingRefresh(path, snapshot.Epoch, scan, boundary)
 }
 
@@ -364,9 +365,9 @@ func commitTokenTrackingRefresh(path, expectedEpoch string, scan tokenTrackingSc
 	return result
 }
 
-func scanAllTokenEvents(_ time.Time) tokenTrackingScan {
+func scanAllTokenEvents(_ time.Time, cache *transcriptParseCache) tokenTrackingScan {
 	scan := tokenTrackingScan{}
-	codexEvents, codexStats := collectCodexTranscriptEvents(codexHome(), time.Time{})
+	codexEvents, codexStats := collectCodexTranscriptEvents(codexHome(), time.Time{}, cache)
 	scan.Events = append(scan.Events, codexEvents...)
 	if codexStats.SourcesFound == 0 {
 		scan.Warnings = append(scan.Warnings, "Codex: no retained transcript directory was found")
@@ -374,7 +375,7 @@ func scanAllTokenEvents(_ time.Time) tokenTrackingScan {
 		scan.Warnings = append(scan.Warnings, "Codex: retained transcript scan was partial")
 	}
 
-	claudeEvents, claudeFiles, claudeErrors := scanClaudeTokenEvents(claudeHome())
+	claudeEvents, claudeFiles, claudeErrors := scanClaudeTokenEvents(claudeHome(), cache)
 	claudeEvents, ambiguousClaude := normalizeClaudeTokenEvents(claudeEvents)
 	scan.Events = append(scan.Events, claudeEvents...)
 	if claudeFiles == 0 {
@@ -401,7 +402,7 @@ func scanAllTokenEvents(_ time.Time) tokenTrackingScan {
 	return scan
 }
 
-func scanClaudeTokenEvents(root string) ([]tokenEvent, int, int) {
+func scanClaudeTokenEvents(root string, cache *transcriptParseCache) ([]tokenEvent, int, int) {
 	projects := filepath.Join(root, "projects")
 	var events []tokenEvent
 	files := 0
@@ -415,7 +416,7 @@ func scanClaudeTokenEvents(root string) ([]tokenEvent, int, int) {
 			return nil
 		}
 		files++
-		fileEvents, err := readClaudeJSONL(path)
+		fileEvents, err := readClaudeTranscript(path, cache)
 		if err != nil {
 			failures++
 		}

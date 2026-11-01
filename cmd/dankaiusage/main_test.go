@@ -486,7 +486,7 @@ func TestCollectClaudeReportsOAuthErrorWithoutFallback(t *testing.T) {
 	}
 
 	now := mustParseTime(t, "2026-05-28T12:00:00Z")
-	provider := collectClaude(now, options{PeriodDays: 7})
+	provider := collectClaude(now, options{PeriodDays: 7}, nil)
 	if provider.WeeklyLeft.Known || len(provider.QuotaBuckets) != 0 {
 		t.Fatalf("limits without account data = %+v / %+v", provider.WeeklyLeft, provider.QuotaBuckets)
 	}

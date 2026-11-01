@@ -6,6 +6,10 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Refreshes no longer re-read every Claude and Codex transcript: the helper remembers what it already parsed and reads only new lines, so a refresh takes seconds instead of most of a minute and the widget no longer shows "Refreshing…" almost constantly.
+
 ## [2.1.0] - 2026-11-01
 
 ### Changed

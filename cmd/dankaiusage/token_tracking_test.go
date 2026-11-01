@@ -71,7 +71,7 @@ func TestTokenTrackingSeedDedupDeletionAndNoRawIDs(t *testing.T) {
 		t.Fatalf("claude seed = %+v", got)
 	}
 
-	refreshed := refreshTokenTracking(env.state, started.Add(time.Minute))
+	refreshed := refreshTokenTracking(env.state, started.Add(time.Minute), nil)
 	if refreshed.Providers["codex"].Requests != 1 || refreshed.Providers["claude"].Requests != 1 {
 		t.Fatalf("refresh double counted: %+v", refreshed.Providers)
 	}
@@ -91,7 +91,7 @@ func TestTokenTrackingSeedDedupDeletionAndNoRawIDs(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(env.claude, "projects")); err != nil {
 		t.Fatal(err)
 	}
-	deleted := refreshTokenTracking(env.state, started.Add(2*time.Minute))
+	deleted := refreshTokenTracking(env.state, started.Add(2*time.Minute), nil)
 	if deleted.Providers["codex"].Total != 110 || deleted.Providers["claude"].Total != 55 {
 		t.Fatalf("deleted transcripts changed totals: %+v", deleted.Providers)
 	}
@@ -125,7 +125,7 @@ func TestTokenTrackingPauseResumeAndClear(t *testing.T) {
 	lines = append(lines,
 		codexTokenLine("2026-09-08T12:02:00Z", testCodexUsage(30, 5, 0, 0), testCodexUsage(20, 3, 0, 0)))
 	writeCodexTranscript(t, path, start.Add(2*time.Minute), lines...)
-	stillPaused := refreshTokenTracking(env.state, start.Add(2*time.Minute))
+	stillPaused := refreshTokenTracking(env.state, start.Add(2*time.Minute), nil)
 	if stillPaused.Providers["codex"].Total != 12 {
 		t.Fatalf("paused refresh changed total: %+v", stillPaused)
 	}
@@ -136,7 +136,7 @@ func TestTokenTrackingPauseResumeAndClear(t *testing.T) {
 	lines = append(lines,
 		codexTokenLine("2026-09-08T12:04:00Z", testCodexUsage(37, 9, 0, 0), testCodexUsage(7, 4, 0, 0)))
 	writeCodexTranscript(t, path, start.Add(4*time.Minute), lines...)
-	after := refreshTokenTracking(env.state, start.Add(5*time.Minute))
+	after := refreshTokenTracking(env.state, start.Add(5*time.Minute), nil)
 	if after.Providers["codex"].Total != 23 || after.Providers["codex"].Requests != 2 {
 		t.Fatalf("resume caught up paused usage or missed new usage: %+v", after.Providers["codex"])
 	}
@@ -223,7 +223,7 @@ func TestTokenTrackingConcurrentRefreshCountsOnce(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			results <- refreshTokenTracking(env.state, start.Add(2*time.Minute))
+			results <- refreshTokenTracking(env.state, start.Add(2*time.Minute), nil)
 		}()
 	}
 	wait.Wait()
