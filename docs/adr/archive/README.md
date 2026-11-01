@@ -19,3 +19,6 @@ are history, not current decisions; the current ones are listed in the
 | [ADR-0015 history](ADR-0015-shared-usage-refresh-cooldown-history.md) | Shared usage refresh cooldown | History of [ADR-0015](../ADR-0015-shared-usage-refresh-cooldown.md) |
 | [ADR-0021 history](ADR-0021-top-bar-quota-bars-history.md) | Optional quota bars in the horizontal top bar | History of [ADR-0021](../ADR-0021-top-bar-quota-bars.md) |
 | [ADR-0022 history](ADR-0022-manual-claude-limit-reset-history.md) | Explicit, confirmed use of Claude limit resets | History of [ADR-0022](../ADR-0022-manual-claude-limit-reset.md) |
+| [ADR-0023 history](ADR-0023-separate-claude-reset-availability-check-history.md) | Separate low-cadence request for Claude reset availability | History of [ADR-0023](../ADR-0023-separate-claude-reset-availability-check.md) |
+| [ADR-0024](ADR-0024-retry-rate-limited-reset-check.md) | Retry a rate-limited Claude reset check at quota cadence | Retired by [ADR-0023](../ADR-0023-separate-claude-reset-availability-check.md), 2026-11-01 |
+| [ADR-0027 history](ADR-0027-remove-five-hour-windows-prime-and-statusline-history.md) | Remove five-hour windows, Claude prime and the statusline fallback | History of [ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md) |

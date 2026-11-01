@@ -1,7 +1,8 @@
 # ADR-0027: Remove five-hour windows, Claude prime and the statusline fallback
 
 **Status:** Accepted
-**Date:** 2026-10-31
+**Date:** 2026-10-31, updated 2026-11-01 (ADR-0024 retired)
+**History:** [archive/ADR-0027-remove-five-hour-windows-prime-and-statusline-history.md](archive/ADR-0027-remove-five-hour-windows-prime-and-statusline-history.md)
 **Applies to:** `cmd/dankaiusage`, `DankAIUsageWidget.qml`, settings
 **Retires:** [ADR-0007](archive/ADR-0007-auto-prime-as-window-scheduler.md);
 finalises the already superseded
@@ -53,7 +54,7 @@ Code runs as an interactive terminal TUI.
   scheduled five-hour events stay hidden; unexpected changes on legacy
   five-hour buckets stay visible with their stored label. The history file is
   not rewritten.
-- Claude limit resets (ADR-0022, ADR-0023, ADR-0024) and Codex resets
+- Claude limit resets (ADR-0022, ADR-0023) and Codex resets
   (ADR-0010) stay; their grants now clear the weekly window.
 
 ## Alternatives Considered

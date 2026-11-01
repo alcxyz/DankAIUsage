@@ -1,6 +1,6 @@
 # ADR-0024: Retry a rate-limited Claude reset check at quota cadence
 
-**Status:** Accepted
+**Status:** Retired on 2026-11-01 by [ADR-0023](../ADR-0023-separate-claude-reset-availability-check.md): retrying every five minutes against a budgeted identity may have prolonged the rate limit (every attempt for more than eleven hours answered HTTP 429 while the account was idle); consecutive rate limits now back off exponentially, and the last known status stays visible instead of a warning.
 **Date:** 2026-10-05
 **Applies to:** `cmd/dankaiusage` (`claude-reset` availability check)
 **Amends:** ADR-0023's hourly backoff after a failed reset check.
