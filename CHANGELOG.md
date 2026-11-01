@@ -6,6 +6,12 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- The Claude card in Advanced now shows the last known limit-reset status, such as "No limit reset available · checked 31.10.2026 21:40", even when newer checks have failed; **Use reset now** is offered only while that answer is recent.
+- A rate-limited or otherwise failed Claude limit-reset check no longer shows an orange warning; it appears as a muted line under **Advanced → Diagnostics** with the last successful check and the next attempt. Only a sign-in rejection by Claude still warns.
+- Claude limit resets are checked at most once an hour, and each rate limit in a row doubles the wait from one hour up to a day instead of retrying every few minutes, which may have prolonged the rate limit.
+
 ## [2.0.0] - 2026-10-31
 
 ### Removed

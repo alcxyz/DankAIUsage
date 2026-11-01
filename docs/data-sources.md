@@ -18,9 +18,9 @@
   monthly-limit bar when there is one, or as a balance-only bucket without a
   percentage when extra usage is enabled with no monthly limit.
   Granted limit resets come from a separate request to the same endpoint with
-  `cedar_ember=1`, made at most every 30 minutes under Claude Code's OAuth
+  `cedar_ember=1`, made at most once an hour under Claude Code's OAuth
   client identity, which the endpoint requires before it reports them and
-  rate-limits at quota cadence ([ADR-0022](adr/ADR-0022-manual-claude-limit-reset.md),
+  rate-limits; consecutive rate limits back off exponentially up to a day ([ADR-0022](adr/ADR-0022-manual-claude-limit-reset.md),
   [ADR-0023](adr/ADR-0023-separate-claude-reset-availability-check.md)).
   Claude limits come only from this endpoint: when the fetch fails, they are
   unavailable and the error is shown. The `claude-statusline` fallback is

@@ -561,7 +561,7 @@ PluginSettings {
             }
 
             StyledText {
-                text: "Quota polling and local history scans. An armed Codex reset is checked at the same pace, so long intervals can miss a brief expiry window. Claude limit resets are checked separately, at least 30 minutes apart."
+                text: "Quota polling and local history scans. An armed Codex reset is checked at the same pace, so long intervals can miss a brief expiry window. Claude limit resets are checked separately, at most once an hour."
                 width: parent.width
                 wrapMode: Text.WordWrap
                 font.pixelSize: Theme.fontSizeSmall

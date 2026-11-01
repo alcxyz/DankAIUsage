@@ -24,8 +24,9 @@ The header line shows when usage was last updated, whether it is stale, and
 (in Advanced) the next scheduled refresh; it is the only place that time is
 shown. Notices under a provider card appear when something needs you, or
 reports what you just did: a refresh or sign-in failure, stale data, an
-unconfirmed reset attempt, or a failed limit-reset check with no recent
-listing to fall back on. Caveats that never change, such as Claude token
+unconfirmed reset attempt, or a limit-reset check that Claude rejected for
+the sign-in. Other failed limit-reset checks appear under Diagnostics
+instead, while the card keeps the last known reset status. Caveats that never change, such as Claude token
 totals covering local Claude Code history only, live in this guide instead.
 The dropdown scrolls when it would otherwise exceed the screen.
 

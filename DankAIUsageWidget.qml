@@ -2520,8 +2520,10 @@ PluginComponent {
             if (provider.meta.usageRefreshError) staleNote += ": " + provider.meta.usageRefreshError
             add(staleNote, "warning")
         }
-        // The limit-reset check is separate from the quota poll; its failure
-        // only hides the reset line, so say why in Advanced.
+        // The limit-reset check is separate from the quota poll. The helper
+        // reports claudeResetCheckError only when the server rejected the
+        // sign-in, which the user can fix; rate limits and other failures go
+        // to Diagnostics (claudeResetCheckDiagnosticLine).
         if (advancedDropdown && provider.id === "claude" && provider.meta.claudeResetCheckError)
             add("Limit-reset check failed: " + provider.meta.claudeResetCheckError, "warning")
         if (advancedDropdown && provider.meta.tokenDataNote) {
@@ -2533,6 +2535,42 @@ PluginComponent {
         if (provider.meta.limitError) add(provider.meta.limitError, "error")
         else if (provider.meta.tokenDataError) add(provider.meta.tokenDataError, "warning")
         return notices
+    }
+
+    // The last successful limit-reset check, even when it is too old to
+    // list or use its grants (ADR-0023). The helper hides an answer fetched
+    // under another sign-in, so a missing record reads as unknown.
+    function claudeResetStatusLine(provider) {
+        if (!provider || provider.id !== "claude" || !provider.meta) return ""
+        var last = provider.meta.claudeResetLastCheck
+        if (!last || !last.checkedAt) return "Limit reset status unknown"
+        var count = last.eligible === true && last.resetsAvailable > 0 ? last.resetsAvailable : 0
+        // Fresh grants are already listed with their use action below.
+        if (count > 0 && last.fresh === true) return ""
+        var text = count === 0 ? "No limit reset available"
+                : count === 1 ? "1 limit reset available" : count + " limit resets available"
+        var checked = formatShortDateTime(last.checkedAt)
+        return checked !== "" ? text + " · checked " + checked : text
+    }
+
+    // A failed limit-reset check other than a sign-in rejection is not a
+    // warning: the last known status stays on the card, and this line in
+    // Diagnostics says why it is not current and when the helper tries again.
+    function claudeResetCheckDiagnosticLine() {
+        for (var i = 0; i < providers.length; i++) {
+            var provider = providers[i]
+            if (!provider || provider.id !== "claude" || !provider.meta) continue
+            var failure = provider.meta.claudeResetCheckFailure
+            if (!failure || !failure.reason) return ""
+            var parts = ["Limit-reset check: " + failure.reason]
+            if (failure.rateLimitStreak > 1) parts.push(failure.rateLimitStreak + " rate limits in a row")
+            var success = formatShortDateTime(failure.lastSuccessAt)
+            parts.push(success !== "" ? "last success " + success : "no successful check yet")
+            var next = formatShortDateTime(failure.nextAttemptAt)
+            if (next !== "") parts.push("next attempt " + next)
+            return parts.join(" · ")
+        }
+        return ""
     }
 
     function providerNote(provider) {
@@ -3348,6 +3386,17 @@ PluginComponent {
                                         }
                                     }
 
+                                    StyledText {
+                                        width: parent.width
+                                        text: root.claudeResetStatusLine(modelData)
+                                        textFormat: Text.PlainText
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                        elide: Text.ElideRight
+                                        maximumLineCount: 1
+                                        visible: root.advancedDropdown && modelData.id === "claude" && text !== ""
+                                    }
+
                                     Column {
                                         width: parent.width
                                         spacing: Theme.spacingXS
@@ -3773,6 +3822,16 @@ PluginComponent {
 
     component DiagnosticsPanel: Column {
         spacing: Theme.spacingS
+
+        StyledText {
+            width: parent.width
+            text: root.claudeResetCheckDiagnosticLine()
+            textFormat: Text.PlainText
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceVariantText
+            visible: text !== ""
+        }
 
         StyledText {
             width: parent.width

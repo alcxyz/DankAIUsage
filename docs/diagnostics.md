@@ -29,6 +29,12 @@ does not request provider usage. **Copy report** copies exactly the preview
 for you to review and share in an issue. Nothing is uploaded automatically.
 The same local report is available with `dankaiusage diagnostics`.
 
+When the latest Claude limit-reset check failed for a reason other than a
+sign-in rejection, for example a rate limit, the section also shows a muted
+line with the reason, the last successful check and the next attempt. It
+comes from the current usage summary, not from the stored report, so
+**Copy report** does not include it.
+
 Diagnostics retain at most 100 events for seven days in
 `$XDG_STATE_HOME/dankaiusage/diagnostics.json`, falling back to
 `~/.local/state/dankaiusage/diagnostics.json`. Files are owner-only and

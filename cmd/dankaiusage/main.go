@@ -1112,8 +1112,10 @@ type claudeOAuthUsageCache struct {
 	Invalidated               bool            `json:"invalidated,omitempty"`
 	OrganizationID            string          `json:"organizationId,omitempty"`
 	// RateLimitedSince marks the first of the consecutive HTTP 429 answers a
-	// reset check has received; the quota cache leaves it empty (ADR-0024).
+	// reset check has received and RateLimitStreak counts them; the quota
+	// cache leaves both empty (ADR-0023).
 	RateLimitedSince string `json:"rateLimitedSince,omitempty"`
+	RateLimitStreak  int    `json:"rateLimitStreak,omitempty"`
 }
 
 func claudeOAuthUsageCachePath() string {

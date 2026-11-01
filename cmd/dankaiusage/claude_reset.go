@@ -36,21 +36,21 @@ const (
 // a 429 on this check cannot blank the quota windows.
 const (
 	claudeResetAvailabilityURL      = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1"
-	claudeResetAvailabilityInterval = 30 * time.Minute
+	claudeResetAvailabilityInterval = time.Hour
 	claudeResetAvailabilityBackoff  = time.Hour
-	// A 429 that asks for no wait is retried at quota cadence, no closer than
-	// this, for one retry window after the first such answer (ADR-0024).
-	claudeResetAvailabilityRetryInterval = 5 * time.Minute
-	claudeResetAvailabilityRetryWindow   = time.Hour
-	claudeResetAvailabilityStaleTTL      = 6 * time.Hour
+	// Consecutive HTTP 429 answers double the wait from the backoff up to
+	// this cap; a longer Retry-After is honoured up to the longest wait.
+	claudeResetAvailabilityRateLimitCap = 24 * time.Hour
+	claudeResetAvailabilityLongestWait  = 7 * 24 * time.Hour
+	claudeResetAvailabilityStaleTTL     = 6 * time.Hour
 )
 
 func claudeResetAvailabilityCachePath() string {
 	return filepath.Join(pluginStateDir(), "claude-reset-availability.json")
 }
 
-// claudeResetAvailabilityCadence spaces reset checks at least half an hour
-// apart and no closer than two quota intervals.
+// claudeResetAvailabilityCadence spaces reset checks at least an hour apart
+// and no closer than two quota intervals.
 func claudeResetAvailabilityCadence(interval time.Duration) time.Duration {
 	return max(claudeResetAvailabilityInterval, 2*normalizeUsageRefreshInterval(interval))
 }
@@ -598,36 +598,98 @@ func claudeResetMeta(availability claudeResetAvailability, now time.Time) map[st
 }
 
 // claudeResetsForSummary refreshes the reset availability cache when its own
-// cadence allows and lists the grants it holds. While a recent listing is
-// still served, a failed check is a skipped refresh, not news, and stays out
-// of meta; only a sign-in rejection by the server (HTTP 401/403) is reported
-// alongside the listing. Once the listing is gone, the reason is shown. It
-// never touches the quota cache.
+// cadence allows and lists the grants it holds while the answer is fresh.
+// The last successful answer is reported as claudeResetLastCheck even past
+// the stale window, so the card can say what was last known and when. Only
+// a sign-in rejection by the server (HTTP 401/403) is a warning
+// (claudeResetCheckError); any other failed check is a diagnostic detail
+// (claudeResetCheckFailure). It never touches the quota cache.
 func claudeResetsForSummary(now time.Time, interval time.Duration) ([]UsageReset, map[string]any) {
 	path := claudeResetAvailabilityCachePath()
 	refreshErr := refreshClaudeResetAvailability(path, now, interval)
+	organization, _ := claudeOrganizationID()
 	resets, meta := claudeResetsFromAvailabilityCache(path, now, interval)
 	cache := loadClaudeOAuthUsageCache(path)
-	checkError := cache.LastError
-	serverRejectedSignIn := cache.DiagnosticCategory == "authentication" && cache.DiagnosticHTTPStatus != 0
-	if meta != nil && !serverRejectedSignIn {
-		checkError = ""
-	}
-	// Missing local credentials are not news: the quota poll reports them in
-	// its own way.
-	if cache.DiagnosticCategory == "authentication" && cache.DiagnosticHTTPStatus == 0 {
-		checkError = ""
-	}
-	if refreshErr != nil && checkError == "" && meta == nil {
-		checkError = refreshErr.Error()
-	}
-	if checkError != "" {
+	if last := claudeResetLastCheckMeta(cache, now, interval, organization); last != nil {
 		if meta == nil {
 			meta = map[string]any{}
 		}
-		meta["claudeResetCheckError"] = checkError
+		meta["claudeResetLastCheck"] = last
 	}
+	reason := cache.LastError
+	// Missing local credentials are not news: the quota poll reports them in
+	// its own way.
+	if cache.DiagnosticCategory == "authentication" && cache.DiagnosticHTTPStatus == 0 {
+		reason = ""
+	}
+	if reason == "" && refreshErr != nil {
+		reason = refreshErr.Error()
+	}
+	if reason == "" {
+		return resets, meta
+	}
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	if cache.DiagnosticCategory == "authentication" && cache.DiagnosticHTTPStatus != 0 {
+		meta["claudeResetCheckError"] = reason
+		return resets, meta
+	}
+	failure := map[string]any{"reason": reason}
+	if cache.DiagnosticHTTPStatus != 0 {
+		failure["httpStatus"] = cache.DiagnosticHTTPStatus
+	}
+	// Like the last check, a success under another sign-in is not named.
+	sameSignIn := cache.OrganizationID == "" || organization == "" || cache.OrganizationID == organization
+	if cache.FetchedAt != "" && sameSignIn {
+		failure["lastSuccessAt"] = cache.FetchedAt
+	}
+	if next, err := parseOptionalRefreshTime(cache.NextAttemptAt); err == nil && !next.IsZero() {
+		failure["nextAttemptAt"] = next.UTC().Format(time.RFC3339)
+	}
+	if streak := claudeResetRateLimitStreak(cache); streak > 0 {
+		failure["rateLimitStreak"] = streak
+	}
+	meta["claudeResetCheckFailure"] = failure
 	return resets, meta
+}
+
+// claudeResetLastCheckMeta describes the last successful check: when it ran,
+// the eligibility it reported and how many resets it offered. It ignores the
+// stale window but not the sign-in: an answer fetched under another
+// organization is never described. fresh says whether the grants are still
+// listed and usable; a stale count is informational only.
+func claudeResetLastCheckMeta(cache claudeOAuthUsageCache, now time.Time, interval time.Duration, organization string) map[string]any {
+	if cache.FetchedAt == "" || len(cache.Body) == 0 {
+		return nil
+	}
+	if cache.OrganizationID != "" && organization != "" && cache.OrganizationID != organization {
+		return nil
+	}
+	var root map[string]any
+	if err := json.Unmarshal(cache.Body, &root); err != nil {
+		return nil
+	}
+	availability := parseClaudeResetAvailability(root)
+	if !availability.Reported {
+		return nil
+	}
+	count := 0
+	if availability.Eligible {
+		for _, grant := range spendableClaudeResetGrants(availability, now) {
+			count += grant.ResetsLeft
+		}
+	}
+	last := map[string]any{
+		"checkedAt":       cache.FetchedAt,
+		"eligible":        availability.Eligible,
+		"resetsAvailable": count,
+		"fresh":           claudeResetAvailabilityFresh(cache, now, interval),
+	}
+	if availability.IneligibleReason != "" {
+		last["ineligibleReason"] = availability.IneligibleReason
+	}
+	return last
 }
 
 func claudeResetsFromAvailabilityCache(path string, now time.Time, interval time.Duration) ([]UsageReset, map[string]any) {
@@ -651,14 +713,16 @@ func claudeResetNextCheckText(path string, now time.Time) string {
 	if minutes <= 1 {
 		return "it is checked again within a minute"
 	}
+	if minutes >= 120 {
+		return fmt.Sprintf("the next check is due in %d hours", (minutes+59)/60)
+	}
 	return fmt.Sprintf("the next check is due in %d minutes", minutes)
 }
 
 // refreshClaudeResetAvailability fetches the cedar_ember block under Claude
 // Code's client identity at most once per cadence. Failures keep the last
-// body for the stale window and back off for at least an hour, except a rate
-// limit asking for no wait, which is retried at quota cadence for a while
-// (claudeResetCheckQuickRetry).
+// body and back off: consecutive rate limits exponentially
+// (claudeResetRateLimitWait), anything else for at least an hour.
 func refreshClaudeResetAvailability(path string, now time.Time, interval time.Duration) error {
 	cadence := claudeResetAvailabilityCadence(interval)
 	return withUsageRefreshLock(path, func() error {
@@ -691,8 +755,12 @@ func refreshClaudeResetAvailability(path string, now time.Time, interval time.Du
 			cache.DiagnosticCategory, cache.DiagnosticHTTPStatus = classifyDiagnosticError("claude", cause)
 			cache.LastError = strings.Replace(cause.Error(), "Claude usage API", "Claude reset check", 1)
 			wait := max(cadence, backoff, claudeResetAvailabilityBackoff)
-			if retry, ok := claudeResetCheckQuickRetry(&cache, cause, now, interval); ok {
-				wait = retry
+			var limited *claudeRateLimitError
+			if errors.As(cause, &limited) {
+				wait = claudeResetRateLimitWait(&cache, limited.retryAfter, cadence, now)
+			} else {
+				cache.RateLimitedSince = ""
+				cache.RateLimitStreak = 0
 			}
 			cache.DiagnosticCooldownSeconds = int64(wait / time.Second)
 			cache.NextAttemptAt = now.Add(wait).UTC().Format(time.RFC3339Nano)
@@ -727,6 +795,7 @@ func refreshClaudeResetAvailability(path string, now time.Time, interval time.Du
 		cache.DiagnosticCooldownSeconds = 0
 		cache.Invalidated = false
 		cache.RateLimitedSince = ""
+		cache.RateLimitStreak = 0
 		if err := saveClaudeOAuthUsageCache(path, cache); err != nil {
 			return errors.New("could not save Claude reset check")
 		}
@@ -734,31 +803,37 @@ func refreshClaudeResetAvailability(path string, now time.Time, interval time.Du
 	})
 }
 
-// claudeResetCheckQuickRetry decides whether a failed check is retried at
-// quota cadence instead of the hourly backoff. The client identity is lossy:
-// the endpoint answers most requests with HTTP 429 and Retry-After 0 while
-// Claude Code sessions share its budget, and the odd attempt succeeds, so one
-// draw an hour can lose the listing for a day (ADR-0024). A 429 asking for no
-// wait longer than the retry interval is retried at that interval for one
-// window after the first consecutive 429; later ones back off for the hour.
-// Other failures keep their backoff and end the streak, as a success does,
-// so the window counts consecutive 429 answers only.
-func claudeResetCheckQuickRetry(cache *claudeOAuthUsageCache, cause error, now time.Time, interval time.Duration) (time.Duration, bool) {
-	var limited *claudeRateLimitError
-	if !errors.As(cause, &limited) {
-		cache.RateLimitedSince = ""
-		return 0, false
-	}
-	since, err := parseOptionalRefreshTime(cache.RateLimitedSince)
-	if err != nil || since.IsZero() || since.After(now) {
-		since = now
+// claudeResetRateLimitWait extends the streak of consecutive HTTP 429
+// answers and returns the wait before the next check: the hourly backoff
+// doubled per answer (1h, 2h, 4h, 8h, 16h), capped at a day, and never
+// shorter than the cadence or a longer Retry-After. The identity is budgeted
+// and shared with Claude Code sessions on the account; quick retries spent
+// that budget and may have prolonged the limit (ADR-0023). A success or any
+// other failure ends the streak.
+func claudeResetRateLimitWait(cache *claudeOAuthUsageCache, retryAfter time.Duration, cadence time.Duration, now time.Time) time.Duration {
+	streak := claudeResetRateLimitStreak(*cache) + 1
+	cache.RateLimitStreak = streak
+	if since, err := parseOptionalRefreshTime(cache.RateLimitedSince); err != nil || since.IsZero() || since.After(now) {
 		cache.RateLimitedSince = now.UTC().Format(time.RFC3339Nano)
 	}
-	retry := max(claudeResetAvailabilityRetryInterval, normalizeUsageRefreshInterval(interval))
-	if limited.retryAfter > retry || now.Sub(since) >= claudeResetAvailabilityRetryWindow {
-		return 0, false
+	wait := claudeResetAvailabilityRateLimitCap
+	if streak <= 5 {
+		wait = min(claudeResetAvailabilityBackoff<<(streak-1), claudeResetAvailabilityRateLimitCap)
 	}
-	return retry, true
+	return max(wait, cadence, min(retryAfter, claudeResetAvailabilityLongestWait))
+}
+
+// claudeResetRateLimitStreak counts the consecutive 429 answers recorded in
+// the cache. Caches written before the counter existed only record the start
+// of the streak; that counts as one answer.
+func claudeResetRateLimitStreak(cache claudeOAuthUsageCache) int {
+	if cache.RateLimitStreak > 0 {
+		return cache.RateLimitStreak
+	}
+	if cache.RateLimitedSince != "" {
+		return 1
+	}
+	return 0
 }
 
 // claudeResetAvailabilityForUse applies a stale-serve rule before a grant may
@@ -774,14 +849,22 @@ func claudeResetAvailabilityForUse(path string, now time.Time, interval time.Dur
 	if requireBinding && (cache.OrganizationID == "" || cache.OrganizationID != organization) {
 		return claudeResetAvailability{}, false
 	}
-	if cache.LastError != "" {
-		fetchedAt, err := time.Parse(time.RFC3339Nano, cache.FetchedAt)
-		if err != nil || now.Sub(fetchedAt) >= max(claudeResetAvailabilityStaleTTL, 2*claudeResetAvailabilityCadence(interval)) {
-			return claudeResetAvailability{}, false
-		}
+	if !claudeResetAvailabilityFresh(cache, now, interval) {
+		return claudeResetAvailability{}, false
 	}
 	availability, _ := claudeResetAvailabilityFromCache(path)
 	return availability, true
+}
+
+// claudeResetAvailabilityFresh is the stale rule: a body kept through failed
+// checks is trusted only within max(stale TTL, two check cadences) of its
+// fetch; a body whose last check succeeded is current.
+func claudeResetAvailabilityFresh(cache claudeOAuthUsageCache, now time.Time, interval time.Duration) bool {
+	if cache.LastError == "" {
+		return true
+	}
+	fetchedAt, err := time.Parse(time.RFC3339Nano, cache.FetchedAt)
+	return err == nil && now.Sub(fetchedAt) < max(claudeResetAvailabilityStaleTTL, 2*claudeResetAvailabilityCadence(interval))
 }
 
 func claudeResetAvailabilityFromCache(path string) (claudeResetAvailability, string) {

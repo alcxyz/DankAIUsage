@@ -94,7 +94,7 @@ remain visible in the dropdown.
   with a reset-to-default action. It paces quota polling, local history
   scans, and the check of an armed Codex reset, so long intervals can miss a
   brief expiry window. Claude limit resets are checked separately, at least
-  30 minutes apart and never closer than two intervals, because Claude
+  an hour apart and never closer than two intervals, because Claude
   rate-limits that check ([ADR-0023](adr/ADR-0023-separate-claude-reset-availability-check.md)).
   See [Refresh interval and cooldown](data-sources.md#refresh-interval-and-cooldown)
   for how the shared cooldown behaves.

@@ -99,7 +99,10 @@ assert 'running: root.claudeResetForgetConfirm' in component_text
 assert 'if (action === "use" || action === "retry") claudeResetConfirm = false' in component_text
 assert 'status.justUsed = status.requested === true' in component_text
 assert 'if (!root.claudeResetConfirm) {' in component_text
-assert 'add("Limit-reset check failed: " + provider.meta.claudeResetCheckError, "warning")' in component_text, 'a failed reset check is explained in Advanced'
+assert 'add("Limit-reset check failed: " + provider.meta.claudeResetCheckError, "warning")' in component_text, 'a sign-in rejection by the reset check is explained in Advanced'
+assert 'claudeResetCheckFailure' not in component_text.split('function providerNotices(provider)')[1].split('function claudeResetStatusLine(provider)')[0], 'other reset check failures never warn'
+assert 'text: root.claudeResetStatusLine(modelData)' in component_text
+assert 'text: root.claudeResetCheckDiagnosticLine()' in component_text.split('component DiagnosticsPanel: Column')[1], 'other reset check failures are shown in Diagnostics'
 assert 'running: root.claudeResetConfirm' in component_text
 assert 'runClaudeReset("use"' not in component_text.split('function runClaudeReset(action, grantId)')[0], 'no automatic Claude reset use before the explicit action'
 for forbidden in ('runClaudeReset("check"', 'runClaudeReset("arm"'):
@@ -612,6 +615,33 @@ equal(failedScope({stateKnown: true, state: "failed"}), false, "a failure withou
 equal(failedScope({stateKnown: true, state: "failed", justUsed: true, lastAttemptAt: "2026-09-19T10:30:00Z"}), false, "this session's old failure also expires");
 equal(failedScope({stateKnown: true, state: "used", justUsed: true, lastAttemptAt: "2026-09-19T10:30:00Z"}), true, "this session's success stays visible");
 equal(claudeVisible(false, {stateKnown: true, state: "used", justUsed: true}), true, "this session's result stays visible");
+// The last known reset status and the diagnostic line for a failed check
+// (ADR-0023). Dates go through the shared formatter.
+const statusScope = {formatShortDateTime: value => value ? "at " + value : "", providers: []};
+const statusLine = bindQmlFunction("claudeResetStatusLine", statusScope);
+equal(statusLine({id: "codex", meta: {}}), "", "only the Claude card has a reset status");
+equal(statusLine({id: "claude", meta: {}}), "Limit reset status unknown", "no successful check reads as unknown");
+equal(statusLine({id: "claude", meta: {claudeResetLastCheck: {checkedAt: "T1", eligible: false, ineligibleReason: "no_grant", resetsAvailable: 0, fresh: false}}}),
+    "No limit reset available · checked at T1", "an ineligible answer names its check time");
+equal(statusLine({id: "claude", meta: {claudeResetLastCheck: {checkedAt: "T1", eligible: true, resetsAvailable: 1, fresh: false}}}),
+    "1 limit reset available · checked at T1", "a stale grant is counted with its check time");
+equal(statusLine({id: "claude", meta: {claudeResetLastCheck: {checkedAt: "T1", eligible: true, resetsAvailable: 2, fresh: false}}}),
+    "2 limit resets available · checked at T1", "several resets are counted");
+equal(statusLine({id: "claude", meta: {claudeResetLastCheck: {checkedAt: "T1", eligible: true, resetsAvailable: 2, fresh: true}}}),
+    "", "fresh grants are left to the resets list");
+equal(statusLine({id: "claude", meta: {claudeResetLastCheck: {checkedAt: "T1", eligible: false, resetsAvailable: 0, fresh: true}}}),
+    "No limit reset available · checked at T1", "a fresh empty answer still shows its check time");
+const diagnosticLine = bindQmlFunction("claudeResetCheckDiagnosticLine", statusScope);
+equal(diagnosticLine(), "", "no providers, no diagnostic line");
+statusScope.providers = [{id: "claude", meta: {claudeResetLastCheck: {checkedAt: "T1"}}}];
+equal(diagnosticLine(), "", "a healthy check adds nothing to Diagnostics");
+statusScope.providers = [{id: "codex", meta: {}}, {id: "claude", meta: {claudeResetCheckFailure: {
+    reason: "Claude reset check rate limited (HTTP 429)", httpStatus: 429, lastSuccessAt: "T1", nextAttemptAt: "T2", rateLimitStreak: 3}}}];
+equal(diagnosticLine(), "Limit-reset check: Claude reset check rate limited (HTTP 429) · 3 rate limits in a row · last success at T1 · next attempt at T2",
+    "a rate-limited check names the streak, last success and next attempt");
+statusScope.providers = [{id: "claude", meta: {claudeResetCheckFailure: {reason: "Claude reset check returned HTTP 502", nextAttemptAt: "T2"}}}];
+equal(diagnosticLine(), "Limit-reset check: Claude reset check returned HTTP 502 · no successful check yet · next attempt at T2",
+    "a check that never succeeded says so");
 const grantScope = {providerResets: bindQmlFunction("providerResets", {}), resetClock, Date};
 const grantId = bindQmlFunction("claudeResetGrantId", grantScope);
 // The confirmation names what the chosen grant clears (ADR-0022), never a bare "limits".
