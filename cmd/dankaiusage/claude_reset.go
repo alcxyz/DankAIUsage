@@ -746,9 +746,16 @@ func refreshClaudeResetAvailability(path string, now time.Time, interval time.Du
 		// A check, its backoff and its rate-limit streak belong to one
 		// sign-in: after a switch, start afresh instead of inheriting another
 		// account's wait. That account's answer was hidden from this one anyway.
-		if organization, _ := claudeOrganizationID(); organization != "" && cache.OrganizationID != "" && cache.OrganizationID != organization {
+		organization, _ := claudeOrganizationID()
+		if organization != "" && cache.OrganizationID != "" && cache.OrganizationID != organization {
 			cache = claudeOAuthUsageCache{ClaudeVersion: cache.ClaudeVersion, OrganizationID: organization}
 			fetchedAt, nextAttemptAt = time.Time{}, time.Time{}
+		}
+		// Bind a cache without a body to the sign-in now, so a run of failed
+		// checks is that sign-in's own; a body keeps the organization it was
+		// fetched under.
+		if organization != "" && cache.OrganizationID == "" && len(cache.Body) == 0 {
+			cache.OrganizationID = organization
 		}
 		if !fetchedAt.IsZero() && fetchedAt.Add(cadence).After(nextAttemptAt) {
 			nextAttemptAt = fetchedAt.Add(cadence)
@@ -787,7 +794,7 @@ func refreshClaudeResetAvailability(path string, now time.Time, interval time.Du
 		}
 		// Read with the token, before the request, so an account switch during
 		// the fetch cannot tag this body with the next sign-in (ADR-0022).
-		organization, _ := claudeOrganizationID()
+		organization, _ = claudeOrganizationID()
 		cache.ClaudeVersion = claudeCodeVersionString(cache.ClaudeVersion)
 		body, backoff, err := fetchClaudeOAuthJSON(claudeResetAvailabilityURL, token, claudeResetClientUserAgent(cache.ClaudeVersion))
 		if err != nil {
@@ -1127,6 +1134,11 @@ func expireClaudeUsageCache(path string, now time.Time) error {
 			if existing, err := parseOptionalRefreshTime(cache.NextAttemptAt); err == nil && existing.After(next) {
 				next = existing
 			}
+		}
+		// Caches written before LastSuccessAt existed carry the reset check's
+		// last success only in FetchedAt; keep it. The quota cache ignores it.
+		if cache.LastSuccessAt == "" {
+			cache.LastSuccessAt = cache.FetchedAt
 		}
 		cache.Body = nil
 		cache.FetchedAt = ""

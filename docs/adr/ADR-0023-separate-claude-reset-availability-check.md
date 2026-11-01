@@ -59,8 +59,11 @@ had no grant.
   the streak. Other failures back off for at least an hour, honouring the
   fetch's own backoff. The streak is a property of the availability cache;
   the quota cache never sets it. The wait and the streak belong to the
-  sign-in that earned them: when the signed-in organization differs from the
-  cache's, the next summary drops that cache and checks at once.
+  sign-in that earned them: a cache without a body is bound to the signed-in
+  organization when a check is reserved, and when the signed-in organization
+  differs from the cache's, the next summary drops that cache and checks at
+  once. A used reset keeps the last success time (`lastSuccessAt`, or a
+  legacy cache's fetch time) when it drops the body.
 - A failed check keeps the last body. Its grants are listed, and `use` may
   redeem one, only within the six-hour stale window (or two check cadences if
   longer) after the fetch; a body whose last check succeeded is current.

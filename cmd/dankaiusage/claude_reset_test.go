@@ -1129,3 +1129,41 @@ func TestClaudeResetCheckKeepsLastSuccessAndScopesBackoffToSignIn(t *testing.T) 
 		t.Fatalf("the new sign-in's backoff must hold: calls=%d %v", transport.calls.Load(), err)
 	}
 }
+
+func TestClaudeResetCheckBindsFailuresAndKeepsLegacyLastSuccess(t *testing.T) {
+	transport, now := setupClaudeRefreshTest(t)
+	signIn := func(organization string) {
+		t.Helper()
+		body := `{"oauthAccount":{"organizationUuid":"` + organization + `"}}`
+		if err := os.WriteFile(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), ".claude.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := claudeResetAvailabilityCachePath()
+	// An account whose checks never succeed still owns its wait.
+	signIn("org-a")
+	transport.status = http.StatusTooManyRequests
+	if err := refreshClaudeResetAvailability(path, now, 5*time.Minute); err != nil || transport.calls.Load() != 1 {
+		t.Fatalf("first check: calls=%d %v", transport.calls.Load(), err)
+	}
+	cache, err := loadClaudeOAuthUsageCacheStrict(path)
+	if err != nil || cache.OrganizationID != "org-a" || len(cache.Body) != 0 {
+		t.Fatalf("a failed check binds an empty cache to its sign-in: %+v %v", cache, err)
+	}
+	signIn("org-b")
+	if err := refreshClaudeResetAvailability(path, now.Add(time.Minute), 5*time.Minute); err != nil || transport.calls.Load() != 2 {
+		t.Fatalf("another sign-in must not inherit that wait: calls=%d %v", transport.calls.Load(), err)
+	}
+	// A cache written before lastSuccessAt existed keeps its last success
+	// through the expiry after a used reset.
+	legacy := claudeOAuthUsageCache{Body: json.RawMessage(`{}`), FetchedAt: "2026-09-09T11:00:00Z", OrganizationID: "org-b"}
+	if err := saveClaudeOAuthUsageCache(path, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := expireClaudeUsageCache(path, now); err != nil {
+		t.Fatal(err)
+	}
+	if cache, err := loadClaudeOAuthUsageCacheStrict(path); err != nil || cache.LastSuccessAt != "2026-09-09T11:00:00Z" || cache.FetchedAt != "" {
+		t.Fatalf("legacy last success must survive expiry: %+v %v", cache, err)
+	}
+}
