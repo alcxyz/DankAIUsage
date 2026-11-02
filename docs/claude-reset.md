@@ -8,9 +8,10 @@ Code's `/limit-reset` command.
 ## In the dropdown
 
 When your account has a usable reset, the Claude card in **Advanced** lists
-it like a Codex reset: its title, expiry and countdown, with a **Use reset
-now** action under it. The first click shows what will happen, naming the
-limits the reset clears, whether it only works at a limit, and the uses left
+it like a Codex reset: its title, expiry and countdown, the limits it clears
+(for example `clears 5-hour and weekly` when a grant includes the five-hour
+window), and a **Use reset now** action under it. The first click shows what
+will happen, naming the limits, whether it only works at a limit, and the uses left
 when there is more than one; a second click within fifteen seconds sends the
 request. **Keep it** cancels. Simple mode does not mention resets.
 

@@ -47,8 +47,9 @@ constrained quota.
   color.
 - **Plugin icon:** the generic monitoring icon at the start of the pill.
 - **Quota bars instead of text** (off by default) replaces the percentages in
-  the horizontal bar with small stacked bars per provider: weekly on top, then
-  model-scoped limits. Bars follow Left / Used and turn warning or error
+  the horizontal bar with small stacked bars per provider: five-hour on top
+  when the provider reports one, then weekly and model-scoped limits. Bars
+  follow Left / Used and turn warning or error
   colored when a quota runs low, like the text, unless **Heatmap bar colors**
   is on. Claude follows the quota choices in the next group; Codex shows all
   its non-credit quotas. The Codex and Claude credit switches add a `cr`
@@ -62,8 +63,9 @@ constrained quota.
 kept while bars are off.
 
 - **Bar width:** 16 to 120 px, default 40.
-- **Left label / Right label:** none, a quota tag (`w`, or the model initial
-  such as `f` for Fable weekly; longer only when two would clash), the
+- **Left label / Right label:** none, a quota tag (`5h` or `w`, the model
+  initial such as `f` for Fable weekly, or `f5h` for a model's five-hour
+  window; longer only when two would clash), the
   reset countdown (`2h05`, `4d23h`; elapsed window time with Used), or the
   percentage. Credit bars have no reset, so the countdown slot shows their
   amount left instead (`850`, `1.2k`; the amount used with Used).
@@ -78,6 +80,9 @@ See [ADR-0021](adr/ADR-0021-top-bar-quota-bars.md).
 Which limits each provider contributes to the pill. All available quotas
 remain visible in the dropdown.
 
+- **Claude 5-hour session** (on by default) shows Claude's current five-hour
+  window. The switch appears only while Claude reports that window for the
+  account; its saved value is kept meanwhile.
 - **New Claude weekly limits by default**, and one switch per **reported
   Claude weekly limit**: **Weekly (all models)** and model-specific limits
   such as Fable. Show any combination, or none. Choices are remembered by
@@ -97,7 +102,7 @@ remain visible in the dropdown.
   an hour apart and never closer than two intervals, because Claude
   rate-limits that check ([ADR-0023](adr/ADR-0023-separate-claude-reset-availability-check.md)).
   See [Refresh interval and cooldown](data-sources.md#refresh-interval-and-cooldown)
-  for how the shared cooldown behaves.
+  for how the shared cooldown behaves. Auto-prime's checks follow it too.
 - **Refresh when the dropdown opens:** off by default. Opening the dropdown
   runs the same refresh cycle as its Refresh button, at most every 30
   seconds. Quotas are fetched only once the refresh interval has passed;
@@ -116,6 +121,9 @@ remain visible in the dropdown.
 
 Collapsed by default; expand the heading to show it.
 
+- **Claude prime:** off by default; starts Claude's five-hour window with a
+  tiny request when it is idle, and only for a Claude account that reports
+  one. It spends a little usage. See [Claude prime](data-sources.md#claude-prime).
 - **Public reset announcements (Alpha):** off by default; reads a third-party
   public feed. See
   [Public reset announcements](reset-history.md#public-reset-announcements-alpha-optional).
@@ -129,5 +137,6 @@ differs from the presets.
 
 ## Reset history filters
 
-**Scheduled weekly resets** and **Other reset events** control which categories
-the Advanced history list shows. See [Filters](reset-history.md#filters).
+**Scheduled 5-hour resets**, **Scheduled weekly resets**, and **Other reset
+events** control which categories the Advanced history list shows. See
+[Filters](reset-history.md#filters).

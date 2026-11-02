@@ -14,9 +14,10 @@ monitoring app.
 
 ## What you get
 
-- **Every limit the provider reports**, as a list of quota bars: Codex weekly
-  and model-scoped windows, Claude weekly, model-scoped, and extra-usage
-  credits. Nothing is inferred from position in a response.
+- **Every limit the provider reports**, as a list of quota bars: Codex
+  five-hour, weekly and model-scoped windows, Claude five-hour, weekly,
+  model-scoped, and extra-usage credits, each shown when the provider reports
+  it. Nothing is inferred from position in a response.
 - **Reset countdowns** inline on each row, exact time on hover, and colors
   that turn to warning at 25% and error at 10% remaining.
 - **Simple or Advanced** dropdown, remembered. Advanced adds an overview,
@@ -27,8 +28,10 @@ monitoring app.
 - **Left / Used** switch for all percentages and bars at once.
 - Optional **heatmap** bar colors, by usage or by pace, in fixed or theme colors.
 - **Opt-in automation**: a one-shot Codex reset that fires once near expiry
-  or exhaustion, off by default. The Codex control is always accessible in
-  plugin settings and appears in Advanced when a spendable reset is available.
+  or exhaustion, and Claude prime, which starts an idle five-hour window with
+  a tiny request. Both are off by default. The Codex control is always
+  accessible in plugin settings and appears in Advanced when a spendable reset
+  is available.
   Armed controls and recovery messages remain visible even with no resets.
   Arming with no eligible reset leaves the control off; it does not
   automatically use future credits.
@@ -125,7 +128,7 @@ if needed; the widget recovers on its next refresh.
 | One-shot Codex reset | [docs/codex-reset.md](docs/codex-reset.md) |
 | Claude limit resets | [docs/claude-reset.md](docs/claude-reset.md) |
 | Reset history, explaining changes, public announcements (Alpha) | [docs/reset-history.md](docs/reset-history.md) |
-| Where the numbers come from, refresh cooldown | [docs/data-sources.md](docs/data-sources.md) |
+| Where the numbers come from, refresh cooldown, Claude prime | [docs/data-sources.md](docs/data-sources.md) |
 | Troubleshooting and local diagnostics | [docs/diagnostics.md](docs/diagnostics.md) |
 | Helper CLI reference | [docs/cli.md](docs/cli.md) |
 | Similar plugins and when they fit better | [docs/similar-plugins.md](docs/similar-plugins.md) |

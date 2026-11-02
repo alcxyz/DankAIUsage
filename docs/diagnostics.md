@@ -24,8 +24,10 @@ missing values. See
 ## Local diagnostics
 
 Expand **Advanced → Diagnostics** at the bottom of the dropdown to preview
-recent failures and recoveries. **Refresh report** reads local state only; it
-does not request provider usage. **Copy report** copies exactly the preview
+recent failures and recoveries. While Claude prime is on, the section also
+shows the helper's last Claude prime answer, such as why it skipped; see
+[Claude prime](data-sources.md#claude-prime). **Refresh report** reads local
+state only; it does not request provider usage. **Copy report** copies exactly the preview
 for you to review and share in an issue. Nothing is uploaded automatically.
 The same local report is available with `dankaiusage diagnostics`.
 

@@ -11,8 +11,8 @@ and expiry. It waits until general Codex usage reaches 99%, or until ten
 minutes before that reset expires with some general allowance used in a window
 whose natural reset time is known and still in the future. It avoids the 99%
 trigger when a natural quota reset is already within ten minutes. Only the
-weekly window counts: Spark usage, or a window of another length, does not
-trigger it.
+general five-hour and weekly windows count: Spark usage, or a window of another
+length, does not trigger it.
 
 The control turns off before its single redemption attempt, including if that
 attempt fails. After an uncertain result, check Codex's usage page before

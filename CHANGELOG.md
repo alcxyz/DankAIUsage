@@ -6,6 +6,12 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Five-hour usage windows are back for plans that still have them (Claude Pro, Max and not yet verified Ultra accounts, and Codex Plus): a five-hour quota bar, the `5h` and `f5h` top-bar tags, the **Claude 5-hour session** top-bar switch, the **5h** Local tokens range and the **Scheduled 5-hour resets** history filter. Accounts without a five-hour window, such as verified Claude Ultra and Codex Pro, see no change.
+- Claude limit resets name and clear the five-hour window when a grant includes it, and the one-shot Codex reset also considers a five-hour window.
+- **Claude prime** is back as an opt-in setting that starts Claude's five-hour window with a tiny request. It now acts only when the latest usage for the signed-in account shows that window idle, never on a local timer, and the Claude card says why it is idle, such as "this account has no five-hour window".
+
 ## [2.1.1] - 2026-11-01
 
 ### Fixed

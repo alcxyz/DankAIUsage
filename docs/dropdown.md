@@ -26,17 +26,21 @@ shown. Notices under a provider card appear when something needs you, or
 reports what you just did: a refresh or sign-in failure, stale data, an
 unconfirmed reset attempt, or a limit-reset check that Claude rejected for
 the sign-in. Other failed limit-reset checks appear under Diagnostics
-instead, while the card keeps the last known reset status. Caveats that never change, such as Claude token
-totals covering local Claude Code history only, live in this guide instead.
+instead, while the card keeps the last known reset status. While Claude prime
+is on, the Claude card also shows a status line for prime, including why it is
+idle; see [Claude prime](data-sources.md#claude-prime). Caveats that never
+change, such as Claude token totals covering local Claude Code history only,
+live in this guide instead.
 The dropdown scrolls when it would otherwise exceed the screen.
 
 ## Quota bars
 
 The main display is a provider-defined list of quota bars rather than a fixed
-grid. Codex may expose its general subscription allowance as a
-weekly-only window alongside separate model-scoped limits. Claude exposes
-weekly, model-scoped, and extra-usage credit limits. Neither provider has
-five-hour windows any more, so only week-length windows appear. Missing
+grid. Codex may expose its general subscription allowance as five-hour and
+weekly windows, whichever the account reports, alongside separate model-scoped
+limits. Claude exposes five-hour, weekly, model-scoped, and extra-usage credit
+limits. A five-hour window appears only while the provider reports one for
+the account; accounts without one see only week-length windows. Missing
 buckets are omitted instead of inferred from their position in an API
 response.
 
@@ -115,11 +119,11 @@ request; the confirmation names the limits the reset clears, adds a note when
 it only works at a limit, and the number of uses left when there is more than
 one. See [Claude limit resets](claude-reset.md).
 
-### Why does Spark have its own bar?
+### Why does Spark have its own bars?
 
 Spark has [separate usage limits](https://learn.chatgpt.com/docs/agent-configuration/speed#codex-spark).
-When Codex reports a weekly Spark window, the plugin shows it as its own bar,
-independently of the general Codex allowance. These are live provider
+When Codex reports both five-hour and weekly Spark windows, the plugin shows
+both, independently of the general Codex allowance. These are live provider
 buckets, not hardcoded legacy quotas. A window disappears when the provider
 stops reporting it; identical percentages alone do not make two windows
 duplicates.
@@ -133,10 +137,11 @@ additive cache accounting. **Include cached tokens** controls combined totals,
 not this split. Large cached counts describe repeatedly processed context, not
 new text output.
 
-Click the **Local tokens** row to choose **7d**, **30d**, or **90d**
+Click the **Local tokens** row to choose **5h**, **7d**, **30d**, or **90d**
 directly. These are rolling ranges across local conversations, not
-active-conversation totals or subscription reset windows. A **5h** choice
-saved by an earlier version opens as **7d**. The configured history range
+active-conversation totals or subscription reset windows. The **5h** range is
+offered only while a provider reports a five-hour window; until one does, a
+saved 5h choice shows **7d**. The configured history range
 remains available when it differs from the presets. The selection is
 remembered and does not make another provider request. The row
 supports keyboard activation and shows unavailable or partial collection
@@ -188,7 +193,8 @@ scope and checkpoint policy.
 
 ## Top bar
 
-The top bar uses provider logos. Claude's weekly and extra-usage credit values
+The top bar uses provider logos. Claude's five-hour session (shown in settings
+only while Claude reports that window), weekly and extra-usage credit values
 can each be enabled independently in plugin settings, and the Codex prepaid
 credit balance has its own switch; these choices do not remove any quota bars
 from the dropdown. Compact mode retains one selected quota for each enabled

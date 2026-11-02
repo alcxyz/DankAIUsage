@@ -23,7 +23,11 @@ dankaiusage version
 ```
 
 `summary` is the command the widget polls. Provider diagnostics appear under
-`meta`.
+`meta`. `--session-hours N` (default 5) sets the length of the `session` token
+totals. The five-hour fields (`sessionLeft`, `session`, `rolling.fiveHours`,
+`extraLimits[].sessionLeft`, and the `general-5-hour` and `<id>-5-hour`
+buckets) appear only when a provider reports a five-hour window; the token
+totals then cover every provider.
 
 ## Tracking
 
@@ -76,3 +80,25 @@ dankaiusage diagnostics
 `diagnostics` prints the same local-only report as the dropdown. See
 [Reset history](reset-history.md) and
 [Troubleshooting and diagnostics](diagnostics.md).
+
+## Claude prime
+
+```sh
+dankaiusage claude-prime [--refresh-interval N] [--model M] [--prompt P] [--timeout-seconds N] [--pretty]
+```
+
+`claude-prime` starts Claude's five-hour window with one tiny request when it
+is idle, using the same rules as the widget's **Claude prime** setting. It
+decides only from the usage response the quota poll saved, and prints one JSON
+object: `ok`, `primed`, `reason`, `message`, `checkedAt`, `primedAt` and
+`sessionLeft`. `primed` is true only when a request was sent. The `reason`
+values are `primed`, `usage_unknown`, `usage_error`, `usage_stale`,
+`sign_in_mismatch`, `awaiting_usage`, `prime_unconfirmed`, `no_five_hour_window` and
+`window_running`; every reason other than `primed` is a skip that costs nothing.
+The command exits 1 only when the request failed or the local state cannot be
+used. See [Claude prime](data-sources.md#claude-prime).
+
+`dankaiusage claude-statusline` does nothing: it reads and discards its input
+and prints nothing, so an old Claude Code `statusLine.command` that still runs
+it shows a blank line rather than an error. See
+[Where the numbers come from](data-sources.md#where-the-numbers-come-from).
