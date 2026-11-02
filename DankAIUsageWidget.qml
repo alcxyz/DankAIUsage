@@ -95,6 +95,7 @@ PluginComponent {
     property string _trackingOutput: ""
     property string trackingCommandError: ""
     property bool clearTrackingConfirm: false
+    property bool enableClaudePrime: false
 
     property bool isLoading: true
     property bool hasError: false
@@ -117,6 +118,12 @@ PluginComponent {
     property var capabilities: ({})
     property string _pendingOutput: ""
     property bool _usageRefreshPending: false
+    property string _claudePrimeOutput: ""
+    property string _claudePrimeError: ""
+    // The helper's last prime answer ({reason, message, checkedAt, primed}),
+    // kept across restarts for the Diagnostics line.
+    property var claudePrimeLast: ({})
+    property double lastClaudeAutoPrimeAt: 0
     property var codexResetStatus: ({ armed: false, stateKnown: false, message: "Checking reset control..." })
     property bool codexResetReady: false
     property string _codexResetOutput: ""
@@ -204,6 +211,7 @@ PluginComponent {
         barUsageColors = pluginService.loadPluginData(pluginId, "barUsageColors", false) === true
         heatmapPalette = pluginService.loadPluginData(pluginId, "heatmapPalette", "fixed") === "theme" ? "theme" : "fixed"
         heatmapBasis = pluginService.loadPluginData(pluginId, "heatmapBasis", "usage") === "pace" ? "pace" : "usage"
+        enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
     }
 
     function loadCache() {
@@ -224,7 +232,11 @@ PluginComponent {
             tokenHistoryRange = migratedPeriodRange(periodDays)
         }
         preferredTokenHistoryRange = tokenHistoryRange
-        if (cached && cached.providers) applySummary(cached)
+        lastClaudeAutoPrimeAt = pluginService.loadPluginState(pluginId, "lastClaudeAutoPrimeAt", 0) || 0
+        var primeLast = pluginService.loadPluginState(pluginId, "claudePrimeLast", {})
+        claudePrimeLast = primeLast && typeof primeLast === "object" && !Array.isArray(primeLast) ? primeLast : {}
+        // A cached summary may be old: it is shown, but never primes.
+        if (cached && cached.providers) applySummary(cached, false)
     }
 
     function resolveDropdownMode(savedMode, cachedSummary) {
@@ -733,6 +745,114 @@ PluginComponent {
                 + (grant && grant.resetsLeft > 1 ? "\n" + grant.resetsLeft + " uses of this reset left." : "")
     }
 
+    // Claude prime (ADR-0028). The helper decides from the latest usage
+    // response and skips unless it reports a five-hour window that is not
+    // running; the widget asks only when its own summary says the same.
+    function primeClaude(automatic) {
+        if (!enableClaudePrime || claudePrimeProcess.running) return
+        _claudePrimeOutput = ""
+        _claudePrimeError = ""
+        if (automatic === true) {
+            lastClaudeAutoPrimeAt = Date.now()
+            if (pluginService && pluginService.savePluginState)
+                pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeAt", lastClaudeAutoPrimeAt)
+        }
+        claudePrimeProcess.command = [
+            "dankaiusage", "claude-prime",
+            "--refresh-interval", "" + root.refreshInterval
+        ]
+        claudePrimeProcess.running = true
+    }
+
+    function claudeProviderData() {
+        for (var i = 0; i < providers.length; i++) {
+            if (providers[i] && providers[i].id === "claude") return providers[i]
+        }
+        return null
+    }
+
+    // Why prime has nothing to do right now, from the summary alone; "" when
+    // the five-hour window is idle and the helper may be asked.
+    function claudePrimeIdleReason(provider) {
+        if (!provider || !provider.available) return "Claude usage unavailable"
+        var meta = provider.meta || {}
+        if (meta.limitError || meta.usageDataStale === true || meta.usageStale === true || meta.usageRefreshPending === true)
+            return "Claude usage unavailable or out of date"
+        var session = provider.sessionLeft
+        if (!session || session.known !== true) return "this account has no five-hour window"
+        var resetAt = Date.parse(session.resetAt || "")
+        // A window resetting even a moment from now still runs; reset times
+        // are whole seconds, so allow the rest of that second as the helper does.
+        if (isFinite(resetAt) && resetAt + 1000 > Date.now()) return "five-hour window running"
+        // The helper waits five hours after a prime that no usage response
+        // showed starting a window (prime_unconfirmed); say so instead of
+        // offering a prime it would refuse.
+        var last = claudePrimeLast || {}
+        var primedAt = Date.parse(last.primedAt || "")
+        if (last.reason === "prime_unconfirmed" && isFinite(primedAt) && Date.now() < primedAt + 5 * 3600000)
+            return "the last prime started no window; retrying " + formatShortDateTime(new Date(primedAt + 5 * 3600000).toISOString())
+        return ""
+    }
+
+    function maybeAutoPrimeClaude() {
+        if (!enableClaudePrime || !showClaude || claudePrimeProcess.running) return
+        if (claudePrimeIdleReason(claudeProviderData()) !== "") return
+        // One helper check per refresh interval at most; the helper itself also
+        // waits for a usage response newer than its last prime.
+        if (lastClaudeAutoPrimeAt > 0 && Date.now() < lastClaudeAutoPrimeAt + refreshInterval * 1000) return
+        primeClaude(true)
+    }
+
+    // Shown under the Claude card while prime is on, and in Simple mode.
+    function claudePrimeStatusLine() {
+        if (!enableClaudePrime) return ""
+        if (claudePrimeProcess.running) return "Claude prime: starting the five-hour window…"
+        var reason = claudePrimeIdleReason(claudeProviderData())
+        if (reason === "this account has no five-hour window") return "Claude prime is on · idle: this account has no five-hour window"
+        if (reason !== "") return "Claude prime is on · idle: " + reason
+        return "Claude prime is on · starts the five-hour window when it is idle"
+    }
+
+    // The helper's last answer for Advanced → Diagnostics.
+    function claudePrimeDiagnosticLine() {
+        if (!enableClaudePrime || !claudePrimeLast || !claudePrimeLast.message) return ""
+        var parts = ["Claude prime: " + claudePrimeLast.message]
+        var checked = formatShortDateTime(claudePrimeLast.checkedAt)
+        if (checked !== "") parts.push("checked " + checked)
+        var primed = formatShortDateTime(claudePrimeLast.primedAt)
+        if (primed !== "") parts.push("last prime " + primed)
+        return parts.join(" · ")
+    }
+
+    Process {
+        id: claudePrimeProcess
+        running: false
+        stdout: SplitParser {
+            onRead: data => { root._claudePrimeOutput += data + "\n" }
+        }
+        stderr: SplitParser {
+            onRead: data => { root._claudePrimeError += data + "\n" }
+        }
+        onExited: (exitCode, exitStatus) => {
+            var result = null
+            try {
+                result = JSON.parse(root._claudePrimeOutput.trim())
+            } catch (e) {
+                result = null
+            }
+            if (!result || typeof result !== "object")
+                result = { message: root._claudePrimeError.trim() || "Claude prime failed", reason: "helper_failed" }
+            root.claudePrimeLast = {
+                message: result.message || "", reason: result.reason || "",
+                checkedAt: result.checkedAt || new Date().toISOString(), primedAt: result.primedAt || "",
+                primed: result.primed === true, ok: exitCode === 0
+            }
+            if (root.pluginService && root.pluginService.savePluginState)
+                root.pluginService.savePluginState(root.pluginId, "claudePrimeLast", root.claudePrimeLast)
+            // A sent prime shows after the next usage refresh, at its usual time.
+        }
+    }
+
     Process {
         id: usageProcess
         running: false
@@ -756,7 +876,7 @@ PluginComponent {
             }
             try {
                 var summary = JSON.parse(root._pendingOutput.trim())
-                root.applySummary(summary)
+                root.applySummary(summary, true)
                 root.notifyHistoryUpdates()
                 if (root.pluginService && root.pluginService.savePluginState) {
                     // Keep the bounded helper history in one store, not in the DMS cache too.
@@ -1450,7 +1570,7 @@ PluginComponent {
         }
     }
 
-    function applySummary(summary) {
+    function applySummary(summary, allowAutoPrime) {
         resetClock = Date.now()
         capabilities = summary.capabilities || {}
         providers = summary.providers || []
@@ -1467,6 +1587,7 @@ PluginComponent {
         // window. Show 7d meanwhile and return to a chosen 5h with the window.
         if (preferredTokenHistoryRange === "5h")
             tokenHistoryRange = fiveHourTokensAvailable() ? "5h" : "7d"
+        if (allowAutoPrime === true) maybeAutoPrimeClaude()
     }
 
     function visibleProviders() {
@@ -3271,6 +3392,18 @@ PluginComponent {
                                                 elide: Text.ElideRight
                                                 maximumLineCount: 1
                                             }
+
+                                            DankActionButton {
+                                                buttonSize: 24
+                                                iconName: claudePrimeProcess.running ? "hourglass_top" : "bolt"
+                                                iconColor: claudePrimeProcess.running ? Theme.surfaceVariantText : Theme.primary
+                                                tooltipText: claudePrimeProcess.running ? "Starting the Claude five-hour window…" : "Start the Claude five-hour window now"
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                visible: root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime
+                                                         && root.claudePrimeIdleReason(modelData) === ""
+                                                enabled: !claudePrimeProcess.running
+                                                onClicked: root.primeClaude(false)
+                                            }
                                         }
                                     }
 
@@ -3440,6 +3573,16 @@ PluginComponent {
                                         elide: Text.ElideRight
                                         maximumLineCount: 1
                                         visible: root.advancedDropdown && modelData.id === "claude" && text !== ""
+                                    }
+
+                                    StyledText {
+                                        width: parent.width
+                                        text: root.claudePrimeStatusLine()
+                                        textFormat: Text.PlainText
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                        wrapMode: Text.WordWrap
+                                        visible: modelData.id === "claude" && text !== ""
                                     }
 
                                     Column {
@@ -3872,6 +4015,16 @@ PluginComponent {
 
     component DiagnosticsPanel: Column {
         spacing: Theme.spacingS
+
+        StyledText {
+            width: parent.width
+            text: root.claudePrimeDiagnosticLine()
+            textFormat: Text.PlainText
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceVariantText
+            visible: text !== ""
+        }
 
         StyledText {
             width: parent.width

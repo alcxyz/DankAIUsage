@@ -774,6 +774,13 @@ PluginSettings {
         expanded: false
 
         ToggleSetting {
+            settingKey: "enableClaudePrime"
+            label: "Claude prime"
+            description: "Starts Claude's five-hour window with a tiny request when it is idle, so it runs while you are away. Only acts when Claude reports a five-hour window for this account; uses a little usage."
+            defaultValue: false
+        }
+
+        ToggleSetting {
             settingKey: "publicResetAnnouncements"
             label: "Public reset announcements (Alpha)"
             description: "Experimental third-party reports via TokenResets; not guarantees for your account. The feed host sees your IP address; no account data is sent."

@@ -77,7 +77,9 @@ for screenshot in ("docs/screenshot.png", "docs/screenshot-simple.png", "docs/sc
 # or an implicit side effect of collecting usage.
 assert 'armed: false' in component_text
 assert '"dankaiusage", "codex-reset", action,' in component_text
-assert component_text.count('"--refresh-interval", "" + root.refreshInterval') == 3
+# Codex reset, usage summary, Claude prime and Claude reset each pass the
+# refresh interval; the Claude reset argv is checked exactly below.
+assert component_text.count('"--refresh-interval", "" + root.refreshInterval') == 4
 # Claude limit resets are used only through an explicit, confirmed action
 # (ADR-0022); the widget never redeems one on its own.
 assert 'var command = ["dankaiusage", "claude-reset", action, "--refresh-interval", "" + root.refreshInterval]' in component_text
@@ -279,7 +281,7 @@ assert 'readonly property bool advancedDropdown: dropdownMode === "advanced"' in
 load_cache = function_body("loadCache")
 resolve_at = load_cache.index("resolveDropdownMode(")
 persist_at = load_cache.index('savePluginState(pluginId, "dropdownMode", dropdownMode)')
-summary_at = load_cache.index("applySummary(cached)")
+summary_at = load_cache.index("applySummary(cached, false)")
 assert resolve_at < persist_at < summary_at, "dropdown migration must persist before cached summary refresh"
 
 completed = re.search(r"Component\.onCompleted\s*:\s*\{([^}]*)\}", component, re.S)
@@ -290,7 +292,7 @@ setter = function_body("setDropdownMode")
 assert 'mode !== "simple" && mode !== "advanced"' in setter
 assert 'savePluginState(pluginId, "dropdownMode", mode)' in setter
 assert "clearTrackingConfirm = false" in setter
-for forbidden in ("setQuickSetting", "runTracking", "runCodexReset", ".running", "barShow"):
+for forbidden in ("setQuickSetting", "runTracking", "runCodexReset", "primeClaude", ".running", "barShow"):
     assert forbidden not in setter, f"mode setter must not perform backend/setting action: {forbidden}"
 
 # Advanced-only detail is explicitly gated, while quota and warning rows remain
@@ -463,9 +465,9 @@ equal(sectionResets, 1, "closing still resets history and announcement paginatio
 if (!/function refreshOnPopoutOpen\(\) \{[^}]*refreshCycle\(\)/.test(qml))
     throw new Error("open refresh must use refreshCycle so armed reset checks keep their order");
 
-// Claude prime and the statusline fallback are gone from the widget and settings.
-for (const retired of ["claude-prime", "primeClaude", "enableClaudePrime", "claudePrimeProcess",
-    "lastClaudeAutoPrime", "statusline", "claudeSessionIsActive"]) {
+// The statusline fallback and its session probe stay retired; Claude prime is
+// back and covered by tests/claude-prime-ui.test.cjs.
+for (const retired of ["statusline", "claudeSessionIsActive"]) {
     if (qml.includes(retired)) throw new Error(`widget still references ${retired}`);
     if (settingsQml.includes(retired)) throw new Error(`settings still reference ${retired}`);
 }
@@ -973,6 +975,16 @@ if command -v node >/dev/null 2>&1; then
     else
         fail "top-bar quota bars" "bar selection, colors, tags, or labels are inconsistent"
     fi
+    if node --test tests/claude-prime-ui.test.cjs; then
+        pass "Claude prime gating, idle reasons, and cached-summary loading"
+    else
+        fail "Claude prime" "auto-prime gating or idle reasons are inconsistent"
+    fi
+    if node --test tests/five-hour-range-ui.test.cjs; then
+        pass "five-hour token range availability and fallback"
+    else
+        fail "five-hour token range" "range choices or fallback are inconsistent"
+    fi
     if node --test tests/settings-ui.test.cjs; then
         pass "settings page grouping, value reload, and disclosure safety"
     else
@@ -1000,10 +1012,20 @@ assert "DankAIUsage diagnostics" in report["report"]
     else
         fail "diagnostic CLI report" "safe report unavailable"
     fi
-    if ! "$BINARY" claude-prime </dev/null >/dev/null 2>&1; then
-        pass "removed claude-prime command is rejected"
+    # Fresh home, state and config dirs and no claude CLI on PATH: there is no
+    # usage cache, so prime must exit 0 and skip without sending anything.
+    PRIME_TMP="$TEST_TMP/claude-prime"
+    mkdir -p "$PRIME_TMP/home" "$PRIME_TMP/state" "$PRIME_TMP/config" "$PRIME_TMP/bin"
+    if prime_out="$(HOME="$PRIME_TMP/home" XDG_STATE_HOME="$PRIME_TMP/state" CLAUDE_CONFIG_DIR="$PRIME_TMP/config" PATH="$PRIME_TMP/bin" "$BINARY" claude-prime </dev/null 2>/dev/null)" \
+        && printf '%s' "$prime_out" | python3 -c '
+import json, sys
+result = json.load(sys.stdin)
+assert result["primed"] is False, result
+assert result["reason"] == "usage_unknown", result
+'; then
+        pass "claude-prime without usage data skips without sending"
     else
-        fail "removed claude-prime" "command still runs"
+        fail "claude-prime" "no-usage prime did not exit 0 with usage_unknown"
     fi
     statusline_out="$(printf '{"rate_limits":{}}' | "$BINARY" claude-statusline 2>&1)" && statusline_rc=0 || statusline_rc=$?
     if [ "$statusline_rc" = 0 ] && [ -z "$statusline_out" ]; then

@@ -198,6 +198,10 @@ func main() {
 		fmt.Println(buildVersion())
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "claude-prime" {
+		runClaudePrimeCommand(os.Args[2:])
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "codex-reset" {
 		runCodexResetCommand(os.Args[2:])
 		return
@@ -387,6 +391,8 @@ func collectClaude(now time.Time, opts options, cache *transcriptParseCache) Pro
 	}
 	if limitErr != nil {
 		setProviderMeta(&provider, "limitError", limitErr.Error())
+	} else {
+		noteClaudePrimeConfirmation()
 	}
 	if resets, resetMeta := claudeResetsForSummary(now, opts.RefreshInterval); resetMeta != nil {
 		provider.Resets = resets

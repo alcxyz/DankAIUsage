@@ -243,7 +243,23 @@ test("armed Codex reset stays discoverable and only the automation group starts 
     assert.equal(collapsed.length, 1, "exactly one group starts collapsed");
     assert.match(qml.slice(collapsed[0].start, collapsed[0].end), /collapsible: true/);
     const collapsedKeys = settingControls.filter(c => c.chain.includes(collapsed[0])).map(c => c.key).sort();
-    assert.deepEqual(collapsedKeys, ["publicResetAnnouncements", "systemNotifications"]);
+    assert.deepEqual(collapsedKeys, ["enableClaudePrime", "publicResetAnnouncements", "systemNotifications"]);
+});
+
+test("the five-hour switch follows a session bucket on Claude's own provider", () => {
+    const session = {id: "session", allowance: {window: "session"}};
+    const weekly = {id: "weekly", allowance: {window: "weekly"}};
+    const reports = (summary) => {
+        const scope = {root: {loadState: (key, fallback) => key === "lastSummary" ? summary : fallback}};
+        return bindQmlFunction("claudeReportsFiveHourWindow", scope, qml)();
+    };
+    assert.equal(reports(null), false, "no summary yet");
+    assert.equal(reports({providers: [{id: "claude", quotaBuckets: [weekly]}]}), false, "weekly-only Claude account");
+    assert.equal(reports({providers: [{id: "claude", quotaBuckets: [session, weekly]}]}), true, "Claude reports a session bucket");
+    assert.equal(reports({providers: [{id: "codex", quotaBuckets: [session]}, {id: "claude", quotaBuckets: [weekly]}]}), false,
+        "another provider's session bucket does not count");
+    assert.equal(reports({providers: [{id: "claude", quotaBuckets: [{id: "session", allowance: null}]}]}), false,
+        "a session bucket without an allowance does not count");
 });
 
 test("test.sh's refresh migration extraction keeps finding the refresh-interval loadValue first", () => {

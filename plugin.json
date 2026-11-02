@@ -73,6 +73,10 @@
       "type": "boolean",
       "default": false
     },
+    "enableClaudePrime": {
+      "type": "boolean",
+      "default": false
+    },
     "includeCachedTokens": {
       "type": "boolean",
       "default": false
