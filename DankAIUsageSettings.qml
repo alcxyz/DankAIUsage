@@ -11,8 +11,8 @@ PluginSettings {
 
     readonly property var barLabelOptions: [
         { label: "None", value: "none" },
-        { label: "Quota (5h / w / model initial)", value: "tag" },
-        { label: "Reset time (amount for credits)", value: "time" },
+        { label: "Quota tag", value: "tag" },
+        { label: "Reset time", value: "time" },
         { label: "Percent", value: "percent" }
     ]
 
@@ -331,11 +331,18 @@ PluginSettings {
         }
 
         ToggleSetting {
+            settingKey: "includeCachedTokens"
+            label: "Include cached tokens"
+            description: "Count cached tokens in combined token totals"
+            defaultValue: false
+        }
+
+        ToggleSetting {
             id: heatmapToggle
 
             settingKey: "barUsageColors"
             label: "Heatmap bar colors"
-            description: "Quota bars in the top bar and dropdown shade from cool to hot instead of using the status colors. Percentages keep the status colors."
+            description: "Quota bars shade from cool to hot instead of the status colors"
             defaultValue: false
         }
 
@@ -347,7 +354,7 @@ PluginSettings {
             SelectionSetting {
                 settingKey: "heatmapPalette"
                 label: "Colors"
-                description: "Green through yellow and orange to red, or the theme's accent, warning, and error colors"
+                description: "Green to red, or the theme's accent, warning and error colors"
                 options: root.heatmapPaletteOptions
                 defaultValue: "fixed"
             }
@@ -355,17 +362,10 @@ PluginSettings {
             SelectionSetting {
                 settingKey: "heatmapBasis"
                 label: "Heat follows"
-                description: "Usage: how much of each quota is used. Pace: how fast, for the time passed in its window. Even pace is the middle color, twice even pace the hottest, and an empty quota is always the hottest."
+                description: "Usage: how much is used. Pace: how fast, for the time passed in the window."
                 options: root.heatmapBasisOptions
                 defaultValue: "usage"
             }
-        }
-
-        ToggleSetting {
-            settingKey: "includeCachedTokens"
-            label: "Include cached tokens"
-            description: "Count cached tokens in combined token totals"
-            defaultValue: false
         }
     }
 
@@ -418,7 +418,7 @@ PluginSettings {
 
             SliderSetting {
                 settingKey: "barQuotaBarWidth"
-                label: "Bar width"
+                label: "Bar width · " + value + " px"
                 description: "Width of each quota bar"
                 minimum: 16
                 maximum: 120
@@ -429,7 +429,7 @@ PluginSettings {
             SelectionSetting {
                 settingKey: "barLabelLeft"
                 label: "Left label"
-                description: "Text left of each bar"
+                description: "Quota tag (5h, w, model initial), reset time or percent; credit bars show their amount in place of a reset time"
                 options: root.barLabelOptions
                 defaultValue: "none"
             }
@@ -437,7 +437,7 @@ PluginSettings {
             SelectionSetting {
                 settingKey: "barLabelRight"
                 label: "Right label"
-                description: "Text right of each bar"
+                description: "The same choices for the other side"
                 options: root.barLabelOptions
                 defaultValue: "none"
             }
@@ -465,8 +465,8 @@ PluginSettings {
 
         ToggleSetting {
             settingKey: "barShowClaudeWeekly"
-            label: "New Claude weekly limits by default"
-            description: "Default for weekly limits without a choice below"
+            label: "New Claude weekly limits"
+            description: "Applies to each limit you have not switched individually below"
             defaultValue: true
         }
 
@@ -483,17 +483,9 @@ PluginSettings {
             Component.onCompleted: Qt.callLater(weeklyQuotaSettings.loadValue)
 
             StyledText {
-                text: "Reported Claude weekly limits"
-                font.pixelSize: Theme.fontSizeMedium
-                font.weight: Font.Medium
-                color: Theme.surfaceText
-            }
-
-            StyledText {
                 width: parent.width
-                text: root.cachedClaudeWeeklyChoices.length > 0
-                        ? "Choose each weekly limit independently. These choices come from the latest cached Claude summary."
-                        : "No weekly limits are available in the latest cached Claude summary. New limits follow the default above."
+                visible: root.cachedClaudeWeeklyChoices.length === 0
+                text: "No Claude weekly limits reported yet; they follow the switch above."
                 wrapMode: Text.WordWrap
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.surfaceVariantText
@@ -505,17 +497,19 @@ PluginSettings {
                 delegate: Row {
                     required property var modelData
 
-                    width: parent ? parent.width : 0
+                    // Indented under the default switch they refine.
+                    x: Theme.spacingL
+                    width: parent ? parent.width - Theme.spacingL : 0
                     spacing: Theme.spacingM
 
                     StyledText {
                         width: parent.width - weeklyBucketToggle.width - Theme.spacingM
                         anchors.verticalCenter: parent.verticalCenter
-                        text: modelData.id === "general-weekly"
-                                ? "Weekly (all models)" : (modelData.label || modelData.id)
+                        text: "Claude · " + (modelData.id === "general-weekly"
+                                ? "Weekly (all models)" : (modelData.label || modelData.id))
                         textFormat: Text.PlainText
                         wrapMode: Text.WordWrap
-                        font.pixelSize: Theme.fontSizeLarge
+                        font.pixelSize: Theme.fontSizeMedium
                         font.weight: Font.Medium
                         color: Theme.surfaceText
                     }
@@ -534,14 +528,14 @@ PluginSettings {
         ToggleSetting {
             settingKey: "barShowClaudeCredits"
             label: "Claude extra-use credits"
-            description: "Credit balance in the pill, or a bar in quota-bar mode"
+            description: "Balance in the pill, or a bar in quota-bar mode"
             defaultValue: false
         }
 
         ToggleSetting {
             settingKey: "barShowCodexCredits"
             label: "Codex credits"
-            description: "Credit balance in the pill, or a bar in quota-bar mode"
+            description: "Balance in the pill, or a bar in quota-bar mode"
             defaultValue: false
         }
     }
@@ -589,7 +583,7 @@ PluginSettings {
             }
 
             StyledText {
-                text: "Quota polling and local history scans. An armed Codex reset is checked at the same pace, so long intervals can miss a brief expiry window. Claude limit resets are checked separately, at most once an hour."
+                text: "Quota polls and local history scans. An armed Codex reset is checked at the same pace, so long intervals can miss a brief expiry window."
                 width: parent.width
                 wrapMode: Text.WordWrap
                 font.pixelSize: Theme.fontSizeSmall
@@ -695,7 +689,7 @@ PluginSettings {
         ToggleSetting {
             settingKey: "refreshOnOpen"
             label: "Refresh when the dropdown opens"
-            description: "Same as the Refresh button; quotas are fetched only once the refresh interval has passed"
+            description: "Like the Refresh button: quotas are fetched only once the interval has passed"
             defaultValue: false
         }
     }
@@ -708,13 +702,6 @@ PluginSettings {
 
             width: parent.width
             spacing: Theme.spacingS
-
-            StyledText {
-                text: "Codex earned reset"
-                font.pixelSize: Theme.fontSizeMedium
-                font.weight: Font.Medium
-                color: Theme.surfaceText
-            }
 
             DankToggle {
                 id: codexAutoResetToggle
@@ -777,7 +764,7 @@ PluginSettings {
             id: claudePrimeToggle
             settingKey: "claudePrimeEnabled"
             label: "Claude prime"
-            description: "Starts Claude's five-hour window with a tiny request when it is idle, so it runs while you are away. Only acts when Claude reports a five-hour window for this account; uses a little usage."
+            description: "Starts Claude's five-hour window with a tiny request when it is idle. Only on plans with a five-hour window; uses a little usage."
             defaultValue: false
         }
 
@@ -788,7 +775,7 @@ PluginSettings {
 
             SliderSetting {
                 settingKey: "claudePrimeActiveFrom"
-                label: "Active from"
+                label: "Active from · " + (value < 10 ? "0" : "") + value + ":00"
                 description: "Local hour from which prime may start a window"
                 minimum: 0
                 maximum: 23
@@ -798,8 +785,8 @@ PluginSettings {
 
             SliderSetting {
                 settingKey: "claudePrimeActiveUntil"
-                label: "Active until"
-                description: "Local hour until which prime may start a window; the same hour as Active from means all day"
+                label: "Active until · " + (value < 10 ? "0" : "") + value + ":00"
+                description: "The same hour as Active from means all day"
                 minimum: 0
                 maximum: 24
                 defaultValue: 23
@@ -808,8 +795,8 @@ PluginSettings {
 
             SliderSetting {
                 settingKey: "claudePrimeMinWeeklyLeft"
-                label: "Keep weekly headroom"
-                description: "Skip priming when less than this much of the weekly limit is left; 0 turns it off"
+                label: "Keep weekly headroom · " + (value > 0 ? value + "%" : "off")
+                description: "Skip priming when less of the weekly limit is left"
                 minimum: 0
                 maximum: 50
                 defaultValue: 10
@@ -818,8 +805,7 @@ PluginSettings {
 
             SliderSetting {
                 settingKey: "claudePrimeDailyCap"
-                label: "Most primes per day"
-                description: "Prime requests per local day"
+                label: "Most primes per day · " + value
                 minimum: 1
                 maximum: 10
                 defaultValue: 5
@@ -829,7 +815,7 @@ PluginSettings {
         ToggleSetting {
             settingKey: "publicResetAnnouncements"
             label: "Public reset announcements (Alpha)"
-            description: "Experimental third-party reports via TokenResets; not guarantees for your account. The feed host sees your IP address; no account data is sent."
+            description: "Third-party reports via TokenResets, not guarantees for your account. The feed host sees your IP address; no account data is sent."
             defaultValue: false
         }
 

@@ -13,6 +13,10 @@ as its GitHub release notes.
 - **Claude prime** is back as an opt-in setting that starts Claude's five-hour window with a tiny request. It now acts only when the latest usage for the signed-in account shows that window idle, never on a local timer, and the Claude card says why it is idle, such as "this account has no five-hour window". It starts off for everyone: if you used prime in 1.x, turn it on again.
 - **Claude prime limits** set when prime may act: active hours (default 07:00 to 23:00), a weekly headroom it keeps (default 10% left) and a daily cap (default 5 primes); the Claude card says when one of them holds prime back.
 
+### Changed
+
+- The settings page is tidier: shorter descriptions, sliders that show their value, top-bar label choices that fit ("Quota tag", "Reset time", "Percent"), Claude's reported weekly limits indented under their default switch, cached tokens before the heatmap options, and no repeated Codex reset heading.
+
 ## [2.1.1] - 2026-11-01
 
 ### Fixed

@@ -62,12 +62,12 @@ constrained quota.
 **Quota bar options** appear while quota bars are on. Their saved values are
 kept while bars are off.
 
-- **Bar width:** 16 to 120 px, default 40.
-- **Left label / Right label:** none, a quota tag (`5h` or `w`, the model
+- **Bar width:** 16 to 120 px, default 40; the current width shows beside the
+  name.
+- **Left label / Right label:** **None**, **Quota tag** (`5h` or `w`, the model
   initial such as `f` for Fable weekly, or `f5h` for a model's five-hour
-  window; longer only when two would clash), the
-  reset countdown (`2h05`, `4d23h`; elapsed window time with Used), or the
-  percentage. Credit bars have no reset, so the countdown slot shows their
+  window; longer only when two would clash), **Reset time** (`2h05`,
+  `4d23h`; elapsed window time with Used), or **Percent**. Credit bars have no reset, so the countdown slot shows their
   amount left instead (`850`, `1.2k`; the amount used with Used).
 - **Pace marker:** a tick at the even-pace point for the time passed in each
   window. With Left, fill short of the tick means you are using the quota
@@ -83,9 +83,9 @@ remain visible in the dropdown.
 - **Claude 5-hour session** (on by default) shows Claude's current five-hour
   window. The switch appears only while Claude reports that window for the
   account; its saved value is kept meanwhile.
-- **New Claude weekly limits by default**, and one switch per **reported
-  Claude weekly limit**: **Weekly (all models)** and model-specific limits
-  such as Fable. Show any combination, or none. Choices are remembered by
+- **New Claude weekly limits**, and below it one indented switch per reported
+  Claude weekly limit: **Claude · Weekly (all models)** and model-specific
+  limits such as **Claude · Fable · weekly**. Show any combination, or none. Choices are remembered by
   quota ID, including when a limit temporarily disappears. Compact mode
   selects only among enabled quotas. The weekly default applies to limits
   without an individual choice and preserves existing preferences on upgrade.
