@@ -100,6 +100,7 @@ func TestShouldConsumeCodexResetPolicy(t *testing.T) {
 	resetPast := now.Add(-time.Minute).Unix()
 	weekly := int64(10080)
 	short := int64(300)
+	month := int64(30 * 24 * 60)
 
 	tests := []struct {
 		name   string
@@ -152,27 +153,38 @@ func TestShouldConsumeCodexResetPolicy(t *testing.T) {
 			credit: codexRateLimitResetCredit{ExpiresAt: now.Add(5 * time.Minute).Unix()},
 		},
 		{
-			name: "short window at threshold is ignored",
+			name: "five-hour window at threshold",
 			limits: codexRateLimitsResult{RateLimits: codexRateLimitSnapshot{
 				LimitID:   "codex",
 				Primary:   &codexRateLimitWindow{UsedPercent: 99, WindowDurationMins: &short, ResetsAt: &resetFar},
 				Secondary: &codexRateLimitWindow{UsedPercent: 10, WindowDurationMins: &weekly, ResetsAt: &resetFar},
 			}},
 			credit: credit,
+			want:   true,
 		},
 		{
-			name: "short window usage does not spend a near-expiry credit",
+			name: "five-hour usage spends a near-expiry credit",
 			limits: codexRateLimitsResult{RateLimits: codexRateLimitSnapshot{
 				LimitID:   "codex",
 				Primary:   &codexRateLimitWindow{UsedPercent: 40, WindowDurationMins: &short, ResetsAt: &resetSoon},
 				Secondary: &codexRateLimitWindow{UsedPercent: 0, WindowDurationMins: &weekly, ResetsAt: &resetFar},
 			}},
 			credit: codexRateLimitResetCredit{ExpiresAt: now.Add(5 * time.Minute).Unix()},
+			want:   true,
 		},
 		{
-			name: "only a short window",
+			name: "window of another length at threshold is ignored",
+			limits: codexRateLimitsResult{RateLimits: codexRateLimitSnapshot{
+				LimitID:   "codex",
+				Primary:   &codexRateLimitWindow{UsedPercent: 99, WindowDurationMins: &month, ResetsAt: &resetFar},
+				Secondary: &codexRateLimitWindow{UsedPercent: 10, WindowDurationMins: &weekly, ResetsAt: &resetFar},
+			}},
+			credit: credit,
+		},
+		{
+			name: "only a window of another length",
 			limits: generalLimits(codexRateLimitWindow{
-				UsedPercent: 100, WindowDurationMins: &short, ResetsAt: &resetFar,
+				UsedPercent: 100, WindowDurationMins: &month, ResetsAt: &resetFar,
 			}),
 			credit: credit,
 		},

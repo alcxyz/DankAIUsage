@@ -30,6 +30,7 @@ PluginComponent {
     property string providerOrder: "codex"
     property bool barShowPluginIcon: false
     property bool barShowProviderLogos: true
+    property bool barShowClaudeSession: true
     property bool barShowClaudeWeekly: true
     property var barClaudeWeeklyOverrides: ({})
     property bool barShowClaudeCredits: false
@@ -46,6 +47,7 @@ PluginComponent {
     property bool barUsageColors: false
     property string heatmapPalette: "fixed"
     property string heatmapBasis: "usage"
+    property bool historyShowScheduledShort: false
     property bool historyShowOther: true
     property bool historyShowScheduledWeekly: false
     property bool historyOpen: false
@@ -75,10 +77,15 @@ PluginComponent {
     property bool _diagnosticTimedOut: false
     property string dropdownMode: "simple"
     readonly property bool advancedDropdown: dropdownMode === "advanced"
-    // loadCache() moves a retired range (the former 5h choice or the older
-    // tokenHistorySession switch) to 7d. New versions persist an explicit key.
+    // tokenHistorySession is read once in loadCache() to migrate the former
+    // two-state selector. New versions persist an explicit range key. The 5h
+    // range is offered only while a provider reports a five-hour window.
     property string tokenHistoryRange: "7d"
+    // The range the user chose; tokenHistoryRange shows 7d instead of 5h
+    // while no provider reports a five-hour window.
+    property string preferredTokenHistoryRange: "7d"
     readonly property var tokenHistoryRanges: [
+        { key: "5h", label: "5h" },
         { key: "7d", label: "7d" },
         { key: "30d", label: "30d" },
         { key: "90d", label: "90d" },
@@ -153,6 +160,7 @@ PluginComponent {
         if (!pluginService || !pluginService.loadPluginData) return
         if (pluginService.loadPluginState) {
             historyShowOther = pluginService.loadPluginState(pluginId, "historyShowOther", true) !== false
+            historyShowScheduledShort = pluginService.loadPluginState(pluginId, "historyShowScheduledShort", false) === true
             historyShowScheduledWeekly = pluginService.loadPluginState(pluginId, "historyShowScheduledWeekly", false) === true
         }
         var announcementsWereEnabled = publicResetAnnouncements
@@ -178,6 +186,7 @@ PluginComponent {
         providerOrder = pluginService.loadPluginData(pluginId, "providerOrder", "codex") === "claude" ? "claude" : "codex"
         barShowPluginIcon = pluginService.loadPluginData(pluginId, "barShowPluginIcon", false) === true
         barShowProviderLogos = pluginService.loadPluginData(pluginId, "barShowProviderLogos", true) !== false
+        barShowClaudeSession = pluginService.loadPluginData(pluginId, "barShowClaudeSession", true) !== false
         barShowClaudeWeekly = pluginService.loadPluginData(pluginId, "barShowClaudeWeekly", true) !== false
         var weeklyOverrides = pluginService.loadPluginData(pluginId, "barClaudeWeeklyOverrides", {})
         barClaudeWeeklyOverrides = weeklyOverrides && typeof weeklyOverrides === "object" && !Array.isArray(weeklyOverrides) ? weeklyOverrides : {}
@@ -209,12 +218,12 @@ PluginComponent {
         var savedRange = pluginService.loadPluginState(pluginId, "tokenHistoryRange", "") || ""
         if (isTokenHistoryRange(savedRange)) {
             tokenHistoryRange = savedRange
-        } else if (savedRange === "5h" || pluginService.loadPluginState(pluginId, "tokenHistorySession", false) === true) {
-            // Providers dropped their five-hour windows, and the range with them.
-            tokenHistoryRange = "7d"
+        } else if (pluginService.loadPluginState(pluginId, "tokenHistorySession", false) === true) {
+            tokenHistoryRange = "5h"
         } else {
             tokenHistoryRange = migratedPeriodRange(periodDays)
         }
+        preferredTokenHistoryRange = tokenHistoryRange
         if (cached && cached.providers) applySummary(cached)
     }
 
@@ -699,7 +708,7 @@ PluginComponent {
         return null
     }
 
-    // "weekly and Opus" taken from the helper's reset description, so the
+    // "5-hour and weekly" taken from the helper's reset description, so the
     // names match the rest of the UI; "" when the helper reported none.
     function claudeResetClearsText(provider, grantId) {
         var resets = providerResets(provider)
@@ -1454,6 +1463,10 @@ PluginComponent {
 
         var d = new Date(summary.generatedAt || Date.now())
         lastUpdated = d.toLocaleTimeString(Qt.locale(), Locale.ShortFormat)
+        // The 5h range exists only while a provider reports a five-hour
+        // window. Show 7d meanwhile and return to a chosen 5h with the window.
+        if (preferredTokenHistoryRange === "5h")
+            tokenHistoryRange = fiveHourTokensAvailable() ? "5h" : "7d"
     }
 
     function visibleProviders() {
@@ -1472,16 +1485,14 @@ PluginComponent {
         if (!event) return false
         if (event.kind !== "scheduled_window") return historyShowOther
         var bucket = typeof event.bucket === "string" ? event.bucket : ""
+        if (bucket.endsWith("-5-hour")) return historyShowScheduledShort
         if (bucket.endsWith("-weekly")) return historyShowScheduledWeekly
-        // Stored routine resets of the retired five-hour window stay hidden,
-        // as they were by default.
-        if (bucket.endsWith("-5-hour")) return false
         // Unknown windows belong to Other; never guess from dates or labels.
         return historyShowOther
     }
 
     function setHistoryFilter(key, checked) {
-        if (key !== "historyShowOther" && key !== "historyShowScheduledWeekly") return
+        if (key !== "historyShowOther" && key !== "historyShowScheduledShort" && key !== "historyShowScheduledWeekly") return
         root[key] = checked === true
         if (pluginService && pluginService.savePluginState)
             pluginService.savePluginState(pluginId, key, root[key])
@@ -1700,6 +1711,7 @@ PluginComponent {
     // Start of the selected token range; Tracked starts when tracking began.
     function tokenRangeStartMs(now) {
         var day = 86400000
+        if (tokenHistoryRange === "5h") return now - 5 * 3600000
         if (tokenHistoryRange === "7d") return now - 7 * day
         if (tokenHistoryRange === "30d") return now - 30 * day
         if (tokenHistoryRange === "90d") return now - 90 * day
@@ -1986,6 +1998,7 @@ PluginComponent {
     function claudeBucketShownInBar(bucket) {
         if (!bucket) return false
         if (bucket.kind === "credits") return barShowClaudeCredits
+        if (bucket.allowance && bucket.allowance.window === "session") return barShowClaudeSession
         if (bucket.allowance && bucket.allowance.window === "weekly") {
             var selected = barClaudeWeeklyOverrides[bucket.id]
             return typeof selected === "boolean" ? selected : barShowClaudeWeekly
@@ -2138,6 +2151,7 @@ PluginComponent {
         if (meta.tokenDataAvailable === false) return false
         if (meta.tokenDataAvailable === true) return true
         return !meta.tokenDataError || (provider.period && provider.period.requests > 0)
+                || (provider.session && provider.session.requests > 0)
     }
 
     function isTokenHistoryRange(value) {
@@ -2153,8 +2167,20 @@ PluginComponent {
         return "period"
     }
 
+    // The helper adds five-hour token totals only while a provider reports a
+    // five-hour window (ADR-0027).
+    function fiveHourTokensAvailable() {
+        for (var i = 0; i < providers.length; i++) {
+            if (providers[i] && providers[i].rolling && providers[i].rolling.fiveHours) return true
+        }
+        return false
+    }
+
     function tokenHistoryRangeChoices() {
-        var choices = tokenHistoryRanges.slice(0)
+        var choices = []
+        for (var i = 0; i < tokenHistoryRanges.length; i++) {
+            if (tokenHistoryRanges[i].key !== "5h" || fiveHourTokensAvailable()) choices.push(tokenHistoryRanges[i])
+        }
         if (periodDays !== 7 && periodDays !== 30 && periodDays !== 90)
             choices.splice(choices.length - 1, 0, { key: "period", label: periodDays + "d" })
         return choices
@@ -2167,9 +2193,12 @@ PluginComponent {
             return trackedProviders[provider.id] || null
         }
         var rolling = provider.rolling || {}
+        if (tokenHistoryRange === "5h" && rolling.fiveHours) return rolling.fiveHours
         if (tokenHistoryRange === "7d" && rolling.sevenDays) return rolling.sevenDays
         if (tokenHistoryRange === "30d" && rolling.thirtyDays) return rolling.thirtyDays
         if (tokenHistoryRange === "90d" && rolling.ninetyDays) return rolling.ninetyDays
+        // Compatibility while cached summaries migrate to rolling totals.
+        if (tokenHistoryRange === "5h") return provider.session
         if (tokenHistoryRange === "period") return provider.period
         return null
     }
@@ -2181,8 +2210,10 @@ PluginComponent {
 
     function selectTokenHistoryRange(range) {
         if (!isTokenHistoryRange(range)) return
+        if (range === "5h" && !fiveHourTokensAvailable()) return
         clearTrackingConfirm = false
         tokenHistoryRange = range
+        preferredTokenHistoryRange = range
         if (pluginService && pluginService.savePluginState)
             pluginService.savePluginState(pluginId, "tokenHistoryRange", tokenHistoryRange)
     }
@@ -2345,7 +2376,7 @@ PluginComponent {
         return barUsageColors ? heatmapColor(allowance) : allowanceColor(allowance)
     }
 
-    // Quotas in helper order (weekly, model-scoped). Claude still
+    // Quotas in helper order (5-hour, weekly, model-scoped). Claude still
     // honours the per-quota top-bar choices. Credits join when their switch
     // is on and they have a bar: a spend limit or a top-up ledger (ADR-0025).
     function providerBarBuckets(provider) {
@@ -2420,18 +2451,32 @@ PluginComponent {
         return scaled(value, "")
     }
 
-    // One tag per bucket: the general weekly quota is w, credits cr, and
-    // model-scoped weekly quotas the model initial (f). Clashing scoped tags
-    // use more of the model name (fa, fo).
+    // Window tag from its length: 5h, 1d, w (six days or longer).
+    function barWindowTag(allowance) {
+        var minutes = allowance ? allowance.windowMinutes : 0
+        if (typeof minutes === "number" && isFinite(minutes) && minutes > 0) {
+            if (minutes >= 6 * 1440) return "w"
+            if (minutes % 1440 === 0) return (minutes / 1440) + "d"
+            if (minutes % 60 === 0) return (minutes / 60) + "h"
+            return Math.round(minutes) + "m"
+        }
+        if (allowance && allowance.window === "weekly") return "w"
+        return allowance && allowance.window === "session" ? "s" : "?"
+    }
+
+    // One tag per bucket: general quotas by window (5h, w), model-scoped
+    // quotas by the model initial, plus the window unless weekly (f, f5h).
+    // Clashing scoped tags use more of the model name (fa, fo).
     function barQuotaTags(buckets) {
         var prefix = []
         for (var i = 0; i < buckets.length; i++) prefix.push(1)
         function tagAt(k) {
             var bucket = buckets[k]
             if (bucket && bucket.kind === "credits") return "cr"
-            if (!bucket || bucket.kind !== "scoped") return "w"
+            var window = barWindowTag(bucket ? bucket.allowance : null)
+            if (!bucket || bucket.kind !== "scoped") return window
             var name = (bucket.label || "").split("·")[0].replace(/\s+/g, "").toLowerCase() || "?"
-            return name.slice(0, prefix[k])
+            return name.slice(0, prefix[k]) + (window === "w" ? "" : window)
         }
         while (true) {
             var tags = []
@@ -3562,6 +3607,11 @@ PluginComponent {
                                     text: "Other reset events"
                                     checked: root.historyShowOther
                                     onClicked: root.setHistoryFilter("historyShowOther", checked)
+                                }
+                                HistoryCheckbox {
+                                    text: "Scheduled 5-hour resets"
+                                    checked: root.historyShowScheduledShort
+                                    onClicked: root.setHistoryFilter("historyShowScheduledShort", checked)
                                 }
                                 HistoryCheckbox {
                                     text: "Scheduled weekly resets"

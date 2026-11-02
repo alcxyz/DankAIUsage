@@ -11,7 +11,7 @@ PluginSettings {
 
     readonly property var barLabelOptions: [
         { label: "None", value: "none" },
-        { label: "Quota (w / model initial)", value: "tag" },
+        { label: "Quota (5h / w / model initial)", value: "tag" },
         { label: "Reset time (amount for credits)", value: "time" },
         { label: "Percent", value: "percent" }
     ]
@@ -34,6 +34,7 @@ PluginSettings {
     property var barClaudeWeeklyOverrides: ({})
     property bool barShowClaudeWeeklyValue: true
     property var cachedClaudeWeeklyChoices: []
+    property bool claudeFiveHourReported: false
     property var codexResetStatus: ({ armed: false, stateKnown: false, message: "Checking reset control..." })
     property bool codexResetReady: false
     property string _codexResetOutput: ""
@@ -129,6 +130,23 @@ PluginSettings {
         var saved = root.loadValue("barClaudeWeeklyOverrides", {})
         barClaudeWeeklyOverrides = saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {}
         cachedClaudeWeeklyChoices = claudeWeeklyBarChoices()
+        claudeFiveHourReported = claudeReportsFiveHourWindow()
+    }
+
+    // The 5-hour switch only matters while Claude reports a five-hour window
+    // for this account; the saved value is kept either way.
+    function claudeReportsFiveHourWindow() {
+        var summary = root.loadState("lastSummary", null)
+        var providers = summary && Array.isArray(summary.providers) ? summary.providers : []
+        for (var i = 0; i < providers.length; i++) {
+            if (!providers[i] || providers[i].id !== "claude") continue
+            var buckets = Array.isArray(providers[i].quotaBuckets) ? providers[i].quotaBuckets : []
+            for (var j = 0; j < buckets.length; j++) {
+                if (buckets[j] && buckets[j].allowance && buckets[j].allowance.window === "session") return true
+            }
+            return false
+        }
+        return false
     }
 
     function claudeBucketShownInBar(bucket) {
@@ -150,8 +168,10 @@ PluginSettings {
         enabled: root.pluginService !== null
 
         function onPluginStateChanged(changedPluginId) {
-            if (changedPluginId === root.pluginId)
+            if (changedPluginId === root.pluginId) {
                 root.cachedClaudeWeeklyChoices = root.claudeWeeklyBarChoices()
+                root.claudeFiveHourReported = root.claudeReportsFiveHourWindow()
+            }
         }
     }
 
@@ -434,6 +454,14 @@ PluginSettings {
     SettingsGroup {
         title: "Quotas in the top bar"
         summary: "Which limits each provider contributes to the pill. The dropdown always lists every quota."
+
+        ToggleSetting {
+            settingKey: "barShowClaudeSession"
+            label: "Claude 5-hour session"
+            description: "Claude's current five-hour window"
+            defaultValue: true
+            visible: root.claudeFiveHourReported
+        }
 
         ToggleSetting {
             settingKey: "barShowClaudeWeekly"

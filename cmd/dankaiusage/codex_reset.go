@@ -508,11 +508,11 @@ func shouldConsumeCodexReset(limits codexRateLimitsResult, credit codexRateLimit
 	if !ok {
 		return false, "Waiting for the general Codex allowance"
 	}
-	// Only the weekly window counts, as in the summary: a window of another
-	// length is ignored and must not spend a reset.
+	// Only the five-hour and weekly windows count, as in the summary: a
+	// window of another length is ignored and must not spend a reset.
 	var windows []*codexRateLimitWindow
 	for _, window := range []*codexRateLimitWindow{snapshot.Primary, snapshot.Secondary} {
-		if window != nil && codexWeeklyWindow(window) {
+		if window != nil && codexWindowKind(window) != "" {
 			windows = append(windows, window)
 		}
 	}

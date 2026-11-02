@@ -202,6 +202,10 @@ test("quota bar options follow the bar mode toggle without touching values", () 
         const control = settingControls.find(c => c.key === key);
         assert.doesNotMatch(spanText(control.chain[0]), /visible:/, `${key} keeps its saved value visible in both bar modes`);
     }
+    // The 5-hour switch shows in both bar modes, but only while Claude
+    // reports a five-hour window.
+    const session = settingControls.find(c => c.key === "barShowClaudeSession");
+    assert.match(spanText(session.chain[0]), /visible: root\.claudeFiveHourReported\n/);
 });
 
 test("heatmap options follow the shared heatmap toggle in Display", () => {

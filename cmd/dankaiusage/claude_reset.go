@@ -59,10 +59,10 @@ var (
 	claudeResetGrantIDPattern   = regexp.MustCompile(`^[a-z0-9_-]{1,40}$`)
 	claudeResetRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 	claudeOrganizationIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-	// Limit kinds a reset may name. Anything else, including the retired
-	// five_hour window, is dropped, so it never shows in a description.
+	// Limit kinds a reset may name. Anything else is dropped, so it never
+	// shows in a description.
 	claudeResetLimitKinds = []string{
-		"seven_day", "seven_day_overage_included", "seven_day_opus",
+		"five_hour", "seven_day", "seven_day_overage_included", "seven_day_opus",
 		"seven_day_sonnet", "seven_day_cowork", "seven_day_omelette", "seven_day_oauth_apps",
 	}
 )
@@ -995,12 +995,14 @@ func claudeResetClearedSuffix(cleared []string) string {
 	var names []string
 	for _, kind := range cleared {
 		switch kind {
+		case "five_hour":
+			names = append(names, "5-hour")
 		case "seven_day":
 			names = append(names, "weekly")
 		case "seven_day_overage_included":
 			continue
 		default:
-			// Only weekly kinds are named; a retired five_hour entry is skipped.
+			// Only the five-hour and weekly kinds are named.
 			if !strings.HasPrefix(kind, "seven_day_") {
 				continue
 			}

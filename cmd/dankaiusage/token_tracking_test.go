@@ -21,7 +21,10 @@ func TestApplyEventsExplicitRollingRanges(t *testing.T) {
 		{Provider: "codex", Timestamp: now.AddDate(0, 0, -89), Session: "d", Input: 8},
 		{Provider: "codex", Timestamp: now.AddDate(0, 0, -91), Session: "e", Input: 16},
 	}
-	applyEvents(&provider, events, now, options{PeriodDays: 13})
+	applyEvents(&provider, events, now, options{PeriodDays: 13, SessionHours: 9})
+	if provider.fiveHourTotals.Total != 1 || provider.fiveHourTotals.Sessions != 1 {
+		t.Fatalf("five hours = %+v", provider.fiveHourTotals)
+	}
 	if provider.Rolling.SevenDays.Total != 3 || provider.Rolling.SevenDays.Sessions != 2 {
 		t.Fatalf("seven days = %+v", provider.Rolling.SevenDays)
 	}
@@ -31,8 +34,8 @@ func TestApplyEventsExplicitRollingRanges(t *testing.T) {
 	if provider.Rolling.NinetyDays.Total != 15 || provider.Rolling.NinetyDays.Sessions != 4 {
 		t.Fatalf("ninety days = %+v", provider.Rolling.NinetyDays)
 	}
-	if provider.Period.Total != 3 {
-		t.Fatalf("configured period changed: period=%+v", provider.Period)
+	if provider.sessionTotals.Total != 1 || provider.Period.Total != 3 {
+		t.Fatalf("configured compatibility ranges changed: session=%+v period=%+v", provider.sessionTotals, provider.Period)
 	}
 }
 
@@ -174,9 +177,9 @@ func TestClaudeRollingRangesDeduplicateStreamRevisions(t *testing.T) {
 		t.Fatalf("normalized = %+v, ambiguous = %d", normalized, ambiguous)
 	}
 	provider := ProviderUsage{ID: "claude"}
-	applyEvents(&provider, normalized, now, options{PeriodDays: 7})
-	if provider.Rolling.SevenDays.Total != 23 || provider.Rolling.SevenDays.Requests != 1 {
-		t.Fatalf("rolling duplicate total = %+v", provider.Rolling.SevenDays)
+	applyEvents(&provider, normalized, now, options{PeriodDays: 7, SessionHours: 5})
+	if provider.fiveHourTotals.Total != 23 || provider.fiveHourTotals.Requests != 1 {
+		t.Fatalf("rolling duplicate total = %+v", provider.fiveHourTotals)
 	}
 }
 

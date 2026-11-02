@@ -39,6 +39,7 @@ function makeScope() {
         showCodex: true,
         showClaude: true,
         historyShowOther: true,
+        historyShowScheduledShort: false,
         historyShowScheduledWeekly: false,
         usageHistory: [],
         historyVisibleLimit: 4,

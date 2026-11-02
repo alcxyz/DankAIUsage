@@ -53,6 +53,10 @@
       "type": "boolean",
       "default": true
     },
+    "barShowClaudeSession": {
+      "type": "boolean",
+      "default": true
+    },
     "barShowClaudeWeekly": {
       "type": "boolean",
       "default": true

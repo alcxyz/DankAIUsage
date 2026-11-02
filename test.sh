@@ -153,10 +153,9 @@ assert 'component TokenHistoryRow: StyledRect' in component_text
 assert component_text.count('TokenHistoryRow {') == 1, 'only the overview owns a range selector'
 assert 'TokenHistoryResult' not in component_text, 'token totals are shown once, in the overview row'
 assert 'property string tokenHistoryRange: "7d"' in component_text
-for token_range in ('7d', '30d', '90d', 'tracked'):
+for token_range in ('5h', '7d', '30d', '90d', 'tracked'):
     assert f'{{ key: "{token_range}"' in component_text
-assert '{ key: "5h"' not in component_text, 'the five-hour token range is retired'
-assert 'savedRange === "5h" || pluginService.loadPluginState(pluginId, "tokenHistorySession", false) === true' in component_text
+assert 'loadPluginState(pluginId, "tokenHistorySession", false)' in component_text
 assert 'loadPluginState(pluginId, "tokenHistoryRange", "")' in component_text
 assert 'savePluginState(pluginId, "tokenHistoryRange", tokenHistoryRange)' in component_text
 assert 'Keys.onSpacePressed: tokenRow.selectorOpen = !tokenRow.selectorOpen' in component_text
@@ -167,9 +166,8 @@ assert 'tableRows: root.tokenTableRows()' in component_text, 'the overview row l
 assert 'anchors.verticalCenter: tokenRowHeader.verticalCenter' in component_text
 assert 'if (days === 7 || days === 30 || days === 90) return days + "d"' in component_text
 assert 'if (tokenHistoryRange === "period") return provider.period' in component_text
-for field in ('sevenDays', 'thirtyDays', 'ninetyDays'):
+for field in ('fiveHours', 'sevenDays', 'thirtyDays', 'ninetyDays'):
     assert f'rolling.{field}' in component_text
-assert 'fiveHours' not in component_text and 'provider.session' not in component_text
 assert 'var trackedProviders = trackingStatus.providers || {}' in component_text
 assert 'if (!tokenHistoryTotals(provider)) return false' in component_text
 assert 'trackingStatus.known !== true || !trackingStatus.startedAt' in component_text
@@ -366,7 +364,7 @@ function equal(actual, expected, description) {
 
 const resolve = bindQmlFunction("resolveDropdownMode", {});
 const weeklyScope = {
-    barShowClaudeWeekly: true,
+    barShowClaudeSession: true, barShowClaudeWeekly: true,
     barShowClaudeCredits: false, barClaudeWeeklyOverrides: {},
 };
 const weeklyAll = {id: "general-weekly", allowance: {window: "weekly"}};
@@ -467,7 +465,7 @@ if (!/function refreshOnPopoutOpen\(\) \{[^}]*refreshCycle\(\)/.test(qml))
 
 // Claude prime and the statusline fallback are gone from the widget and settings.
 for (const retired of ["claude-prime", "primeClaude", "enableClaudePrime", "claudePrimeProcess",
-    "lastClaudeAutoPrime", "statusline", "barShowClaudeSession", "historyShowScheduledShort", "claudeSessionIsActive"]) {
+    "lastClaudeAutoPrime", "statusline", "claudeSessionIsActive"]) {
     if (qml.includes(retired)) throw new Error(`widget still references ${retired}`);
     if (settingsQml.includes(retired)) throw new Error(`settings still reference ${retired}`);
 }
@@ -654,13 +652,13 @@ confirmScope.claudeResetRequiresLimitNow = bindQmlFunction("claudeResetRequiresL
 const confirmText = bindQmlFunction("claudeResetConfirmText", confirmScope);
 // The cleared limits come from the helper's own description text.
 const grantProvider = (grant, description) => ({id: "claude", meta: {claudeReset: {eligible: true, nextGrantId: "grant-1", grants: [grant]}}, resets: [{...claudeReset, description}]});
-const bothText = confirmText(grantProvider({id: "grant-1", resetsLeft: 1}, "1 left · clears weekly · usable any time"));
-equal(bothText.startsWith("Refills your weekly limits now"), true, "confirmation names the cleared limits: " + bothText);
+const bothText = confirmText(grantProvider({id: "grant-1", resetsLeft: 1}, "1 left · clears 5-hour and weekly · usable any time"));
+equal(bothText.startsWith("Refills your 5-hour and weekly limits now"), true, "confirmation names the cleared limits: " + bothText);
 equal(bothText.includes("uses of this reset left"), false, "a single use adds no count");
-const scopedText = confirmText(grantProvider({id: "grant-1", resetsLeft: 3, useRequiresLimit: true}, "3 left · clears weekly and Opus · use at a limit"));
-equal(scopedText.startsWith("Refills your weekly and Opus limits now"), true, "scoped names keep the helper's wording: " + scopedText);
-equal(scopedText.includes("Only works while you are at a limit"), true, "the at-limit condition is stated");
-equal(scopedText.includes("3 uses of this reset left"), true, "several uses are counted");
+const fiveText = confirmText(grantProvider({id: "grant-1", resetsLeft: 3, useRequiresLimit: true}, "3 left · clears 5-hour and Opus · use at a limit"));
+equal(fiveText.startsWith("Refills your 5-hour and Opus limits now"), true, "scoped names keep the helper's wording: " + fiveText);
+equal(fiveText.includes("Only works while you are at a limit"), true, "the at-limit condition is stated");
+equal(fiveText.includes("3 uses of this reset left"), true, "several uses are counted");
 equal(confirmText(claudeProvider).startsWith("Refills your Claude limits now"), true, "unknown scope falls back to a generic sentence");
 equal(grantId(claudeProvider), "grant-1", "grant id prefers the offered grant");
 equal(grantId({id: "claude", meta: {claudeReset: {}}, resets: [claudeReset]}), "grant-1", "grant id falls back to the listed reset");

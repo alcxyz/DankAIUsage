@@ -62,11 +62,11 @@ function historyEvent(overrides = {}) {
     return {
         provider: "codex",
         observedAt: "2026-09-19T10:00:00Z",
-        bucket: "general-weekly",
+        bucket: "general-5-hour",
         kind: "scheduled_window",
         source: "usage_api",
         groupId: "observation-1",
-        label: "Weekly limit",
+        label: "5-hour limit",
         explanation: null,
         ...overrides,
     };

@@ -73,9 +73,10 @@ type PeriodTotals struct {
 }
 
 type RollingTotals struct {
-	SevenDays  PeriodTotals `json:"sevenDays"`
-	ThirtyDays PeriodTotals `json:"thirtyDays"`
-	NinetyDays PeriodTotals `json:"ninetyDays"`
+	FiveHours  *PeriodTotals `json:"fiveHours,omitempty"`
+	SevenDays  PeriodTotals  `json:"sevenDays"`
+	ThirtyDays PeriodTotals  `json:"thirtyDays"`
+	NinetyDays PeriodTotals  `json:"ninetyDays"`
 }
 
 type Allowance struct {
@@ -93,9 +94,10 @@ type Allowance struct {
 }
 
 type ExtraLimit struct {
-	ID     string     `json:"id"`
-	Label  string     `json:"label"`
-	Weekly *Allowance `json:"weeklyLeft,omitempty"`
+	ID      string     `json:"id"`
+	Label   string     `json:"label"`
+	Session *Allowance `json:"sessionLeft,omitempty"`
+	Weekly  *Allowance `json:"weeklyLeft,omitempty"`
 }
 
 type QuotaBucket struct {
@@ -136,10 +138,12 @@ type ProviderUsage struct {
 	DataPath          string         `json:"dataPath,omitempty"`
 	Error             string         `json:"error,omitempty"`
 	Today             PeriodTotals   `json:"today"`
+	Session           *PeriodTotals  `json:"session,omitempty"`
 	Week              PeriodTotals   `json:"week"`
 	Month             PeriodTotals   `json:"month"`
 	Period            PeriodTotals   `json:"period"`
 	Rolling           RollingTotals  `json:"rolling"`
+	SessionLeft       *Allowance     `json:"sessionLeft,omitempty"`
 	WeeklyLeft        Allowance      `json:"weeklyLeft"`
 	ExtraLimits       []ExtraLimit   `json:"extraLimits,omitempty"`
 	QuotaBuckets      []QuotaBucket  `json:"quotaBuckets,omitempty"`
@@ -148,6 +152,11 @@ type ProviderUsage struct {
 	LastProject       string         `json:"lastProject,omitempty"`
 	Meta              map[string]any `json:"meta,omitempty"`
 	historyObservedAt time.Time
+	// Local token totals for the five-hour range. collect publishes them as
+	// session and rolling.fiveHours only when a provider reports a five-hour
+	// window, so accounts without one keep the weekly-only output.
+	sessionTotals  PeriodTotals
+	fiveHourTotals PeriodTotals
 }
 
 type Summary struct {
@@ -180,6 +189,7 @@ type tokenEvent struct {
 
 type options struct {
 	PeriodDays      int
+	SessionHours    int
 	RefreshInterval time.Duration
 }
 
@@ -222,11 +232,12 @@ func main() {
 
 	fs := flag.NewFlagSet("summary", flag.ExitOnError)
 	periodDays := fs.Int("period-days", 7, "rolling period length in days")
+	sessionHours := fs.Int("session-hours", 5, "rolling session window length in hours")
 	refreshInterval := fs.Int("refresh-interval", int(usageRefreshDefaultInterval/time.Second), "provider usage refresh interval in seconds")
 	pretty := fs.Bool("pretty", false, "pretty-print JSON")
 	_ = fs.Parse(dropSummaryArg(os.Args[1:]))
-	// A stray word, such as the removed claude-prime command, must not fall
-	// through to a full summary.
+	// A stray word, such as a misspelt command, must not fall through to a
+	// full summary.
 	if fs.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "dankaiusage: unknown command %q\n", fs.Arg(0))
 		os.Exit(2)
@@ -235,9 +246,13 @@ func main() {
 	if *periodDays < 1 {
 		*periodDays = 1
 	}
+	if *sessionHours < 1 {
+		*sessionHours = 1
+	}
 
 	summary := collect(options{
 		PeriodDays:      *periodDays,
+		SessionHours:    *sessionHours,
 		RefreshInterval: usageRefreshIntervalSeconds(*refreshInterval),
 	})
 	var data []byte
@@ -280,6 +295,7 @@ func collect(opts options) Summary {
 	codex := collectCodex(now, opts, cache)
 	claude := collectClaude(now, opts, cache)
 	out.Providers = []ProviderUsage{codex, claude}
+	publishFiveHourTotals(out.Providers)
 	out.Tracking = refreshTokenTracking(tokenTrackingPath(), now, cache)
 	_ = cache.save()
 
@@ -308,10 +324,11 @@ func collectCodex(now time.Time, opts options, cache *transcriptParseCache) Prov
 	root := codexHome()
 	provider.DataPath = root
 	provider.historyObservedAt = time.Now()
-	if weeklyLeft, extraLimits, additionalBuckets, resets, meta, observedAt, err := collectCodexSubscriptionLimitsWithClock(now, opts.RefreshInterval, time.Now); err == nil {
+	if sessionLeft, weeklyLeft, extraLimits, additionalBuckets, resets, meta, observedAt, err := collectCodexSubscriptionLimitsWithClock(now, opts.RefreshInterval, time.Now); err == nil {
+		provider.SessionLeft = knownAllowance(sessionLeft)
 		provider.WeeklyLeft = weeklyLeft
 		provider.ExtraLimits = extraLimits
-		provider.QuotaBuckets = makeQuotaBuckets(weeklyLeft, extraLimits, additionalBuckets)
+		provider.QuotaBuckets = makeQuotaBuckets(sessionLeft, weeklyLeft, extraLimits, additionalBuckets)
 		provider.Resets = resets
 		provider.Meta = meta
 		provider.historyObservedAt = observedAt
@@ -359,10 +376,11 @@ func collectClaude(now time.Time, opts options, cache *transcriptParseCache) Pro
 	root := claudeHome()
 	provider.DataPath = root
 	provider.historyObservedAt = time.Now()
-	weeklyLeft, extraLimits, additionalBuckets, meta, observedAt, limitErr := collectClaudeSubscriptionLimitsWithClock(now, opts.RefreshInterval, time.Now)
+	sessionLeft, weeklyLeft, extraLimits, additionalBuckets, meta, observedAt, limitErr := collectClaudeSubscriptionLimitsWithClock(now, opts.RefreshInterval, time.Now)
+	provider.SessionLeft = knownAllowance(sessionLeft)
 	provider.WeeklyLeft = weeklyLeft
 	provider.ExtraLimits = extraLimits
-	provider.QuotaBuckets = makeQuotaBuckets(weeklyLeft, extraLimits, additionalBuckets)
+	provider.QuotaBuckets = makeQuotaBuckets(sessionLeft, weeklyLeft, extraLimits, additionalBuckets)
 	mergeProviderMeta(&provider, meta)
 	if !observedAt.IsZero() {
 		provider.historyObservedAt = observedAt
@@ -642,8 +660,53 @@ func tokenEventAtLeast(left, right tokenEvent) bool {
 		left.Reasoning >= right.Reasoning && left.Tool >= right.Tool
 }
 
+// knownAllowance returns a five-hour allowance only when the provider
+// reported one; an account without the window gets no sessionLeft at all.
+func knownAllowance(allowance Allowance) *Allowance {
+	if !allowance.Known {
+		return nil
+	}
+	return &allowance
+}
+
+// reportsFiveHourWindow tells whether a provider's limits include a
+// five-hour window, general or model-scoped.
+func reportsFiveHourWindow(provider ProviderUsage) bool {
+	if provider.SessionLeft != nil {
+		return true
+	}
+	for _, bucket := range provider.QuotaBuckets {
+		if bucket.Allowance.Known && bucket.Allowance.Window == "session" {
+			return true
+		}
+	}
+	return false
+}
+
+// publishFiveHourTotals adds the five-hour token totals to every provider
+// once any of them reports a five-hour window, so the 5h token range covers
+// all providers alike (ADR-0027).
+func publishFiveHourTotals(providers []ProviderUsage) {
+	shown := false
+	for _, provider := range providers {
+		if reportsFiveHourWindow(provider) {
+			shown = true
+		}
+	}
+	if !shown {
+		return
+	}
+	for i := range providers {
+		session := providers[i].sessionTotals
+		fiveHours := providers[i].fiveHourTotals
+		providers[i].Session = &session
+		providers[i].Rolling.FiveHours = &fiveHours
+	}
+}
+
 func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, opts options) {
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	sessionStart := now.Add(-time.Duration(opts.SessionHours) * time.Hour)
 	weekdayOffset := int(now.Weekday())
 	if weekdayOffset == 0 {
 		weekdayOffset = 6
@@ -653,6 +716,7 @@ func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, op
 	weekStart := todayStart.AddDate(0, 0, -weekdayOffset)
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	periodStart := now.AddDate(0, 0, -opts.PeriodDays)
+	fiveHoursStart := now.Add(-5 * time.Hour)
 	sevenDaysStart := now.Add(-7 * 24 * time.Hour)
 	thirtyDaysStart := now.Add(-30 * 24 * time.Hour)
 	ninetyDaysStart := now.Add(-90 * 24 * time.Hour)
@@ -660,13 +724,21 @@ func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, op
 	models := map[string]*ModelUsage{}
 	periodSessions := map[string]bool{}
 	todaySessions := map[string]bool{}
+	sessionSessions := map[string]bool{}
 	weekSessions := map[string]bool{}
 	monthSessions := map[string]bool{}
+	fiveHourSessions := map[string]bool{}
 	sevenDaySessions := map[string]bool{}
 	thirtyDaySessions := map[string]bool{}
 	ninetyDaySessions := map[string]bool{}
 
 	for _, event := range events {
+		if atOrAfter(event.Timestamp, fiveHoursStart) {
+			addEvent(&provider.fiveHourTotals, event)
+			if event.Session != "" {
+				fiveHourSessions[event.Session] = true
+			}
+		}
 		if atOrAfter(event.Timestamp, sevenDaysStart) {
 			addEvent(&provider.Rolling.SevenDays, event)
 			if event.Session != "" {
@@ -689,6 +761,12 @@ func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, op
 			addEvent(&provider.Today, event)
 			if event.Session != "" {
 				todaySessions[event.Session] = true
+			}
+		}
+		if event.Timestamp.After(sessionStart) || event.Timestamp.Equal(sessionStart) {
+			addEvent(&provider.sessionTotals, event)
+			if event.Session != "" {
+				sessionSessions[event.Session] = true
 			}
 		}
 		if event.Timestamp.After(weekStart) || event.Timestamp.Equal(weekStart) {
@@ -724,9 +802,11 @@ func applyEvents(provider *ProviderUsage, events []tokenEvent, now time.Time, op
 	}
 
 	provider.Today.Sessions = int64(len(todaySessions))
+	provider.sessionTotals.Sessions = int64(len(sessionSessions))
 	provider.Week.Sessions = int64(len(weekSessions))
 	provider.Month.Sessions = int64(len(monthSessions))
 	provider.Period.Sessions = int64(len(periodSessions))
+	provider.fiveHourTotals.Sessions = int64(len(fiveHourSessions))
 	provider.Rolling.SevenDays.Sessions = int64(len(sevenDaySessions))
 	provider.Rolling.ThirtyDays.Sessions = int64(len(thirtyDaySessions))
 	provider.Rolling.NinetyDays.Sessions = int64(len(ninetyDaySessions))
@@ -837,12 +917,23 @@ func makeSubscriptionAllowance(window string, source string, usedPercent float64
 	return allowance
 }
 
-func makeQuotaBuckets(weekly Allowance, extras []ExtraLimit, additional []QuotaBucket) []QuotaBucket {
-	buckets := make([]QuotaBucket, 0, 1+len(extras)+len(additional))
+func makeQuotaBuckets(session Allowance, weekly Allowance, extras []ExtraLimit, additional []QuotaBucket) []QuotaBucket {
+	buckets := make([]QuotaBucket, 0, 2+len(extras)*2+len(additional))
+	if session.Known {
+		buckets = append(buckets, QuotaBucket{ID: "general-5-hour", Label: "5-hour", Kind: "short", Allowance: session})
+	}
 	if weekly.Known {
 		buckets = append(buckets, QuotaBucket{ID: "general-weekly", Label: "Weekly", Kind: "weekly", Allowance: weekly})
 	}
 	for _, extra := range extras {
+		if extra.Session != nil && extra.Session.Known {
+			buckets = append(buckets, QuotaBucket{
+				ID:        extra.ID + "-5-hour",
+				Label:     extra.Label + " · 5-hour",
+				Kind:      "scoped",
+				Allowance: *extra.Session,
+			})
+		}
 		if extra.Weekly != nil && extra.Weekly.Known {
 			buckets = append(buckets, QuotaBucket{
 				ID:        extra.ID + "-weekly",
@@ -999,16 +1090,16 @@ type codexRateLimitResetCredit struct {
 	Description string `json:"description"`
 }
 
-func collectCodexSubscriptionLimitsWithClock(now time.Time, refreshInterval time.Duration, clock usageRefreshClock) (Allowance, []ExtraLimit, []QuotaBucket, []UsageReset, map[string]any, time.Time, error) {
+func collectCodexSubscriptionLimitsWithClock(now time.Time, refreshInterval time.Duration, clock usageRefreshClock) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, []UsageReset, map[string]any, time.Time, error) {
 	limits, refresh, err := collectCachedCodexRateLimitsWithClock(codexUsageCachePath(), refreshInterval, false, fetchCodexRateLimits, clock)
 	if err != nil {
-		return makeUnknownAllowance("weekly", now), nil, nil, nil, usageRefreshMeta(refresh), refresh.FetchedAt, err
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, usageRefreshMeta(refresh), refresh.FetchedAt, err
 	}
 	snapshot := limits.RateLimits
 	if byID := limits.RateLimitsByLimitID["codex"]; byID.LimitID != "" {
 		snapshot = byID
 	}
-	weekly := codexSnapshotWeeklyAllowance(snapshot, now)
+	session, weekly := codexSnapshotWindowAllowances(snapshot, now)
 	resets := codexAvailableResets(limits.RateLimitResetCredits, now)
 	meta := codexSnapshotMeta(snapshot)
 	mergeUsageRefreshMeta(meta, refresh)
@@ -1027,7 +1118,7 @@ func collectCodexSubscriptionLimitsWithClock(now time.Time, refreshInterval time
 		// needs the zero so a later refill counts as a top-up.
 		meta[emptyCreditBucketMeta] = "codex-credits"
 	}
-	return weekly, codexSnapshotExtraLimits(limits.RateLimitsByLimitID, snapshot.LimitID, now), additional, resets, meta, refresh.FetchedAt, nil
+	return session, weekly, codexSnapshotExtraLimits(limits.RateLimitsByLimitID, snapshot.LimitID, now), additional, resets, meta, refresh.FetchedAt, nil
 }
 
 func fetchCodexRateLimits() (codexRateLimitsResult, error) {
@@ -1100,27 +1191,51 @@ func fetchCodexRateLimits() (codexRateLimitsResult, error) {
 	return codexRateLimitsResult{}, errors.New("Codex rate limits are unavailable")
 }
 
-// codexSnapshotWeeklyAllowance returns the snapshot's weekly window. Codex
-// sends it in either slot, so each window is classified by its duration: a
-// window without a usable duration counts as weekly, and one of a known
-// length outside a week (the former five-hour window) is ignored.
 func codexSnapshotWeeklyAllowance(snapshot codexRateLimitSnapshot, now time.Time) Allowance {
-	weekly := makeUnknownAllowance("weekly", time.Time{})
-	weekly.Source = "codex app-server"
-	for _, window := range []*codexRateLimitWindow{snapshot.Primary, snapshot.Secondary} {
-		if window == nil || !codexWeeklyWindow(window) {
-			continue
-		}
-		weekly = makeSubscriptionAllowance("weekly", "codex app-server", window.UsedPercent, codexResetTime(window, time.Time{}), codexWindowMinutes(window))
-	}
+	_, weekly := codexSnapshotWindowAllowances(snapshot, now)
 	return weekly
 }
 
-// codexWeeklyWindow accepts six to eight days so a slightly different
-// rounding of the 10,080-minute window still counts as a week.
-func codexWeeklyWindow(window *codexRateLimitWindow) bool {
+// codexSnapshotWindowAllowances returns the snapshot's five-hour and weekly
+// windows. Codex sends either in either slot, so each window is classified by
+// its duration (codexWindowKind); a window of another length is ignored.
+func codexSnapshotWindowAllowances(snapshot codexRateLimitSnapshot, now time.Time) (Allowance, Allowance) {
+	session := makeUnknownAllowance("session", time.Time{})
+	weekly := makeUnknownAllowance("weekly", time.Time{})
+	session.Source = "codex app-server"
+	weekly.Source = "codex app-server"
+	for _, window := range []*codexRateLimitWindow{snapshot.Primary, snapshot.Secondary} {
+		if window == nil {
+			continue
+		}
+		kind := codexWindowKind(window)
+		if kind == "" {
+			continue
+		}
+		allowance := makeSubscriptionAllowance(kind, "codex app-server", window.UsedPercent, codexResetTime(window, time.Time{}), codexWindowMinutes(window))
+		if kind == "weekly" {
+			weekly = allowance
+		} else {
+			session = allowance
+		}
+	}
+	return session, weekly
+}
+
+// codexWindowKind classifies a Codex window by its duration: "weekly" for six
+// to eight days, so a slightly different rounding of the 10,080-minute window
+// still counts, or for a window without a usable duration; "session" for four
+// to six hours around the 300-minute window; "" for any other length.
+func codexWindowKind(window *codexRateLimitWindow) string {
 	minutes := codexWindowMinutes(window)
-	return minutes <= 0 || (minutes >= 6*24*60 && minutes <= 8*24*60)
+	switch {
+	case minutes <= 0 || (minutes >= 6*24*60 && minutes <= 8*24*60):
+		return "weekly"
+	case minutes >= 4*60 && minutes <= 6*60:
+		return "session"
+	default:
+		return ""
+	}
 }
 
 func codexSnapshotExtraLimits(snapshots map[string]codexRateLimitSnapshot, primaryLimitID string, now time.Time) []ExtraLimit {
@@ -1139,15 +1254,21 @@ func codexSnapshotExtraLimits(snapshots map[string]codexRateLimitSnapshot, prima
 		if id == "" || id == "codex" || id == primaryLimitID {
 			continue
 		}
-		weekly := codexSnapshotWeeklyAllowance(snapshot, now)
-		if !weekly.Known {
+		session, weekly := codexSnapshotWindowAllowances(snapshot, now)
+		if !session.Known && !weekly.Known {
 			continue
 		}
-		out = append(out, ExtraLimit{
-			ID:     id,
-			Label:  firstNonEmpty(snapshot.LimitName, id),
-			Weekly: &weekly,
-		})
+		extra := ExtraLimit{
+			ID:    id,
+			Label: firstNonEmpty(snapshot.LimitName, id),
+		}
+		if session.Known {
+			extra.Session = &session
+		}
+		if weekly.Known {
+			extra.Weekly = &weekly
+		}
+		out = append(out, extra)
 	}
 	return out
 }
@@ -1394,28 +1515,32 @@ func claudeUsageRetryDelay(value string, now time.Time) time.Duration {
 	return max(claudeUsageRetryMinimum, claudeRetryAfterHeader(value, now))
 }
 
-func parseClaudeOAuthUsage(data []byte, now time.Time) (Allowance, []ExtraLimit, []QuotaBucket, error) {
+func parseClaudeOAuthUsage(data []byte, now time.Time) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, error) {
 	var root map[string]any
 	if err := json.Unmarshal(data, &root); err != nil {
-		return makeUnknownAllowance("weekly", now), nil, nil, err
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, err
 	}
+	session := parseClaudeLimitWindow("session", claudeOAuthUsageSource, firstMap(root, "five_hour", "fiveHour"), now)
 	weekly := parseClaudeLimitWindow("weekly", claudeOAuthUsageSource, firstMap(root, "seven_day", "sevenDay"), now)
+	if session.Known && session.WindowMinutes == 0 {
+		session.WindowMinutes = 300
+	}
 	if weekly.Known && weekly.WindowMinutes == 0 {
 		weekly.WindowMinutes = 10080
 	}
 	extras := parseClaudeScopedLimits(root, now)
 	extras = parseClaudeTopLevelScopedLimits(root, now, extras)
 	additional := parseClaudeSpendBuckets(root)
-	if !weekly.Known {
-		return weekly, extras, additional, errors.New("Claude usage API returned no weekly window")
+	if !session.Known && !weekly.Known {
+		return session, weekly, extras, additional, errors.New("Claude usage API returned no weekly window")
 	}
-	return weekly, extras, additional, nil
+	return session, weekly, extras, additional, nil
 }
 
-// parseClaudeScopedLimits extracts model- or surface-scoped weekly windows
-// from the structured limits array (e.g. the Fable-only weekly cap). The
-// weekly_all entry duplicates seven_day and is skipped, as are entries
-// naming a five-hour or session window, which no longer exist.
+// parseClaudeScopedLimits extracts model- or surface-scoped windows from the
+// structured limits array (e.g. the Fable-only weekly cap). The plain
+// session and weekly_all entries duplicate five_hour/seven_day and are
+// skipped.
 func parseClaudeScopedLimits(root map[string]any, now time.Time) []ExtraLimit {
 	items, ok := root["limits"].([]any)
 	if !ok {
@@ -1429,16 +1554,14 @@ func parseClaudeScopedLimits(root map[string]any, now time.Time) []ExtraLimit {
 		}
 		kind := stringValue(entry["kind"])
 		kindLower := strings.ToLower(kind)
-		if kindLower == "" || kindLower == "weekly" || kindLower == "weekly_all" || kindLower == "seven_day" {
-			continue
-		}
-		if claudeShortWindowLimit(kind, stringValue(entry["group"])) {
+		if kindLower == "" || kindLower == "session" || kindLower == "weekly" || kindLower == "weekly_all" || kindLower == "five_hour" || kindLower == "seven_day" {
 			continue
 		}
 		used, ok := firstFloat(entry, "percent", "utilization", "used_percentage", "usedPercent", "used_percent", "percentage", "percent_used", "percentUsed")
 		if !ok {
 			continue
 		}
+		window, windowMinutes := claudeScopedLimitWindow(kind, stringValue(entry["group"]))
 		label := firstNonEmpty(stringValue(entry["label"]), stringValue(entry["display_name"]), stringValue(entry["displayName"]), stringValue(entry["name"]), humanizeScopedLimitLabel(kind))
 		id := firstNonEmpty(stringValue(entry["id"]), kind)
 		if scope := firstMap(entry, "scope"); scope != nil {
@@ -1447,7 +1570,7 @@ func parseClaudeScopedLimits(root map[string]any, now time.Time) []ExtraLimit {
 				id = firstNonEmpty(stringValue(model["id"]), id)
 			}
 		}
-		allowance := makeSubscriptionAllowance("weekly", claudeOAuthUsageSource, used, parseReset(entry, time.Time{}), 10080)
+		allowance := makeSubscriptionAllowance(window, claudeOAuthUsageSource, used, parseReset(entry, time.Time{}), windowMinutes)
 		out = upsertExtraLimit(out, id, label, allowance)
 	}
 	return out
@@ -1464,39 +1587,62 @@ func parseClaudeTopLevelScopedLimits(root map[string]any, now time.Time, out []E
 		if !ok {
 			continue
 		}
-		suffix, ok := claudeTopLevelScopedLimitKey(key)
+		window, suffix, ok := claudeTopLevelScopedLimitKey(key)
 		if !ok {
 			continue
 		}
-		allowance := parseClaudeLimitWindow("weekly", claudeOAuthUsageSource, values, now)
+		allowance := parseClaudeLimitWindow(window, claudeOAuthUsageSource, values, now)
 		if !allowance.Known {
 			continue
 		}
 		if allowance.WindowMinutes == 0 {
-			allowance.WindowMinutes = 10080
+			if window == "session" {
+				allowance.WindowMinutes = 300
+			} else {
+				allowance.WindowMinutes = 10080
+			}
 		}
-		out = upsertExtraLimit(out, key, humanizeScopedLimitLabel(suffix), allowance)
+		// A model's five-hour and weekly limits share one entry, named by
+		// the weekly key so its bucket ids match those of 2.x without a
+		// five-hour window (seven_day_opus-weekly, seven_day_opus-5-hour).
+		id := key
+		if window == "session" {
+			id = strings.Replace(strings.Replace(key, "five_hour_", "seven_day_", 1), "fiveHour", "sevenDay", 1)
+		}
+		out = upsertExtraLimit(out, id, humanizeScopedLimitLabel(suffix), allowance)
 	}
 	return out
 }
 
-func claudeTopLevelScopedLimitKey(key string) (string, bool) {
+func claudeTopLevelScopedLimitKey(key string) (string, string, bool) {
 	switch {
 	case strings.HasPrefix(key, "seven_day_"):
-		return strings.TrimPrefix(key, "seven_day_"), true
+		return "weekly", strings.TrimPrefix(key, "seven_day_"), true
 	case strings.HasPrefix(key, "sevenDay"):
 		suffix := strings.TrimPrefix(key, "sevenDay")
-		return suffix, suffix != ""
+		if suffix == "" {
+			return "", "", false
+		}
+		return "weekly", suffix, true
+	case strings.HasPrefix(key, "five_hour_"):
+		return "session", strings.TrimPrefix(key, "five_hour_"), true
+	case strings.HasPrefix(key, "fiveHour"):
+		suffix := strings.TrimPrefix(key, "fiveHour")
+		if suffix == "" {
+			return "", "", false
+		}
+		return "session", suffix, true
 	default:
-		return "", false
+		return "", "", false
 	}
 }
 
-// claudeShortWindowLimit reports whether a limits-array entry names a
-// five-hour or session window, so it is not mistaken for a weekly one.
-func claudeShortWindowLimit(kind string, group string) bool {
+func claudeScopedLimitWindow(kind string, group string) (string, int64) {
 	text := strings.ToLower(kind + " " + group)
-	return strings.Contains(text, "session") || strings.Contains(text, "five_hour") || strings.Contains(text, "fivehour")
+	if strings.Contains(text, "session") || strings.Contains(text, "five_hour") || strings.Contains(text, "fivehour") {
+		return "session", 300
+	}
+	return "weekly", 10080
 }
 
 func upsertExtraLimit(limits []ExtraLimit, id string, label string, allowance Allowance) []ExtraLimit {
@@ -1506,10 +1652,26 @@ func upsertExtraLimit(limits []ExtraLimit, id string, label string, allowance Al
 		if limits[i].ID != id && (label == "" || limits[i].Label != label) {
 			continue
 		}
-		limits[i].Weekly = &allowance
+		if allowance.Window == "session" {
+			limits[i].Session = &allowance
+		} else {
+			// The weekly limit names the entry, whichever came first, so its
+			// bucket id and saved choices match those without a five-hour
+			// window.
+			if limits[i].Weekly == nil {
+				limits[i].ID = id
+			}
+			limits[i].Weekly = &allowance
+		}
 		return limits
 	}
-	return append(limits, ExtraLimit{ID: id, Label: label, Weekly: &allowance})
+	extra := ExtraLimit{ID: id, Label: label}
+	if allowance.Window == "session" {
+		extra.Session = &allowance
+	} else {
+		extra.Weekly = &allowance
+	}
+	return append(limits, extra)
 }
 
 func humanizeScopedLimitLabel(value string) string {
@@ -1520,7 +1682,7 @@ func humanizeScopedLimitLabel(value string) string {
 	for _, part := range parts {
 		lower := strings.ToLower(part)
 		switch lower {
-		case "", "weekly", "seven", "day", "model", "only", "all":
+		case "", "weekly", "session", "seven", "day", "five", "hour", "model", "only", "all":
 			continue
 		case "gpt", "api":
 			out = append(out, strings.ToUpper(lower))
@@ -1666,21 +1828,22 @@ func claudeOAuthUsageMeta(path string, cache claudeOAuthUsageCache) map[string]a
 	}
 }
 
-func claudeOAuthAllowancesFromCache(path string, cache claudeOAuthUsageCache, now time.Time, stale bool) (Allowance, []ExtraLimit, []QuotaBucket, map[string]any, error) {
-	weekly, extras, additional, err := parseClaudeOAuthUsage(cache.Body, now)
+func claudeOAuthAllowancesFromCache(path string, cache claudeOAuthUsageCache, now time.Time, stale bool) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, error) {
+	session, weekly, extras, additional, err := parseClaudeOAuthUsage(cache.Body, now)
 	if err != nil {
-		return weekly, extras, additional, nil, err
+		return session, weekly, extras, additional, nil, err
 	}
 	meta := claudeOAuthUsageMeta(path, cache)
 	if stale {
 		meta["usageDataStale"] = true
 	}
-	return weekly, extras, additional, meta, nil
+	return session, weekly, extras, additional, meta, nil
 }
 
-func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Duration, requireFresh bool) (Allowance, []ExtraLimit, []QuotaBucket, map[string]any, usageRefreshInfo, error) {
+func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Duration, requireFresh bool) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, usageRefreshInfo, error) {
 	interval = normalizeUsageRefreshInterval(interval)
 	path := claudeOAuthUsageCachePath()
+	var session Allowance
 	var weekly Allowance
 	var extras []ExtraLimit
 	var additional []QuotaBucket
@@ -1727,7 +1890,7 @@ func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Du
 		staleOK := cacheUsable && now.Sub(fetchedAt) < staleTTL
 		if now.Before(nextAttemptAt) {
 			if cacheUsable && (cache.LastError == "" || staleOK) && !requireFresh {
-				weekly, extras, additional, meta, actionErr = claudeOAuthAllowancesFromCache(path, cache, now, cache.LastError != "")
+				session, weekly, extras, additional, meta, actionErr = claudeOAuthAllowancesFromCache(path, cache, now, cache.LastError != "")
 				if actionErr != nil {
 					return fmt.Errorf("%w: Claude cache response unsupported", errUsageRefreshState)
 				}
@@ -1758,7 +1921,7 @@ func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Du
 				return errors.New("could not save Claude usage refresh failure")
 			}
 			if staleOK && !requireFresh {
-				weekly, extras, additional, meta, actionErr = claudeOAuthAllowancesFromCache(path, cache, now, true)
+				session, weekly, extras, additional, meta, actionErr = claudeOAuthAllowancesFromCache(path, cache, now, true)
 				if actionErr != nil {
 					return fmt.Errorf("%w: Claude cache response unsupported", errUsageRefreshState)
 				}
@@ -1786,7 +1949,7 @@ func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Du
 				return errors.New("could not save Claude usage refresh failure")
 			}
 			if staleOK && !requireFresh {
-				weekly, extras, additional, meta, actionErr = claudeOAuthAllowancesFromCache(path, cache, now, true)
+				session, weekly, extras, additional, meta, actionErr = claudeOAuthAllowancesFromCache(path, cache, now, true)
 				if actionErr != nil {
 					return fmt.Errorf("%w: Claude cache response unsupported", errUsageRefreshState)
 				}
@@ -1797,7 +1960,7 @@ func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Du
 			actionErr = err
 			return nil
 		}
-		weekly, extras, additional, err = parseClaudeOAuthUsage(body, now)
+		session, weekly, extras, additional, err = parseClaudeOAuthUsage(body, now)
 		if err != nil {
 			cache.LastError = "Claude usage API returned an unsupported response"
 			cache.DiagnosticCategory = "invalid_response"
@@ -1809,7 +1972,7 @@ func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Du
 				return errors.New("could not save Claude usage refresh failure")
 			}
 			if staleOK && !requireFresh {
-				weekly, extras, additional, meta, actionErr = claudeOAuthAllowancesFromCache(path, cache, now, true)
+				session, weekly, extras, additional, meta, actionErr = claudeOAuthAllowancesFromCache(path, cache, now, true)
 				if actionErr != nil {
 					return fmt.Errorf("%w: Claude cache response unsupported", errUsageRefreshState)
 				}
@@ -1846,28 +2009,25 @@ func collectClaudeOAuthLimitsWithClock(clock usageRefreshClock, interval time.Du
 	if err != nil {
 		emitUsageRefreshDiagnostics("claude", info, err, nil, false)
 		now := clock()
-		return makeUnknownAllowance("weekly", now), nil, nil, nil, usageRefreshInfo{}, err
+		return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, nil, usageRefreshInfo{}, err
 	}
 	if actionErr != nil && errors.Is(actionErr, errUsageRefreshCoolingDown) {
 		meta = usageRefreshMeta(info)
 	}
 	emitUsageRefreshDiagnostics("claude", info, nil, actionErr, recovered)
-	return weekly, extras, additional, meta, info, actionErr
+	return session, weekly, extras, additional, meta, info, actionErr
 }
 
-// collectClaudeSubscriptionLimitsWithClock reads Claude's limits from the
-// OAuth usage API; when that fails the limits are unavailable and the error
-// is returned for the dropdown to show.
-func collectClaudeSubscriptionLimitsWithClock(now time.Time, refreshInterval time.Duration, clock usageRefreshClock) (Allowance, []ExtraLimit, []QuotaBucket, map[string]any, time.Time, error) {
-	weekly, extras, additional, meta, info, err := collectClaudeOAuthLimitsWithClock(clock, refreshInterval, false)
+func collectClaudeSubscriptionLimitsWithClock(now time.Time, refreshInterval time.Duration, clock usageRefreshClock) (Allowance, Allowance, []ExtraLimit, []QuotaBucket, map[string]any, time.Time, error) {
+	session, weekly, extras, additional, meta, info, err := collectClaudeOAuthLimitsWithClock(clock, refreshInterval, false)
 	if err == nil {
-		return weekly, extras, additional, meta, info.FetchedAt, nil
+		return session, weekly, extras, additional, meta, info.FetchedAt, nil
 	}
 	if meta == nil {
 		meta = map[string]any{}
 	}
 	mergeUsageRefreshMeta(meta, info)
-	return makeUnknownAllowance("weekly", now), nil, nil, meta, time.Time{}, err
+	return makeUnknownAllowance("session", now), makeUnknownAllowance("weekly", now), nil, nil, meta, time.Time{}, err
 }
 
 func parseClaudeLimitWindow(window string, source string, values map[string]any, now time.Time) Allowance {
