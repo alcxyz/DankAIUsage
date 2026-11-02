@@ -6,6 +6,8 @@ as its GitHub release notes.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-02
+
 ### Added
 
 - Five-hour usage windows are back for plans that still have them (Claude Pro, Max and not yet verified Ultra accounts, and Codex Plus): a five-hour quota bar, the `5h` and `f5h` top-bar tags, the **Claude 5-hour session** top-bar switch, the **5h** Local tokens range and the **Scheduled 5-hour resets** history filter. Accounts without a five-hour window, such as verified Claude Ultra and Codex Pro, see no change.
