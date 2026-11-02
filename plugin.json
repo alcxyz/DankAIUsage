@@ -73,7 +73,7 @@
       "type": "boolean",
       "default": false
     },
-    "enableClaudePrime": {
+    "claudePrimeEnabled": {
       "type": "boolean",
       "default": false
     },

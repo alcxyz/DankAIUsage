@@ -53,7 +53,7 @@ function claude(overrides = {}) {
 function makePrimeScope(overrides = {}) {
     const scope = {
         Date: FixedDate, isFinite,
-        enableClaudePrime: true, showClaude: true,
+        claudePrimeEnabled: true, showClaude: true,
         claudePrimeProcess: {running: false},
         lastClaudeAutoPrimeAt: 0, refreshInterval: 300,
         providers: [claude()],
@@ -113,7 +113,7 @@ test("automatic prime is requested only when enabled, shown, idle and due", () =
         other.maybeAutoPrimeClaude();
         return other.primeCalls;
     };
-    assert.deepEqual(skipped({enableClaudePrime: false}), [], "disabled never primes");
+    assert.deepEqual(skipped({claudePrimeEnabled: false}), [], "disabled never primes");
     assert.deepEqual(skipped({showClaude: false}), [], "a hidden Claude card never primes");
     assert.deepEqual(skipped({claudePrimeProcess: {running: true}}), [], "a running prime is not repeated");
     assert.deepEqual(skipped({providers: []}), [], "no Claude provider never primes");
@@ -126,9 +126,9 @@ test("automatic prime is requested only when enabled, shown, idle and due", () =
 });
 
 test("the prime status line names an account without a five-hour window", () => {
-    const scope = makePrimeScope({enableClaudePrime: false});
+    const scope = makePrimeScope({claudePrimeEnabled: false});
     assert.equal(scope.claudePrimeStatusLine(), "", "prime off shows nothing");
-    scope.enableClaudePrime = true;
+    scope.claudePrimeEnabled = true;
     scope.providers = [claude({sessionLeft: {known: false}})];
     assert.equal(scope.claudePrimeStatusLine(), "Claude prime is on · idle: this account has no five-hour window");
     scope.providers = [claude({sessionLeft: {known: true, resetAt: minutesFromNow(5)}})];
@@ -226,4 +226,15 @@ test("the owner's prime limits keep the widget from asking, as in the helper", (
     scope.claudePrimeDailyCap = 5;
     scope.claudePrimeLast = {reason: "daily_cap", checkedAt: new Date(now - 2 * 86400000).toISOString()};
     assert.equal(scope.claudePrimeIdleReason(claude()), "", "a cap from an earlier day has expired");
+});
+
+test("prime's opt-in uses a new key, so a 1.x enableClaudePrime value is ignored", () => {
+    const root = path.join(__dirname, "..");
+    const settingsQml = fs.readFileSync(path.join(root, "DankAIUsageSettings.qml"), "utf8");
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, "plugin.json"), "utf8"));
+    for (const [name, text] of [["widget", qml], ["settings", settingsQml], ["plugin.json", JSON.stringify(manifest)]])
+        assert.equal(text.includes("enableClaudePrime"), false, `${name} must not read the 1.x key`);
+    assert.match(qml, /claudePrimeEnabled = pluginService\.loadPluginData\(pluginId, "claudePrimeEnabled", false\) === true/);
+    assert.match(settingsQml, /settingKey: "claudePrimeEnabled"[\s\S]{0,400}defaultValue: false/);
+    assert.deepEqual(manifest.settings_schema.claudePrimeEnabled, {type: "boolean", default: false});
 });

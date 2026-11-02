@@ -775,7 +775,7 @@ PluginSettings {
 
         ToggleSetting {
             id: claudePrimeToggle
-            settingKey: "enableClaudePrime"
+            settingKey: "claudePrimeEnabled"
             label: "Claude prime"
             description: "Starts Claude's five-hour window with a tiny request when it is idle, so it runs while you are away. Only acts when Claude reports a five-hour window for this account; uses a little usage."
             defaultValue: false

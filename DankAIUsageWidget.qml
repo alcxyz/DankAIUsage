@@ -95,7 +95,7 @@ PluginComponent {
     property string _trackingOutput: ""
     property string trackingCommandError: ""
     property bool clearTrackingConfirm: false
-    property bool enableClaudePrime: false
+    property bool claudePrimeEnabled: false
     // Prime's extra guards (ADR-0028); the helper enforces them too.
     property int claudePrimeActiveFrom: 7
     property int claudePrimeActiveUntil: 23
@@ -217,7 +217,7 @@ PluginComponent {
         barUsageColors = pluginService.loadPluginData(pluginId, "barUsageColors", false) === true
         heatmapPalette = pluginService.loadPluginData(pluginId, "heatmapPalette", "fixed") === "theme" ? "theme" : "fixed"
         heatmapBasis = pluginService.loadPluginData(pluginId, "heatmapBasis", "usage") === "pace" ? "pace" : "usage"
-        enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
+        claudePrimeEnabled = pluginService.loadPluginData(pluginId, "claudePrimeEnabled", false) === true
         claudePrimeActiveFrom = boundedSetting("claudePrimeActiveFrom", 7, 0, 23)
         claudePrimeActiveUntil = boundedSetting("claudePrimeActiveUntil", 23, 0, 24)
         claudePrimeMinWeeklyLeft = boundedSetting("claudePrimeMinWeeklyLeft", 10, 0, 50)
@@ -766,7 +766,7 @@ PluginComponent {
     // response and skips unless it reports a five-hour window that is not
     // running; the widget asks only when its own summary says the same.
     function primeClaude(automatic) {
-        if (!enableClaudePrime || claudePrimeProcess.running) return
+        if (!claudePrimeEnabled || claudePrimeProcess.running) return
         _claudePrimeOutput = ""
         _claudePrimeError = ""
         if (automatic === true) {
@@ -840,7 +840,7 @@ PluginComponent {
     }
 
     function maybeAutoPrimeClaude() {
-        if (!enableClaudePrime || !showClaude || claudePrimeProcess.running) return
+        if (!claudePrimeEnabled || !showClaude || claudePrimeProcess.running) return
         if (claudePrimeIdleReason(claudeProviderData()) !== "") return
         // One helper check per refresh interval at most; the helper itself also
         // waits for a usage response newer than its last prime.
@@ -850,7 +850,7 @@ PluginComponent {
 
     // Shown under the Claude card while prime is on, and in Simple mode.
     function claudePrimeStatusLine() {
-        if (!enableClaudePrime) return ""
+        if (!claudePrimeEnabled) return ""
         if (claudePrimeProcess.running) return "Claude prime: starting the five-hour window…"
         var reason = claudePrimeIdleReason(claudeProviderData())
         if (reason === "this account has no five-hour window") return "Claude prime is on · idle: this account has no five-hour window"
@@ -860,7 +860,7 @@ PluginComponent {
 
     // The helper's last answer for Advanced → Diagnostics.
     function claudePrimeDiagnosticLine() {
-        if (!enableClaudePrime || !claudePrimeLast || !claudePrimeLast.message) return ""
+        if (!claudePrimeEnabled || !claudePrimeLast || !claudePrimeLast.message) return ""
         var parts = ["Claude prime: " + claudePrimeLast.message]
         var checked = formatShortDateTime(claudePrimeLast.checkedAt)
         if (checked !== "") parts.push("checked " + checked)
@@ -3445,7 +3445,7 @@ PluginComponent {
                                                 iconColor: claudePrimeProcess.running ? Theme.surfaceVariantText : Theme.primary
                                                 tooltipText: claudePrimeProcess.running ? "Starting the Claude five-hour window…" : "Start the Claude five-hour window now"
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                visible: root.advancedDropdown && modelData.id === "claude" && root.enableClaudePrime
+                                                visible: root.advancedDropdown && modelData.id === "claude" && root.claudePrimeEnabled
                                                          && root.claudePrimeIdleReason(modelData) === ""
                                                 enabled: !claudePrimeProcess.running
                                                 onClicked: root.primeClaude(false)

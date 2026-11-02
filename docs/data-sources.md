@@ -77,7 +77,8 @@ in DMS plugin state so the bar can render immediately after a shell restart.
 
 ## Claude prime
 
-Claude prime is off by default. Turn on **Claude prime** under
+Claude prime is off by default, also for anyone who used it in 1.x: the old
+setting is ignored, so turn it on again if you want it. Turn on **Claude prime** under
 **Automation and notifications** to start Claude's five-hour window with one
 tiny request when that window is idle. The request spends a little usage:
 `claude -p` with the `sonnet` model, tools disabled, no saved

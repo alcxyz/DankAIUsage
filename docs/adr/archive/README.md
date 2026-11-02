@@ -22,3 +22,4 @@ are history, not current decisions; the current ones are listed in the
 | [ADR-0023 history](ADR-0023-separate-claude-reset-availability-check-history.md) | Separate low-cadence request for Claude reset availability | History of [ADR-0023](../ADR-0023-separate-claude-reset-availability-check.md) |
 | [ADR-0024](ADR-0024-retry-rate-limited-reset-check.md) | Retry a rate-limited Claude reset check at quota cadence | Retired by [ADR-0023](../ADR-0023-separate-claude-reset-availability-check.md), 2026-11-01 |
 | [ADR-0027 history](ADR-0027-remove-five-hour-windows-prime-and-statusline-history.md) | Five-hour windows only where reported, and no statusline fallback | History of [ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md) |
+| [ADR-0028 history](ADR-0028-prime-only-an-idle-reported-five-hour-window-history.md) | Prime only an idle, reported five-hour window | History of [ADR-0028](../ADR-0028-prime-only-an-idle-reported-five-hour-window.md) |

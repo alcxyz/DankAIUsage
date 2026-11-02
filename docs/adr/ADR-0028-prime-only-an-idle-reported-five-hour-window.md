@@ -1,7 +1,8 @@
 # ADR-0028: Prime only an idle, reported five-hour window
 
 **Status:** Accepted
-**Date:** 2026-11-02, updated 2026-11-02 (active hours, weekly headroom and daily cap added, at the owner's request in the #45 thread)
+**Date:** 2026-11-02, updated 2026-11-02 (active hours, weekly headroom and daily cap added, at the owner's request in the #45 thread; opt-in moved to a new settings key)
+**History:** [archive/ADR-0028-prime-only-an-idle-reported-five-hour-window-history.md](archive/ADR-0028-prime-only-an-idle-reported-five-hour-window-history.md)
 **Applies to:** `cmd/dankaiusage` (`claude-prime`), `DankAIUsageWidget.qml` (auto-prime), settings
 **Builds on:** ADR-0001, ADR-0015, ADR-0027
 **Replaces:** the retired [ADR-0006](archive/ADR-0006-opt-in-claude-prime.md)
@@ -25,8 +26,10 @@ able to repeat that failure.
 ## Decision
 
 - `dankaiusage claude-prime` and auto-prime return, opt-in through
-  **Claude prime** (`enableClaudePrime`, default off), because the request
-  spends a little real usage.
+  **Claude prime** (`claudePrimeEnabled`, default off), because the request
+  spends a little real usage. The 1.x key `enableClaudePrime` is ignored: 2.0.0
+  removed prime without clearing it, so reading it would re-enable prime for
+  everyone who had opted in before; they opt in again.
 - The helper decides only from the latest usage response the quota poll saved
   (`claude-oauth-usage.json`). It makes no usage request of its own and has no
   local-timer fallback. It sends the prime request only when all hold:
