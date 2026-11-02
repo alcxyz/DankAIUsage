@@ -243,7 +243,11 @@ test("armed Codex reset stays discoverable and only the automation group starts 
     assert.equal(collapsed.length, 1, "exactly one group starts collapsed");
     assert.match(qml.slice(collapsed[0].start, collapsed[0].end), /collapsible: true/);
     const collapsedKeys = settingControls.filter(c => c.chain.includes(collapsed[0])).map(c => c.key).sort();
-    assert.deepEqual(collapsedKeys, ["enableClaudePrime", "publicResetAnnouncements", "systemNotifications"]);
+    assert.deepEqual(collapsedKeys, ["claudePrimeActiveFrom", "claudePrimeActiveUntil", "claudePrimeDailyCap",
+        "claudePrimeMinWeeklyLeft", "enableClaudePrime", "publicResetAnnouncements", "systemNotifications"]);
+    // The prime limits show only while prime is on.
+    const primeFrom = settingControls.find(c => c.key === "claudePrimeActiveFrom");
+    assert.match(spanText(primeFrom.chain[1]), /visible: claudePrimeToggle\.value/);
 });
 
 test("the five-hour switch follows a session bucket on Claude's own provider", () => {

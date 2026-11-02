@@ -58,11 +58,13 @@ function makePrimeScope(overrides = {}) {
         lastClaudeAutoPrimeAt: 0, refreshInterval: 300,
         providers: [claude()],
         primeCalls: [], claudePrimeLast: {},
+        claudePrimeActiveFrom: 0, claudePrimeActiveUntil: 0, claudePrimeMinWeeklyLeft: 10, claudePrimeDailyCap: 5,
         formatShortDateTime: value => value ? "at " + value : "",
         ...overrides,
     };
     scope.primeClaude = automatic => { scope.primeCalls.push(automatic); };
     scope.claudeProviderData = bindQmlFunction("claudeProviderData", scope);
+    scope.claudePrimeActiveNow = bindQmlFunction("claudePrimeActiveNow", scope);
     scope.claudePrimeIdleReason = bindQmlFunction("claudePrimeIdleReason", scope);
     scope.maybeAutoPrimeClaude = bindQmlFunction("maybeAutoPrimeClaude", scope);
     scope.claudePrimeStatusLine = bindQmlFunction("claudePrimeStatusLine", scope);
@@ -189,4 +191,39 @@ test("a cached summary loads without priming", () => {
     assert.equal(applied.length, 1, "the cached summary is applied once");
     assert.equal(applied[0][0], cached);
     assert.equal(applied[0][1], false, "loadCache passes allowAutoPrime as false");
+});
+
+test("an unconfirmed prime is reported before the owner's limits, as in the helper", () => {
+    const hour = new Date(now).getHours();
+    const scope = makePrimeScope({claudePrimeActiveFrom: (hour + 1) % 24, claudePrimeActiveUntil: (hour + 2) % 24,
+        claudePrimeLast: {reason: "prime_unconfirmed", primedAt: minutesFromNow(-60)}});
+    assert.match(scope.claudePrimeIdleReason(claude()), /^the last prime started no window/);
+});
+
+test("the owner's prime limits keep the widget from asking, as in the helper", () => {
+    const hour = new Date(now).getHours();
+    const scope = makePrimeScope({claudePrimeActiveFrom: (hour + 1) % 24, claudePrimeActiveUntil: (hour + 2) % 24});
+    assert.match(scope.claudePrimeIdleReason(claude()), /^outside active hours/);
+    scope.maybeAutoPrimeClaude();
+    assert.deepEqual(scope.primeCalls, [], "no helper call outside active hours");
+    scope.claudePrimeActiveFrom = hour;
+    scope.claudePrimeActiveUntil = (hour + 1) % 24;
+    assert.equal(scope.claudePrimeIdleReason(claude()), "", "inside active hours");
+    scope.claudePrimeActiveFrom = (hour + 23) % 24;
+    scope.claudePrimeActiveUntil = (hour + 23) % 24;
+    assert.equal(scope.claudePrimeActiveNow(), true, "equal hours mean all day");
+
+    assert.equal(scope.claudePrimeIdleReason(claude({weeklyLeft: {known: true, percentRemaining: 5}})),
+        "less than 10% of the weekly limit left");
+    assert.equal(scope.claudePrimeIdleReason(claude({weeklyLeft: {known: true, percentRemaining: 50}})), "");
+    scope.claudePrimeMinWeeklyLeft = 0;
+    assert.equal(scope.claudePrimeIdleReason(claude({weeklyLeft: {known: true, percentRemaining: 5}})), "", "0 turns the guard off");
+
+    scope.claudePrimeLast = {reason: "daily_cap", checkedAt: new Date(now).toISOString(), dailyCap: 5};
+    assert.equal(scope.claudePrimeIdleReason(claude()), "daily prime limit reached");
+    scope.claudePrimeDailyCap = 8;
+    assert.equal(scope.claudePrimeIdleReason(claude()), "", "a raised cap lets the widget ask the helper again");
+    scope.claudePrimeDailyCap = 5;
+    scope.claudePrimeLast = {reason: "daily_cap", checkedAt: new Date(now - 2 * 86400000).toISOString()};
+    assert.equal(scope.claudePrimeIdleReason(claude()), "", "a cap from an earlier day has expired");
 });

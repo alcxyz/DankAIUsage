@@ -96,6 +96,11 @@ PluginComponent {
     property string trackingCommandError: ""
     property bool clearTrackingConfirm: false
     property bool enableClaudePrime: false
+    // Prime's extra guards (ADR-0028); the helper enforces them too.
+    property int claudePrimeActiveFrom: 7
+    property int claudePrimeActiveUntil: 23
+    property int claudePrimeMinWeeklyLeft: 10
+    property int claudePrimeDailyCap: 5
 
     property bool isLoading: true
     property bool hasError: false
@@ -124,6 +129,7 @@ PluginComponent {
     // kept across restarts for the Diagnostics line.
     property var claudePrimeLast: ({})
     property double lastClaudeAutoPrimeAt: 0
+    property int _claudePrimeLaunchCap: 0
     property var codexResetStatus: ({ armed: false, stateKnown: false, message: "Checking reset control..." })
     property bool codexResetReady: false
     property string _codexResetOutput: ""
@@ -212,6 +218,17 @@ PluginComponent {
         heatmapPalette = pluginService.loadPluginData(pluginId, "heatmapPalette", "fixed") === "theme" ? "theme" : "fixed"
         heatmapBasis = pluginService.loadPluginData(pluginId, "heatmapBasis", "usage") === "pace" ? "pace" : "usage"
         enableClaudePrime = pluginService.loadPluginData(pluginId, "enableClaudePrime", false) === true
+        claudePrimeActiveFrom = boundedSetting("claudePrimeActiveFrom", 7, 0, 23)
+        claudePrimeActiveUntil = boundedSetting("claudePrimeActiveUntil", 23, 0, 24)
+        claudePrimeMinWeeklyLeft = boundedSetting("claudePrimeMinWeeklyLeft", 10, 0, 50)
+        claudePrimeDailyCap = boundedSetting("claudePrimeDailyCap", 5, 1, 10)
+    }
+
+    // An integer setting within its range, or its default.
+    function boundedSetting(key, fallback, minimum, maximum) {
+        var value = Number(pluginService.loadPluginData(pluginId, key, fallback))
+        if (!isFinite(value) || Math.round(value) !== value || value < minimum || value > maximum) return fallback
+        return value
     }
 
     function loadCache() {
@@ -757,9 +774,14 @@ PluginComponent {
             if (pluginService && pluginService.savePluginState)
                 pluginService.savePluginState(pluginId, "lastClaudeAutoPrimeAt", lastClaudeAutoPrimeAt)
         }
+        _claudePrimeLaunchCap = claudePrimeDailyCap
         claudePrimeProcess.command = [
             "dankaiusage", "claude-prime",
-            "--refresh-interval", "" + root.refreshInterval
+            "--refresh-interval", "" + root.refreshInterval,
+            "--active-from", "" + root.claudePrimeActiveFrom,
+            "--active-until", "" + root.claudePrimeActiveUntil,
+            "--min-weekly-left", "" + root.claudePrimeMinWeeklyLeft,
+            "--daily-cap", "" + root.claudePrimeDailyCap
         ]
         claudePrimeProcess.running = true
     }
@@ -791,7 +813,30 @@ PluginComponent {
         var primedAt = Date.parse(last.primedAt || "")
         if (last.reason === "prime_unconfirmed" && isFinite(primedAt) && Date.now() < primedAt + 5 * 3600000)
             return "the last prime started no window; retrying " + formatShortDateTime(new Date(primedAt + 5 * 3600000).toISOString())
+        // The owner's guards, in the helper's order.
+        if (!claudePrimeActiveNow()) return "outside active hours (" + claudePrimeActiveFrom + ":00 to " + claudePrimeActiveUntil + ":00)"
+        var weekly = provider.weeklyLeft
+        if (claudePrimeMinWeeklyLeft > 0 && weekly && weekly.known === true && weekly.percentRemaining < claudePrimeMinWeeklyLeft)
+            return "less than " + claudePrimeMinWeeklyLeft + "% of the weekly limit left"
+        // The helper counts primes; the widget only remembers that it hit the
+        // cap today, and asks again once the cap is raised.
+        var checked = new Date(Date.parse(last.checkedAt || ""))
+        if (last.reason === "daily_cap" && !isNaN(checked.getTime())
+                && checked.toDateString() === new Date(Date.now()).toDateString()
+                && !(last.dailyCap < claudePrimeDailyCap))
+            return "daily prime limit reached"
         return ""
+    }
+
+    // Local hours; equal hours mean all day and a range may wrap past
+    // midnight, as in the helper.
+    function claudePrimeActiveNow() {
+        var from = claudePrimeActiveFrom
+        var until = claudePrimeActiveUntil === 24 ? 0 : claudePrimeActiveUntil
+        var hour = new Date(Date.now()).getHours()
+        if (from === until) return true
+        if (from < until) return hour >= from && hour < until
+        return hour >= from || hour < until
     }
 
     function maybeAutoPrimeClaude() {
@@ -845,7 +890,8 @@ PluginComponent {
             root.claudePrimeLast = {
                 message: result.message || "", reason: result.reason || "",
                 checkedAt: result.checkedAt || new Date().toISOString(), primedAt: result.primedAt || "",
-                primed: result.primed === true, ok: exitCode === 0
+                primed: result.primed === true, ok: exitCode === 0,
+                dailyCap: root._claudePrimeLaunchCap
             }
             if (root.pluginService && root.pluginService.savePluginState)
                 root.pluginService.savePluginState(root.pluginId, "claudePrimeLast", root.claudePrimeLast)

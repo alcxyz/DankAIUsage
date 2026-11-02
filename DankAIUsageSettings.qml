@@ -774,10 +774,56 @@ PluginSettings {
         expanded: false
 
         ToggleSetting {
+            id: claudePrimeToggle
             settingKey: "enableClaudePrime"
             label: "Claude prime"
             description: "Starts Claude's five-hour window with a tiny request when it is idle, so it runs while you are away. Only acts when Claude reports a five-hour window for this account; uses a little usage."
             defaultValue: false
+        }
+
+        SettingsGroup {
+            title: "Claude prime limits"
+            nested: true
+            visible: claudePrimeToggle.value
+
+            SliderSetting {
+                settingKey: "claudePrimeActiveFrom"
+                label: "Active from"
+                description: "Local hour from which prime may start a window"
+                minimum: 0
+                maximum: 23
+                defaultValue: 7
+                unit: ":00"
+            }
+
+            SliderSetting {
+                settingKey: "claudePrimeActiveUntil"
+                label: "Active until"
+                description: "Local hour until which prime may start a window; the same hour as Active from means all day"
+                minimum: 0
+                maximum: 24
+                defaultValue: 23
+                unit: ":00"
+            }
+
+            SliderSetting {
+                settingKey: "claudePrimeMinWeeklyLeft"
+                label: "Keep weekly headroom"
+                description: "Skip priming when less than this much of the weekly limit is left; 0 turns it off"
+                minimum: 0
+                maximum: 50
+                defaultValue: 10
+                unit: "%"
+            }
+
+            SliderSetting {
+                settingKey: "claudePrimeDailyCap"
+                label: "Most primes per day"
+                description: "Prime requests per local day"
+                minimum: 1
+                maximum: 10
+                defaultValue: 5
+            }
         }
 
         ToggleSetting {

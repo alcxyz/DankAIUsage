@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,6 +33,13 @@ const (
 	// prime waits this long before trying again, so a prime that cannot start
 	// one costs at most one request per window length.
 	claudePrimeUnconfirmedRetry = 5 * time.Hour
+	// Owner-chosen defaults for the extra guards (ADR-0028): prime from 07:00
+	// to 23:00 local time, not when under 10% of the weekly limit is left, and
+	// at most five times a local day.
+	defaultClaudePrimeActiveFrom    = 7
+	defaultClaudePrimeActiveUntil   = 23
+	defaultClaudePrimeMinWeeklyLeft = 10
+	defaultClaudePrimeDailyCap      = 5
 )
 
 // Reasons a prime check ends with. "primed" sent the request; every other
@@ -44,6 +52,9 @@ const (
 	claudePrimeReasonSignIn        = "sign_in_mismatch"
 	claudePrimeReasonAwaitingUsage = "awaiting_usage"
 	claudePrimeReasonUnconfirmed   = "prime_unconfirmed"
+	claudePrimeReasonInactiveHours = "outside_active_hours"
+	claudePrimeReasonWeeklyLow     = "weekly_low"
+	claudePrimeReasonDailyCap      = "daily_cap"
 	claudePrimeReasonNoWindow      = "no_five_hour_window"
 	claudePrimeReasonRunning       = "window_running"
 )
@@ -58,9 +69,12 @@ type claudePrimeState struct {
 	// ConfirmedAt is when a usage response fetched after PrimedAt first
 	// showed the five-hour window running; the summary records it.
 	ConfirmedAt string `json:"confirmedAt,omitempty"`
-	CheckedAt   string `json:"checkedAt,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	Message     string `json:"message,omitempty"`
+	// PrimeTimes lists the prime requests of the last two days, for the
+	// daily cap.
+	PrimeTimes []string `json:"primeTimes,omitempty"`
+	CheckedAt  string   `json:"checkedAt,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
+	Message    string   `json:"message,omitempty"`
 }
 
 type claudePrimeResult struct {
@@ -78,6 +92,87 @@ type claudePrimeOptions struct {
 	Model           string
 	Timeout         time.Duration
 	RefreshInterval time.Duration
+	Guards          claudePrimeGuards
+}
+
+// claudePrimeGuards are the optional limits on when prime may fire. Hours
+// are local; ActiveFrom == ActiveUntil means all day, and a range may wrap
+// past midnight. MinWeeklyLeft 0 turns the weekly guard off.
+type claudePrimeGuards struct {
+	ActiveFrom    int
+	ActiveUntil   int
+	MinWeeklyLeft float64
+	DailyCap      int
+}
+
+func defaultClaudePrimeGuards() claudePrimeGuards {
+	return claudePrimeGuards{
+		ActiveFrom: defaultClaudePrimeActiveFrom, ActiveUntil: defaultClaudePrimeActiveUntil,
+		MinWeeklyLeft: defaultClaudePrimeMinWeeklyLeft, DailyCap: defaultClaudePrimeDailyCap,
+	}
+}
+
+// normalized clamps the guards to valid values, so a bad setting can only
+// make prime stricter or keep the defaults.
+func (g claudePrimeGuards) normalized() claudePrimeGuards {
+	if g.ActiveFrom < 0 || g.ActiveFrom > 23 {
+		g.ActiveFrom = defaultClaudePrimeActiveFrom
+	}
+	if g.ActiveUntil < 0 || g.ActiveUntil > 24 {
+		g.ActiveUntil = defaultClaudePrimeActiveUntil
+	}
+	if g.ActiveUntil == 24 {
+		g.ActiveUntil = 0
+	}
+	// 0 turns the weekly guard off on purpose; anything outside 0 to 100,
+	// or not a number, keeps the default rather than turning it off.
+	if math.IsNaN(g.MinWeeklyLeft) || g.MinWeeklyLeft < 0 || g.MinWeeklyLeft > 100 {
+		g.MinWeeklyLeft = defaultClaudePrimeMinWeeklyLeft
+	}
+	if g.DailyCap < 1 || g.DailyCap > 24 {
+		g.DailyCap = defaultClaudePrimeDailyCap
+	}
+	return g
+}
+
+func (g claudePrimeGuards) activeAt(t time.Time) bool {
+	hour := t.Hour()
+	switch {
+	case g.ActiveFrom == g.ActiveUntil:
+		return true
+	case g.ActiveFrom < g.ActiveUntil:
+		return hour >= g.ActiveFrom && hour < g.ActiveUntil
+	default:
+		return hour >= g.ActiveFrom || hour < g.ActiveUntil
+	}
+}
+
+// primesToday counts the recorded primes on now's local date.
+func primesToday(times []string, now time.Time) int {
+	y, m, d := now.Date()
+	count := 0
+	for _, value := range times {
+		t, err := time.Parse(time.RFC3339Nano, value)
+		if err != nil {
+			continue
+		}
+		ty, tm, td := t.In(now.Location()).Date()
+		if ty == y && tm == m && td == d {
+			count++
+		}
+	}
+	return count
+}
+
+// recentPrimeTimes keeps the primes of the last two days.
+func recentPrimeTimes(times []string, now time.Time) []string {
+	var out []string
+	for _, value := range times {
+		if t, err := time.Parse(time.RFC3339Nano, value); err == nil && now.Sub(t) < 48*time.Hour {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 // claudePrimeInputs is everything a prime decision depends on, so the
@@ -92,6 +187,8 @@ type claudePrimeInputs struct {
 	// PrimeConfirmed is true when a usage response after the last prime
 	// showed the window running.
 	PrimeConfirmed  bool
+	Guards          claudePrimeGuards
+	PrimesToday     int
 	RefreshInterval time.Duration
 }
 
@@ -115,6 +212,10 @@ func runClaudePrimeCommand(args []string) {
 	model := fs.String("model", defaultClaudePrimeModel, "Claude model alias or full model name used for the prime request")
 	timeoutSeconds := fs.Int("timeout-seconds", 120, "maximum seconds to wait for Claude Code")
 	refreshInterval := fs.Int("refresh-interval", int(usageRefreshDefaultInterval/time.Second), "provider usage refresh interval in seconds")
+	activeFrom := fs.Int("active-from", defaultClaudePrimeActiveFrom, "local hour (0-23) from which prime may fire")
+	activeUntil := fs.Int("active-until", defaultClaudePrimeActiveUntil, "local hour (0-24) until which prime may fire; equal to active-from means all day")
+	minWeeklyLeft := fs.Float64("min-weekly-left", defaultClaudePrimeMinWeeklyLeft, "skip when less than this percent of the weekly limit is left; 0 turns it off")
+	dailyCap := fs.Int("daily-cap", defaultClaudePrimeDailyCap, "most prime requests per local day")
 	pretty := fs.Bool("pretty", false, "pretty-print JSON")
 	_ = fs.Parse(args)
 
@@ -123,6 +224,10 @@ func runClaudePrimeCommand(args []string) {
 		Model:           *model,
 		Timeout:         time.Duration(maxInt(*timeoutSeconds, 1)) * time.Second,
 		RefreshInterval: usageRefreshIntervalSeconds(*refreshInterval),
+		Guards: claudePrimeGuards{
+			ActiveFrom: *activeFrom, ActiveUntil: *activeUntil,
+			MinWeeklyLeft: *minWeeklyLeft, DailyCap: *dailyCap,
+		},
 	}, time.Now)
 	var data []byte
 	var encodeErr error
@@ -168,6 +273,7 @@ func primeClaude(opts claudePrimeOptions, clock usageRefreshClock) (claudePrimeR
 			Organization: organization, OrganizationErr: organizationErr,
 			LastPrimedAt: lastPrimedAt, PrimeConfirmed: !lastPrimedAt.IsZero() && confirmedAt.After(lastPrimedAt),
 			RefreshInterval: opts.RefreshInterval,
+			Guards:          opts.Guards.normalized(), PrimesToday: primesToday(state.PrimeTimes, now),
 		})
 		state.CheckedAt = now.UTC().Format(time.RFC3339Nano)
 		state.Reason = decision.Reason
@@ -179,6 +285,7 @@ func primeClaude(opts claudePrimeOptions, clock usageRefreshClock) (claudePrimeR
 			state.PrimedAt = state.CheckedAt
 			state.PrimedOrganization = organization
 			state.ConfirmedAt = ""
+			state.PrimeTimes = append(recentPrimeTimes(state.PrimeTimes, now), state.CheckedAt)
 			state.Message = "Prime request sent"
 		}
 		result = claudePrimeResult{
@@ -238,7 +345,7 @@ func decideClaudePrime(in claudePrimeInputs) claudePrimeDecision {
 	if !in.LastPrimedAt.IsZero() && (!fetchedAt.After(in.LastPrimedAt) || in.Now.Sub(in.LastPrimedAt) < claudePrimeMinInterval) {
 		return skip(claudePrimeReasonAwaitingUsage, "Prime ran recently; it waits for a usage response that shows the result")
 	}
-	session, _, _, _, err := parseClaudeOAuthUsage(in.Usage.Body, in.Now)
+	session, weekly, _, _, err := parseClaudeOAuthUsage(in.Usage.Body, in.Now)
 	if err != nil {
 		return skip(claudePrimeReasonUsageUnknown, "Claude usage is unknown; prime waits for a usage response")
 	}
@@ -265,6 +372,28 @@ func decideClaudePrime(in claudePrimeInputs) claudePrimeDecision {
 		return claudePrimeDecision{
 			Reason:  claudePrimeReasonUnconfirmed,
 			Message: "No usage response showed the last prime starting a window; prime waits five hours before trying again",
+			Session: &session,
+		}
+	}
+	// The owner's guards come last, in the ADR's order.
+	if !in.Guards.activeAt(in.Now) {
+		return claudePrimeDecision{
+			Reason:  claudePrimeReasonInactiveHours,
+			Message: fmt.Sprintf("Outside prime's active hours (%02d:00 to %02d:00)", in.Guards.ActiveFrom, in.Guards.ActiveUntil),
+			Session: &session,
+		}
+	}
+	if in.Guards.MinWeeklyLeft > 0 && weekly.Known && weekly.PercentRemaining < in.Guards.MinWeeklyLeft {
+		return claudePrimeDecision{
+			Reason:  claudePrimeReasonWeeklyLow,
+			Message: fmt.Sprintf("Less than %.0f%% of the weekly limit is left, so a new five-hour window would not help", in.Guards.MinWeeklyLeft),
+			Session: &session,
+		}
+	}
+	if in.Guards.DailyCap > 0 && in.PrimesToday >= in.Guards.DailyCap {
+		return claudePrimeDecision{
+			Reason:  claudePrimeReasonDailyCap,
+			Message: fmt.Sprintf("Prime already ran %d times today, its daily limit", in.PrimesToday),
 			Session: &session,
 		}
 	}

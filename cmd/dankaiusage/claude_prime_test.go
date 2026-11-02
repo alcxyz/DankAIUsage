@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -331,5 +332,118 @@ func TestClaudePrimeConfirmedBySummaryPrimesTheNextWindow(t *testing.T) {
 	state, _ = loadClaudePrimeState(claudePrimeStatePath())
 	if state.ConfirmedAt != "" {
 		t.Fatalf("a new prime keeps the old confirmation: %+v", state)
+	}
+}
+
+func TestClaudePrimeGuards(t *testing.T) {
+	zone := time.FixedZone("test", 3600)
+	at := func(hour int) time.Time { return time.Date(2026, 11, 2, hour, 30, 0, 0, zone) }
+	guards := claudePrimeGuards{ActiveFrom: 7, ActiveUntil: 23, MinWeeklyLeft: 10, DailyCap: 5}.normalized()
+	for hour, want := range map[int]bool{6: false, 7: true, 12: true, 22: true, 23: false, 2: false} {
+		if got := guards.activeAt(at(hour)); got != want {
+			t.Fatalf("07-23 active at %02d:30 = %v, want %v", hour, got, want)
+		}
+	}
+	night := claudePrimeGuards{ActiveFrom: 22, ActiveUntil: 6}.normalized()
+	for hour, want := range map[int]bool{21: false, 22: true, 2: true, 6: false} {
+		if got := night.activeAt(at(hour)); got != want {
+			t.Fatalf("22-06 active at %02d:30 = %v, want %v", hour, got, want)
+		}
+	}
+	if !(claudePrimeGuards{ActiveFrom: 9, ActiveUntil: 9}).normalized().activeAt(at(3)) {
+		t.Fatal("equal hours mean all day")
+	}
+	if g := (claudePrimeGuards{ActiveFrom: 0, ActiveUntil: 24}).normalized(); !g.activeAt(at(23)) || !g.activeAt(at(0)) {
+		t.Fatalf("0-24 is all day: %+v", g)
+	}
+	if g := (claudePrimeGuards{ActiveFrom: 40, ActiveUntil: -1, MinWeeklyLeft: 150, DailyCap: -3}).normalized(); g.ActiveFrom != 7 || g.ActiveUntil != 23 || g.MinWeeklyLeft != 10 || g.DailyCap != 5 {
+		t.Fatalf("invalid guards normalize to %+v", g)
+	}
+	// An invalid weekly threshold keeps the default instead of turning the
+	// guard off; only 0 turns it off.
+	for _, value := range []float64{-5, math.NaN(), 101} {
+		if g := (claudePrimeGuards{MinWeeklyLeft: value}).normalized(); g.MinWeeklyLeft != 10 {
+			t.Fatalf("min weekly left %v normalizes to %v", value, g.MinWeeklyLeft)
+		}
+	}
+	if g := (claudePrimeGuards{MinWeeklyLeft: 0, DailyCap: 99}).normalized(); g.MinWeeklyLeft != 0 || g.DailyCap != 5 {
+		t.Fatalf("guards normalize to %+v", g)
+	}
+
+	now := at(12)
+	base := claudePrimeInputs{Now: now, Usage: primeUsage(primeUsageIdleWindow, now.Add(-time.Minute)), Organization: "org-prime",
+		RefreshInterval: 5 * time.Minute, Guards: guards}
+	if got := decideClaudePrime(base); !got.Fire {
+		t.Fatalf("idle window within the guards = %+v", got)
+	}
+	night1 := base
+	night1.Now = at(2)
+	night1.Usage = primeUsage(primeUsageIdleWindow, night1.Now.Add(-time.Minute))
+	if got := decideClaudePrime(night1); got.Fire || got.Reason != claudePrimeReasonInactiveHours {
+		t.Fatalf("outside active hours = %+v", got)
+	}
+	low := base
+	low.Usage = primeUsage(`{"five_hour":{"utilization":0,"resets_at":null},"seven_day":{"utilization":95}}`, now.Add(-time.Minute))
+	if got := decideClaudePrime(low); got.Fire || got.Reason != claudePrimeReasonWeeklyLow {
+		t.Fatalf("weekly nearly used = %+v", got)
+	}
+	low.Guards.MinWeeklyLeft = 0
+	if got := decideClaudePrime(low); !got.Fire {
+		t.Fatalf("weekly guard off = %+v", got)
+	}
+	noWeekly := base
+	noWeekly.Usage = primeUsage(`{"five_hour":{"utilization":0,"resets_at":null}}`, now.Add(-time.Minute))
+	if got := decideClaudePrime(noWeekly); !got.Fire {
+		t.Fatalf("unknown weekly does not block = %+v", got)
+	}
+	capped := base
+	capped.PrimesToday = 5
+	if got := decideClaudePrime(capped); got.Fire || got.Reason != claudePrimeReasonDailyCap {
+		t.Fatalf("daily cap = %+v", got)
+	}
+	// No window still says so first, whatever the guards.
+	none := night1
+	none.Usage = primeUsage(primeUsageNoWindow, night1.Now.Add(-time.Minute))
+	if got := decideClaudePrime(none); got.Reason != claudePrimeReasonNoWindow {
+		t.Fatalf("no window outside active hours = %+v", got)
+	}
+	// An unconfirmed prime is reported before the guards (ADR-0028 order).
+	unconfirmed := night1
+	unconfirmed.LastPrimedAt = night1.Now.Add(-time.Hour)
+	if got := decideClaudePrime(unconfirmed); got.Reason != claudePrimeReasonUnconfirmed {
+		t.Fatalf("unconfirmed prime outside active hours = %+v", got)
+	}
+
+	today := []string{
+		time.Date(2026, 11, 1, 23, 50, 0, 0, zone).UTC().Format(time.RFC3339Nano),
+		time.Date(2026, 11, 2, 0, 10, 0, 0, zone).UTC().Format(time.RFC3339Nano),
+		time.Date(2026, 11, 2, 9, 0, 0, 0, zone).UTC().Format(time.RFC3339Nano),
+		time.Date(2026, 10, 30, 9, 0, 0, 0, zone).UTC().Format(time.RFC3339Nano),
+	}
+	if got := primesToday(today, now); got != 2 {
+		t.Fatalf("primes today = %d, want 2 (local date)", got)
+	}
+	if got := recentPrimeTimes(today, now); len(got) != 3 {
+		t.Fatalf("recent primes = %v", got)
+	}
+}
+
+func TestClaudePrimeDailyCapAcrossRequests(t *testing.T) {
+	env := setupPrimeTest(t)
+	opts := claudePrimeOptions{RefreshInterval: 5 * time.Minute, Guards: claudePrimeGuards{ActiveFrom: 0, ActiveUntil: 0, DailyCap: 2}}
+	start := mustParseTime(t, "2026-11-02T01:00:00Z")
+	for i := range 4 {
+		now := start.Add(time.Duration(i) * 6 * time.Hour)
+		writePrimeUsage(t, primeUsage(primeUsageIdleWindow, now.Add(-time.Minute)))
+		if _, err := primeClaude(opts, func() time.Time { return now.In(time.UTC) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if env.calls != 2 {
+		t.Fatalf("calls = %d, want the daily cap of 2", env.calls)
+	}
+	state, _ := loadClaudePrimeState(claudePrimeStatePath())
+	if state.Reason != claudePrimeReasonDailyCap || len(state.PrimeTimes) != 2 {
+		t.Fatalf("state = %+v", state)
 	}
 }
