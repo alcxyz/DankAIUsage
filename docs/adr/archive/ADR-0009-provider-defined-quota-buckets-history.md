@@ -1,4 +1,4 @@
-**History of** [ADR-0009](../ADR-0009-provider-defined-quota-buckets.md): text replaced on 2026-10-31.
+**History of** [ADR-0009](../ADR-0009-provider-defined-quota-buckets.md): text replaced on 2026-10-31 and 2026-11-02.
 
 # ADR-0009: Render provider-defined quota buckets
 
@@ -53,3 +53,18 @@ The old weekly-focus setting is removed because there is no longer one global
 pair of windows to select between. Credit usage is visible but remains
 read-only; purchasing or changing extra-usage settings stays in the provider's
 own account UI.
+
+## Text replaced on 2026-11-02
+
+Five-hour windows were restored where providers still report them ([ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md)), which replaced:
+
+**Status:** Accepted, amended 2026-10-31 by [ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (no session window)
+**Date:** 2026-08-30
+
+windows. Claude can return weekly, model-scoped, and monetary extra-usage
+limits; it also returned a five-hour window until Anthropic removed it
+(ADR-0027). Its usage response currently exposes the monetary cap in
+
+- Retain `weeklyLeft` and `extraLimits` in the helper output for
+  compatibility, but do not use them to construct the widget layout. The
+  helper emits no `sessionLeft` and no session buckets.

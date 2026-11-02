@@ -1,4 +1,4 @@
-**History of** [ADR-0015](../ADR-0015-shared-usage-refresh-cooldown.md): text replaced on 2026-10-31.
+**History of** [ADR-0015](../ADR-0015-shared-usage-refresh-cooldown.md): text replaced on 2026-10-31 and 2026-11-02.
 
 # ADR-0015: Shared usage refresh cooldown
 
@@ -56,3 +56,13 @@ long intervals, sleep or provider failures can delay or miss an earned reset's
 expiry window. The one-shot reset control remains best effort, not a guarantee.
 Manual refresh can therefore show cached quotas rather than contacting a
 provider immediately.
+
+## Text replaced on 2026-11-02
+
+Claude prime was restored ([ADR-0028](../ADR-0028-prime-only-an-idle-reported-five-hour-window.md)), which replaced:
+
+**Status:** Accepted, amended 2026-10-31 by [ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (Claude prime removed)
+**Date:** 2026-09-09
+
+The Decision gained a bullet on Claude prime's usage reads; no other text
+changed.

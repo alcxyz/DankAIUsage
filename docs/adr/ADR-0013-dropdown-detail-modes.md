@@ -1,7 +1,7 @@
 # ADR-0013: Simple and Advanced dropdown modes
 
-**Status:** Accepted, amended 2026-10-31 by [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (Claude session scheduling removed)
-**Date:** 2026-09-08
+**Status:** Accepted
+**Date:** 2026-09-08, updated 2026-11-02 (Claude prime restored, [ADR-0028](ADR-0028-prime-only-an-idle-reported-five-hour-window.md))
 **Applies to:** widget dropdown
 **History:** [archive/ADR-0013-dropdown-detail-modes-history.md](archive/ADR-0013-dropdown-detail-modes-history.md)
 
@@ -30,7 +30,9 @@ without changing collection or their topbar layout.
   it is separate from quota consumption. An overdue reset remains awaiting
   fresh data rather than implying a refill or extrapolating another window.
 - Keep armed Codex reset controls visible and cancellable in Simple. Also show
-  errors, unknown reset state, and uncertain attempts.
+  errors, unknown reset state, and uncertain attempts. While Claude prime is
+  enabled, show its one-line status in both modes, including why it is idle
+  ([ADR-0028](ADR-0028-prime-only-an-idle-reported-five-hour-window.md)).
 - Hide the settled, unarmed Codex reset control in Advanced when no spendable
   reset is available. The one-shot control remains accessible in settings.
 

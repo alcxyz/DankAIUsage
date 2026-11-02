@@ -1,4 +1,4 @@
-**History of** [ADR-0022](../ADR-0022-manual-claude-limit-reset.md): text replaced on 2026-10-31.
+**History of** [ADR-0022](../ADR-0022-manual-claude-limit-reset.md): text replaced on 2026-10-31 and 2026-11-02.
 
 # ADR-0022: Explicit, confirmed use of Claude limit resets
 
@@ -107,3 +107,16 @@ this endpoint (ADR-0001); this is the same identity, stated precisely.
 - Using the reset is an account change that cannot be undone. The helper
   requires an explicit `use`, the widget requires two clicks, and nothing is
   ever triggered by install, refresh, or a timer.
+
+## Text replaced on 2026-11-02
+
+Five-hour windows were restored where providers still report them ([ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md)), which replaced:
+
+**Status:** Accepted, amended by ADR-0023 (the request identity and the single usage request) and on 2026-10-31 by [ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (grants clear the weekly window)
+**Date:** 2026-10-03
+
+occasional **limit resets**: a saved reset that refills a usage window when
+the user chooses, until it expires. When this was decided a grant refilled the
+five-hour window (and, for the launch grant, the weekly window); since
+Anthropic removed the five-hour window (ADR-0027), grants clear the weekly
+window. claude.ai exposes it under Settings → Usage, and Claude Code ships a

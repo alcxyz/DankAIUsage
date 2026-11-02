@@ -1,4 +1,4 @@
-**History of** [ADR-0021](../ADR-0021-top-bar-quota-bars.md): text replaced on 2026-10-31.
+**History of** [ADR-0021](../ADR-0021-top-bar-quota-bars.md): text replaced on 2026-10-31 and 2026-11-02.
 
 # ADR-0021: Optional quota bars in the horizontal top bar
 
@@ -61,3 +61,24 @@ The default top bar is unchanged. Bar mode trades exact numbers for density
 unless the percent label is enabled. Tags are abbreviations; the dropdown and
 hover details remain the place for full labels. New quota kinds without a
 window render as `?` tags until their window length is reported.
+
+## Text replaced on 2026-11-02
+
+Five-hour windows were restored where providers still report them ([ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md)), which replaced:
+
+**Status:** Accepted, amended 2026-10-31 by [ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (no short window or short-window tags)
+**Date:** 2026-09-23
+
+The horizontal pill shows quotas as text. With Claude's weekly and
+model-scoped weekly limits plus Codex (and, when this was decided, Claude's
+five-hour window), that text gets long, and a percentage
+
+  thin bar per quota, stacked in helper order: weekly, then model-scoped
+  limits. Row pitch derives from the bar thickness, so up to four
+
+  countdown (elapsed window time with Used), or the percentage. General
+  quotas are tagged `w`, since weekly is the only general window (ADR-0027),
+  and model-scoped limits take the model initial (`f`), growing only when two
+  tags would clash. There are no short-window tags. Label columns
+
+hover details remain the place for full labels.

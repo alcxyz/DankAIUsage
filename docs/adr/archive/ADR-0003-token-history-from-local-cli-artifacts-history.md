@@ -1,4 +1,4 @@
-**History of** [ADR-0003](../ADR-0003-token-history-from-local-cli-artifacts.md): text replaced on 2026-10-31.
+**History of** [ADR-0003](../ADR-0003-token-history-from-local-cli-artifacts.md): text replaced on 2026-10-31 and 2026-11-02.
 
 # ADR-0003: Token history from local CLI artifacts only
 
@@ -63,3 +63,13 @@ totals. Optional persistent totals are separate, governed by
   collection is marked rather than presented as a complete zero total.
 - Transcript scans are bounded by file mtime against the selected period to
   keep summary runs fast.
+
+## Text replaced on 2026-11-02
+
+Five-hour windows were restored where providers still report them ([ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md)), which replaced:
+
+**Status:** Accepted, amended 2026-10-31 by [ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (five-hour range removed)
+**Date:** 2026-05-28, updated 2026-11-01 (transcript parse cache added)
+
+seven days, thirty days, and ninety days. A saved five-hour choice falls back
+to seven days. The configured history

@@ -1,4 +1,4 @@
-**History of** [ADR-0011](../ADR-0011-local-reset-observation-history.md): text replaced on 2026-10-31.
+**History of** [ADR-0011](../ADR-0011-local-reset-observation-history.md): text replaced on 2026-10-31 and 2026-11-02.
 
 # ADR-0011: Bounded local quota and reset history
 
@@ -66,3 +66,21 @@ are sufficient for this feature.
 History starts with installation and observations. Sleeping, stopping DMS,
 authentication failures, caching, or infrequent polling can hide intermediate
 events. This is a local observation log, not a billing or compliance ledger.
+
+## Text replaced on 2026-11-02
+
+Five-hour windows were restored where providers still report them ([ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md)), which replaced:
+
+**Status:** Accepted, amended 2026-10-31 by [ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (scheduled five-hour filter removed)
+**Date:** 2026-09-08
+
+- Hide known scheduled weekly events by default, with a remembered checkbox
+  in Reset History to include them. Apply filters before the display limit and
+  when hydrating groups. Retain all events normally; a second **Other reset
+  events** checkbox defaults on and covers non-scheduled events and unknown
+  window types. Both may be unchecked. Non-scheduled changes are not
+  classified by duration. An open explanation editor remains accessible.
+- Five-hour windows are no longer collected (ADR-0027). Stored scheduled
+  five-hour events stay hidden, with no filter to show them; unexpected changes
+  on legacy five-hour buckets stay visible with their stored label. The history
+  file is not rewritten.

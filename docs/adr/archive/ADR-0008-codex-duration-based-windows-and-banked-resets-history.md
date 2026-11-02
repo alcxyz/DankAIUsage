@@ -1,4 +1,4 @@
-**History of** [ADR-0008](../ADR-0008-codex-duration-based-windows-and-banked-resets.md): text replaced on 2026-10-31.
+**History of** [ADR-0008](../ADR-0008-codex-duration-based-windows-and-banked-resets.md): text replaced on 2026-10-31 and 2026-11-02.
 
 # ADR-0008: Classify Codex windows by duration and expose banked resets
 
@@ -40,3 +40,26 @@ limit and fabricates a second, empty weekly limit.
 The widget matches both weekly-only and legacy dual-window responses. Claude's
 five-hour and weekly windows remain supported. Adding reset consumption later
 would require an explicit, confirmed action and separate protocol support.
+
+## Text replaced on 2026-11-02
+
+Five-hour windows were restored where providers still report them ([ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md)), which replaced:
+
+**Status:** Accepted, amended 2026-10-31 by [ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (week-length windows only)
+**Date:** 2026-08-30
+
+The response then began returning the general Codex allowance as a
+10,080-minute `primary` window with `secondary: null`. OpenAI has since
+removed the five-hour window: on 2026-10-31 that weekly window was the only
+general window returned
+([ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md)). The
+response can also return
+
+- Classify each present window by `windowDurationMins`. Only week-length
+  windows are supported: a week-length duration is weekly, a window without a
+  usable duration is treated as weekly, and a window with any other known
+  duration, such as a returning five-hour window, is ignored.
+
+The widget shows the weekly window of both weekly-only and legacy dual-window
+responses; a short window is not shown until new code and a new decision
+support it. Adding reset consumption later

@@ -1,4 +1,4 @@
-**History of** [ADR-0012](../ADR-0012-optional-persistent-token-totals.md): text replaced on 2026-10-31 and 2026-11-01.
+**History of** [ADR-0012](../ADR-0012-optional-persistent-token-totals.md): text replaced on 2026-10-31, 2026-11-01 and 2026-11-02.
 
 # ADR-0012: Optional persistent local token totals
 
@@ -79,3 +79,14 @@ this Decision bullet:
 - No new database or service. Enabled tracking may scan more retained files
   than the rolling views. Totals are updated incrementally after deduplication;
   this first implementation favors correctness over a file-offset cache.
+
+## Text replaced on 2026-11-02
+
+Five-hour windows were restored where providers still report them ([ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md)), which replaced:
+
+**Status:** Accepted, amended 2026-10-31 by [ADR-0027](../ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (five-hour range removed); 2026-11-01 (retained-transcript scan uses the transcript parse cache)
+**Date:** 2026-09-08
+
+- Offer explicit rolling ranges: seven days, thirty days, and ninety days.
+  A saved five-hour choice falls back to seven days. These are not quota
+  windows or active-conversation totals.

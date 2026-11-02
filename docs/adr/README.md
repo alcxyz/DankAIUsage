@@ -24,7 +24,8 @@
 | [ADR-0023](ADR-0023-separate-claude-reset-availability-check.md) | Separate low-cadence request for Claude reset availability | cmd/dankaiusage |
 | [ADR-0025](ADR-0025-credit-balance-bars-from-observed-top-ups.md) | Credit balance bars from observed top-ups | cmd/dankaiusage + widget + settings |
 | [ADR-0026](ADR-0026-shared-quota-bar-heatmap.md) | Shared quota-bar heatmap with theme and pace options | widget + settings |
-| [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) | Remove five-hour windows, Claude prime and the statusline fallback | widget + cmd/dankaiusage + settings |
+| [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) | Five-hour windows only where reported, and no statusline fallback | widget + cmd/dankaiusage + settings |
+| [ADR-0028](ADR-0028-prime-only-an-idle-reported-five-hour-window.md) | Prime only an idle, reported five-hour window | cmd/dankaiusage + widget + settings |
 
 Superseded and retired ADRs, and the history of rewritten ones, are in the
 [archive](archive/README.md).

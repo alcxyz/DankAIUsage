@@ -1,7 +1,7 @@
 # ADR-0009: Render provider-defined quota buckets
 
-**Status:** Accepted, amended 2026-10-31 by [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (no session window)
-**Date:** 2026-08-30
+**Status:** Accepted
+**Date:** 2026-08-30, updated 2026-11-02 (five-hour window restored where reported, [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md))
 **Applies to:** `cmd/dankaiusage/main.go`, `DankAIUsageWidget.qml`
 **History:** [archive/ADR-0009-provider-defined-quota-buckets-history.md](archive/ADR-0009-provider-defined-quota-buckets-history.md)
 
@@ -9,9 +9,9 @@
 
 A fixed session/weekly UI no longer represents either provider completely.
 Codex may return only a general weekly limit plus separate model-scoped
-windows. Claude can return weekly, model-scoped, and monetary extra-usage
-limits; it also returned a five-hour window until Anthropic removed it
-(ADR-0027). Its usage response currently exposes the monetary cap in
+windows. Claude can return five-hour, weekly, model-scoped, and monetary
+extra-usage limits; the five-hour window depends on the plan (ADR-0027). Its
+usage response currently exposes the monetary cap in
 both `spend` and `extra_usage` forms.
 
 ## Decision
@@ -19,9 +19,11 @@ both `spend` and `extra_usage` forms.
 - Emit an ordered `quotaBuckets` list for every provider. Each bucket carries
   an identifier, label, kind, allowance percentages, and optional formatted
   value/detail labels.
-- Retain `weeklyLeft` and `extraLimits` in the helper output for
-  compatibility, but do not use them to construct the widget layout. The
-  helper emits no `sessionLeft` and no session buckets.
+- Retain `weeklyLeft`, `extraLimits` and, when the provider reports a
+  five-hour window, `sessionLeft` in the helper output for compatibility and
+  Claude prime ([ADR-0028](ADR-0028-prime-only-an-idle-reported-five-hour-window.md)), but do not use them to construct the
+  widget layout. Without a five-hour window the helper emits no `sessionLeft`
+  and no five-hour buckets.
 - Flatten scoped windows into independent quota buckets.
 - Parse Claude's `spend` object as the authoritative extra-usage representation
   and fall back to `extra_usage`. Monetary amounts remain integer minor units;

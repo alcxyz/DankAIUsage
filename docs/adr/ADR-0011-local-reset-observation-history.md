@@ -1,7 +1,7 @@
 # ADR-0011: Bounded local quota and reset history
 
-**Status:** Accepted, amended 2026-10-31 by [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (scheduled five-hour filter removed)
-**Date:** 2026-09-08
+**Status:** Accepted
+**Date:** 2026-09-08, updated 2026-11-02 (scheduled five-hour filter restored, [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md))
 **Applies to:** `cmd/dankaiusage`, `DankAIUsageWidget.qml`
 **History:** [archive/ADR-0011-local-reset-observation-history-history.md](archive/ADR-0011-local-reset-observation-history-history.md)
 
@@ -48,16 +48,15 @@ the plugin, without adding a monitoring service or another dependency.
   Public announcements page the same way (this supersedes the earlier fixed
   eight). Keep history out of DMS's persistent summary cache so there is one
   retained history store.
-- Hide known scheduled weekly events by default, with a remembered checkbox
-  in Reset History to include them. Apply filters before the display limit and
-  when hydrating groups. Retain all events normally; a second **Other reset
-  events** checkbox defaults on and covers non-scheduled events and unknown
-  window types. Both may be unchecked. Non-scheduled changes are not
-  classified by duration. An open explanation editor remains accessible.
-- Five-hour windows are no longer collected (ADR-0027). Stored scheduled
-  five-hour events stay hidden, with no filter to show them; unexpected changes
-  on legacy five-hour buckets stay visible with their stored label. The history
-  file is not rewritten.
+- Hide known scheduled five-hour and weekly events by default, with separate
+  remembered checkboxes in Reset History to include each. Apply filters before
+  the display limit and when hydrating groups. Retain all events normally;
+  a third **Other reset events** checkbox defaults on and covers non-scheduled
+  events and unknown window types. All three may be unchecked. Non-scheduled
+  changes are not classified by duration. An open explanation editor remains
+  accessible. Five-hour events are recorded only while a provider reports a
+  five-hour window (ADR-0027); stored ones, including those from earlier
+  versions, follow the same filters.
 
 ## Alternatives and consequences
 

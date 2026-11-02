@@ -1,7 +1,7 @@
 # ADR-0022: Explicit, confirmed use of Claude limit resets
 
-**Status:** Accepted, amended by ADR-0023 (the request identity and the single usage request) and on 2026-10-31 by [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md) (grants clear the weekly window)
-**Date:** 2026-10-03
+**Status:** Accepted, amended by ADR-0023 (the request identity and the single usage request)
+**Date:** 2026-10-03, updated 2026-11-02 (grants clear the five-hour window where the plan has one, [ADR-0027](ADR-0027-remove-five-hour-windows-prime-and-statusline.md))
 **Applies to:** `cmd/dankaiusage` (`claude-reset`, Claude usage headers), `DankAIUsageWidget.qml`
 **History:** [archive/ADR-0022-manual-claude-limit-reset-history.md](archive/ADR-0022-manual-claude-limit-reset-history.md)
 **Builds on:** ADR-0001, ADR-0008, ADR-0010
@@ -10,11 +10,10 @@
 ## Context
 
 Since late September 2026 Anthropic grants Pro, Max and Team subscribers
-occasional **limit resets**: a saved reset that refills a usage window when
-the user chooses, until it expires. When this was decided a grant refilled the
-five-hour window (and, for the launch grant, the weekly window); since
-Anthropic removed the five-hour window (ADR-0027), grants clear the weekly
-window. claude.ai exposes it under Settings → Usage, and Claude Code ships a
+occasional **limit resets**: a saved reset that refills the windows it names
+when the user chooses, until it expires: the five-hour window on plans that
+have one, the weekly window, or both (ADR-0027). claude.ai exposes it under
+Settings → Usage, and Claude Code ships a
 `/limit-reset` command. A user who already watches the windows in the widget
 could see the grant was there but had to open another client to spend it.
 
