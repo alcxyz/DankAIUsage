@@ -94,13 +94,15 @@ object: `ok`, `primed`, `reason`, `message`, `checkedAt`, `primedAt` and
 `sessionLeft`. `primed` is true only when a request was sent. The `reason`
 values are `primed`, `usage_unknown`, `usage_error`, `usage_stale`,
 `sign_in_mismatch`, `awaiting_usage`, `prime_unconfirmed`, `no_five_hour_window`,
-`window_running`, `outside_active_hours`, `weekly_low` and `daily_cap`; every
-reason other than `primed` is a skip that costs nothing. `--active-from` and
+`window_running`, `outside_active_hours`, `weekly_low`, `daily_cap` and
+`cli_missing`; every reason other than `primed` sends nothing and costs
+nothing. `cli_missing` means the `claude` command is not on PATH; it is not
+recorded as a prime, so it uses neither the daily cap nor the five-hour wait. `--active-from` and
 `--active-until` (local hours, default 7 and 23; equal means all day),
 `--min-weekly-left` (percent, default 10, 0 off) and `--daily-cap` (default 5)
 are the limits the **Claude prime limits** settings pass.
-The command exits 1 only when the request failed or the local state cannot be
-used. See [Claude prime](data-sources.md#claude-prime).
+The command exits 1 when the `claude` command is missing, the request failed,
+or the local state cannot be used; a skip exits 0. See [Claude prime](data-sources.md#claude-prime).
 
 `dankaiusage claude-statusline` does nothing: it reads and discards its input
 and prints nothing, so an old Claude Code `statusLine.command` that still runs

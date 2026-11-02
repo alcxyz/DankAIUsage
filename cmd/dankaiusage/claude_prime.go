@@ -55,6 +55,7 @@ const (
 	claudePrimeReasonInactiveHours = "outside_active_hours"
 	claudePrimeReasonWeeklyLow     = "weekly_low"
 	claudePrimeReasonDailyCap      = "daily_cap"
+	claudePrimeReasonCLIMissing    = "cli_missing"
 	claudePrimeReasonNoWindow      = "no_five_hour_window"
 	claudePrimeReasonRunning       = "window_running"
 )
@@ -103,13 +104,6 @@ type claudePrimeGuards struct {
 	ActiveUntil   int
 	MinWeeklyLeft float64
 	DailyCap      int
-}
-
-func defaultClaudePrimeGuards() claudePrimeGuards {
-	return claudePrimeGuards{
-		ActiveFrom: defaultClaudePrimeActiveFrom, ActiveUntil: defaultClaudePrimeActiveUntil,
-		MinWeeklyLeft: defaultClaudePrimeMinWeeklyLeft, DailyCap: defaultClaudePrimeDailyCap,
-	}
 }
 
 // normalized clamps the guards to valid values, so a bad setting can only
@@ -249,8 +243,8 @@ func runClaudePrimeCommand(args []string) {
 
 // primeClaude checks the latest usage response and sends a prime request only
 // when it reports a five-hour window that is not running. A skip is a normal
-// outcome (OK, not Primed); only a failed request or unusable local state is
-// an error.
+// outcome (OK, not Primed); a missing claude CLI (cli_missing, nothing sent),
+// a failed request or unusable local state is an error.
 func primeClaude(opts claudePrimeOptions, clock usageRefreshClock) (claudePrimeResult, error) {
 	opts.RefreshInterval = normalizeUsageRefreshInterval(opts.RefreshInterval)
 	statePath := claudePrimeStatePath()
@@ -275,6 +269,16 @@ func primeClaude(opts claudePrimeOptions, clock usageRefreshClock) (claudePrimeR
 			RefreshInterval: opts.RefreshInterval,
 			Guards:          opts.Guards.normalized(), PrimesToday: primesToday(state.PrimeTimes, now),
 		})
+		// A missing CLI is known before anything is sent, so it is not
+		// recorded as a prime: it neither counts toward the daily cap nor
+		// starts the unconfirmed wait.
+		if decision.Fire {
+			if _, err := exec.LookPath("claude"); err != nil {
+				decision.Fire = false
+				decision.Reason = claudePrimeReasonCLIMissing
+				decision.Message = "Claude CLI not found on the widget's PATH; nothing was sent"
+			}
+		}
 		state.CheckedAt = now.UTC().Format(time.RFC3339Nano)
 		state.Reason = decision.Reason
 		state.Message = decision.Message
@@ -298,13 +302,12 @@ func primeClaude(opts claudePrimeOptions, clock usageRefreshClock) (claudePrimeR
 		result = claudePrimeResult{Reason: "local_state", Message: "Claude prime state is unusable: " + err.Error()}
 		return result, err
 	}
+	if decision.Reason == claudePrimeReasonCLIMissing {
+		result.OK = false
+		return result, errors.New(result.Message)
+	}
 	if !decision.Fire {
 		return result, nil
-	}
-	if _, err := exec.LookPath("claude"); err != nil {
-		result.OK = false
-		result.Message = "Claude CLI not found"
-		return result, err
 	}
 	stderr, runErr := runClaudePrimeRequest(opts)
 	if runErr != nil {

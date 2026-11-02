@@ -59,6 +59,7 @@ function makeScope(overrides = {}) {
         ...overrides,
     };
     scope.maybeAutoPrimeClaude = () => {};
+    scope.reconcileClaudePrimeLast = () => {};
     scope.fiveHourTokensAvailable = bindQmlFunction("fiveHourTokensAvailable", scope);
     scope.isTokenHistoryRange = bindQmlFunction("isTokenHistoryRange", scope);
     scope.tokenHistoryRangeChoices = bindQmlFunction("tokenHistoryRangeChoices", scope);

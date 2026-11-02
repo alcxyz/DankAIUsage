@@ -68,6 +68,7 @@ function makePrimeScope(overrides = {}) {
     scope.claudePrimeIdleReason = bindQmlFunction("claudePrimeIdleReason", scope);
     scope.maybeAutoPrimeClaude = bindQmlFunction("maybeAutoPrimeClaude", scope);
     scope.claudePrimeStatusLine = bindQmlFunction("claudePrimeStatusLine", scope);
+    scope.reconcileClaudePrimeLast = bindQmlFunction("reconcileClaudePrimeLast", scope);
     return scope;
 }
 
@@ -147,6 +148,7 @@ function makeSummaryScope() {
         tokenHistoryRange: "7d", preferredTokenHistoryRange: "7d", autoPrimes: 0,
     };
     scope.maybeAutoPrimeClaude = () => { scope.autoPrimes++; };
+    scope.reconcileClaudePrimeLast = () => {};
     scope.fiveHourTokensAvailable = () => false;
     scope.applySummary = bindQmlFunction("applySummary", scope);
     return scope;
@@ -237,4 +239,52 @@ test("prime's opt-in uses a new key, so a 1.x enableClaudePrime value is ignored
     assert.match(qml, /claudePrimeEnabled = pluginService\.loadPluginData\(pluginId, "claudePrimeEnabled", false\) === true/);
     assert.match(settingsQml, /settingKey: "claudePrimeEnabled"[\s\S]{0,400}defaultValue: false/);
     assert.deepEqual(manifest.settings_schema.claudePrimeEnabled, {type: "boolean", default: false});
+});
+
+test("only a live summary reconciles a remembered prime answer", () => {
+    const scope = makeSummaryScope();
+    let reconciled = 0;
+    scope.reconcileClaudePrimeLast = () => { reconciled++; };
+    scope.applySummary({providers: []}, false);
+    assert.equal(reconciled, 0, "a cached summary never reconciles");
+    scope.applySummary({providers: []}, true);
+    assert.equal(reconciled, 1);
+});
+
+test("a running window clears a remembered unconfirmed prime, and a missing CLI is named", () => {
+    const saved = [];
+    const running = claude({sessionLeft: {known: true, resetAt: minutesFromNow(120)}});
+    const scope = makePrimeScope({
+        providers: [running], pluginId: "dankAIUsage",
+        pluginService: {savePluginState: (id, key, value) => saved.push([key, value])},
+        claudePrimeLast: {reason: "prime_unconfirmed", primedAt: minutesFromNow(-60), message: "No usage response showed..."},
+    });
+    scope.reconcileClaudePrimeLast();
+    assert.equal(scope.claudePrimeLast.reason, "window_running");
+    assert.equal(saved.length, 1, "the reconciled answer is saved");
+    // After a limit reset clears that window, prime is no longer held back.
+    scope.providers = [claude()];
+    assert.equal(scope.claudePrimeIdleReason(scope.providers[0]), "");
+
+    // Nothing to reconcile without a running window.
+    scope.claudePrimeLast = {reason: "prime_unconfirmed", primedAt: minutesFromNow(-60)};
+    scope.reconcileClaudePrimeLast();
+    assert.equal(scope.claudePrimeLast.reason, "prime_unconfirmed");
+
+    // A stale or errored summary does not reconcile.
+    scope.providers = [claude({sessionLeft: {known: true, resetAt: minutesFromNow(120)}, meta: {usageDataStale: true}})];
+    scope.reconcileClaudePrimeLast();
+    assert.equal(scope.claudePrimeLast.reason, "prime_unconfirmed", "stale usage keeps the answer");
+    scope.providers = [claude()];
+
+    scope.claudePrimeLast = {reason: "cli_missing", message: "Claude CLI not found"};
+    assert.match(scope.claudePrimeStatusLine(), /claude CLI was not found/);
+    assert.equal(scope.claudePrimeIdleReason(scope.providers[0]), "", "a missing CLI does not stop later checks");
+    scope.capabilities = {claudeCli: false};
+    scope.reconcileClaudePrimeLast();
+    assert.equal(scope.claudePrimeLast.reason, "cli_missing");
+    scope.capabilities = {claudeCli: true};
+    scope.reconcileClaudePrimeLast();
+    assert.equal(scope.claudePrimeLast.reason, "", "a summary that finds the CLI clears the notice");
+    assert.doesNotMatch(scope.claudePrimeStatusLine(), /not found/);
 });

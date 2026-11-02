@@ -849,9 +849,39 @@ PluginComponent {
     }
 
     // Shown under the Claude card while prime is on, and in Simple mode.
+    // Drops a remembered helper answer that a later live summary has made
+    // stale, so the widget stops holding prime back or naming a fixed
+    // problem. It only lets the widget ask again: the helper still decides,
+    // and if its state disagrees it answers the same way and is remembered.
+    // - prime_unconfirmed: a current, error-free summary shows the five-hour
+    //   window running.
+    // - cli_missing: the summary found the claude command.
+    function reconcileClaudePrimeLast() {
+        var last = claudePrimeLast || {}
+        var replacement = null
+        if (last.reason === "prime_unconfirmed") {
+            var provider = claudeProviderData()
+            var meta = (provider && provider.meta) || {}
+            var session = provider ? provider.sessionLeft : null
+            var resetAt = Date.parse((session && session.resetAt) || "")
+            if (provider && provider.available && !meta.limitError && meta.usageDataStale !== true && meta.usageStale !== true
+                    && session && session.known === true && isFinite(resetAt) && resetAt + 1000 > Date.now())
+                replacement = { reason: "window_running", message: "The five-hour window is running" }
+        } else if (last.reason === "cli_missing" && capabilities && capabilities.claudeCli === true) {
+            replacement = { reason: "", message: "Claude CLI found" }
+        }
+        if (!replacement) return
+        claudePrimeLast = Object.assign({}, last, replacement)
+        if (pluginService && pluginService.savePluginState)
+            pluginService.savePluginState(pluginId, "claudePrimeLast", claudePrimeLast)
+    }
+
     function claudePrimeStatusLine() {
         if (!claudePrimeEnabled) return ""
         if (claudePrimeProcess.running) return "Claude prime: starting the five-hour window…"
+        // Not a reason to stop asking (the CLI may appear), but the card
+        // should name it rather than look ready.
+        if ((claudePrimeLast || {}).reason === "cli_missing") return "Claude prime is on · the claude CLI was not found; see Diagnostics"
         var reason = claudePrimeIdleReason(claudeProviderData())
         if (reason === "this account has no five-hour window") return "Claude prime is on · idle: this account has no five-hour window"
         if (reason !== "") return "Claude prime is on · idle: " + reason
@@ -1633,7 +1663,12 @@ PluginComponent {
         // window. Show 7d meanwhile and return to a chosen 5h with the window.
         if (preferredTokenHistoryRange === "5h")
             tokenHistoryRange = fiveHourTokensAvailable() ? "5h" : "7d"
-        if (allowAutoPrime === true) maybeAutoPrimeClaude()
+        // A cached summary may predate the remembered answer; only a live one
+        // may reconcile it.
+        if (allowAutoPrime === true) {
+            reconcileClaudePrimeLast()
+            maybeAutoPrimeClaude()
+        }
     }
 
     function visibleProviders() {

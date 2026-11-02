@@ -447,3 +447,20 @@ func TestClaudePrimeDailyCapAcrossRequests(t *testing.T) {
 		t.Fatalf("state = %+v", state)
 	}
 }
+
+// A missing claude CLI is known before anything is sent: no prime time, no
+// daily-cap entry, and so no five-hour unconfirmed wait.
+func TestClaudePrimeMissingCLIIsNotRecordedAsAPrime(t *testing.T) {
+	env := setupPrimeTest(t)
+	t.Setenv("PATH", t.TempDir())
+	now := mustParseTime(t, "2026-11-02T10:00:00Z")
+	writePrimeUsage(t, primeUsage(primeUsageIdleWindow, now.Add(-time.Minute)))
+	result, err := primeClaude(claudePrimeOptions{RefreshInterval: 5 * time.Minute}, func() time.Time { return now })
+	if err == nil || result.OK || result.Primed || result.Reason != claudePrimeReasonCLIMissing || env.calls != 0 {
+		t.Fatalf("missing CLI = %+v, err = %v, calls = %d", result, err, env.calls)
+	}
+	state, err := loadClaudePrimeState(claudePrimeStatePath())
+	if err != nil || state.PrimedAt != "" || len(state.PrimeTimes) != 0 || state.Reason != claudePrimeReasonCLIMissing {
+		t.Fatalf("state = %+v, err = %v", state, err)
+	}
+}
