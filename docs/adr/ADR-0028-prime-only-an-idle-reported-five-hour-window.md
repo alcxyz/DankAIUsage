@@ -1,7 +1,7 @@
 # ADR-0028: Prime only an idle, reported five-hour window
 
 **Status:** Accepted
-**Date:** 2026-11-02
+**Date:** 2026-11-02, updated 2026-11-02 (active hours, weekly headroom and daily cap added, at the owner's request in the #45 thread)
 **Applies to:** `cmd/dankaiusage` (`claude-prime`), `DankAIUsageWidget.qml` (auto-prime), settings
 **Builds on:** ADR-0001, ADR-0015, ADR-0027
 **Replaces:** the retired [ADR-0006](archive/ADR-0006-opt-in-claude-prime.md)
@@ -46,9 +46,18 @@ able to repeat that failure.
      or the idle window's last reset is later than the prime. Otherwise prime
      waits five hours from the last prime, so a prime that starts nothing (for
      example a request billed elsewhere) is not repeated every 15 minutes.
+  7. the local time is within prime's active hours (**Active from** to
+     **Active until**, default 07:00 to 23:00; equal hours mean all day, and
+     a range may wrap past midnight);
+  8. at least the configured share of the weekly limit is left (default 10%;
+     0 turns this off; an unknown weekly limit does not block);
+  9. fewer primes than the daily cap (default 5) ran on this local day.
   Otherwise it skips and says why: unknown, failed or stale usage, another
   sign-in, waiting for the result of the last prime, the last prime not shown
-  to start a window, no five-hour window, or window already running.
+  to start a window, no five-hour window, window already running, outside
+  active hours, weekly limit nearly used, or daily cap reached. The widget
+  passes the settings as flags and applies the same three guards before it
+  asks; invalid values fall back to the defaults.
 - The decision and the prime time are recorded under a lock in
   `claude-prime-state.json` before the request runs, so concurrent callers,
   a crash or a failed request cannot send a second one before a newer usage

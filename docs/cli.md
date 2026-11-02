@@ -84,7 +84,7 @@ dankaiusage diagnostics
 ## Claude prime
 
 ```sh
-dankaiusage claude-prime [--refresh-interval N] [--model M] [--prompt P] [--timeout-seconds N] [--pretty]
+dankaiusage claude-prime [--refresh-interval N] [--active-from H] [--active-until H] [--min-weekly-left P] [--daily-cap N] [--model M] [--prompt P] [--timeout-seconds N] [--pretty]
 ```
 
 `claude-prime` starts Claude's five-hour window with one tiny request when it
@@ -93,8 +93,12 @@ decides only from the usage response the quota poll saved, and prints one JSON
 object: `ok`, `primed`, `reason`, `message`, `checkedAt`, `primedAt` and
 `sessionLeft`. `primed` is true only when a request was sent. The `reason`
 values are `primed`, `usage_unknown`, `usage_error`, `usage_stale`,
-`sign_in_mismatch`, `awaiting_usage`, `prime_unconfirmed`, `no_five_hour_window` and
-`window_running`; every reason other than `primed` is a skip that costs nothing.
+`sign_in_mismatch`, `awaiting_usage`, `prime_unconfirmed`, `no_five_hour_window`,
+`window_running`, `outside_active_hours`, `weekly_low` and `daily_cap`; every
+reason other than `primed` is a skip that costs nothing. `--active-from` and
+`--active-until` (local hours, default 7 and 23; equal means all day),
+`--min-weekly-left` (percent, default 10, 0 off) and `--daily-cap` (default 5)
+are the limits the **Claude prime limits** settings pass.
 The command exits 1 only when the request failed or the local state cannot be
 used. See [Claude prime](data-sources.md#claude-prime).
 

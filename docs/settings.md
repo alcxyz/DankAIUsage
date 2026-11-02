@@ -124,6 +124,11 @@ Collapsed by default; expand the heading to show it.
 - **Claude prime:** off by default; starts Claude's five-hour window with a
   tiny request when it is idle, and only for a Claude account that reports
   one. It spends a little usage. See [Claude prime](data-sources.md#claude-prime).
+  While it is on, **Claude prime limits** set when it may act: **Active from**
+  and **Active until** (local hours, default 07:00 to 23:00; the same hour for
+  both means all day), **Keep weekly headroom** (skip when less than this share
+  of the weekly limit is left, default 10%, 0 off) and **Most primes per day**
+  (default 5).
 - **Public reset announcements (Alpha):** off by default; reads a third-party
   public feed. See
   [Public reset announcements](reset-history.md#public-reset-announcements-alpha-optional).

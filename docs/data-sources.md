@@ -96,7 +96,9 @@ all of these hold:
 - it is newer than the last prime, and the last prime is at least 15 minutes old;
 - it reports a five-hour window that is not running;
 - after a prime, a usage response showed a window running or resetting since
-  that prime; if none did, prime waits five hours before trying again.
+  that prime; if none did, prime waits five hours before trying again;
+- it is within the active hours, enough of the weekly limit is left, and the
+  daily cap is not reached (the **Claude prime limits** settings).
 
 Otherwise prime skips without spending anything and says why. The reasons are
 listed in the [CLI reference](cli.md#claude-prime). Priming happens only while
